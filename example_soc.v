@@ -16,8 +16,8 @@ module example_soc #(
 	`include "hazard3_config.vh"
 ) (
 	// System clock + reset
-	input wire               clk,
-	input wire               rst_n,
+	input wire               clk /*verilator public_flat_rw*/,
+	input wire               rst_n /*verilator public_flat_rw*/,
 
 	// JTAG port to RISC-V JTAG-DTM
 	input  wire              tck /*verilator public_flat_rw*/,

@@ -1,0 +1,8 @@
+# .clangd file in your project root
+
+CompileFlags:
+  # Add Verilator's necessary include directories
+  Add:
+    - "-I/usr/share/verilator/include"
+    - "-I./obj_dir"
+    - "-I./jtag_server"
