@@ -1,7 +1,9 @@
 # Verilator Example
 Minimal Example for a Verilated model and VPI setup
 
-## Compilation
+## Building
+
+### Prerequisites
 First Install Verilator
 
 Ubuntu
@@ -14,13 +16,28 @@ Arch Linux Based Systems
 sudo pacman -S verilator
 ```
 
-Second, Compile with `--vpi` flag
+### Building
+
+>[!Important]
+> Currently the build produces a lot of warnings, but example soc is functional.
+
 ```
-verilator --cc --exe --vpi --build -j 0 -Wall sim_main.cpp our.v
+make verilate
+```
+
+```
+make verilate_no_warnings
 ```
 
 ## Running
-Execute the compiled binary.
+Execute the compiled binary at ``obj/dir/sim_main``
+
+or to build and run immediately:
+
 ```
-./obj_dir/Vour
+make run
+```
+
+```
+make run_no_warnings
 ```
