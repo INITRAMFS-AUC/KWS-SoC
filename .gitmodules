@@ -1,0 +1,9 @@
+[submodule "Hazard3"]
+	path = Hazard3
+	url = git@github.com:INITRAMFS-AUC/Hazard3.git
+[submodule "scripts"]
+	path = Hazard3/scripts
+	url = git@github.com:Wren6991/fpgascripts.git
+[submodule "example_soc/libfpga"]
+	path = Hazard3/example_soc/libfpga
+	url = git@github.com/Wren6991/libfpga.git
