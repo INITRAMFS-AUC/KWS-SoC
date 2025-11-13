@@ -12,15 +12,11 @@ void JtagVpi::JtagVpi() {
         if (handle) {
             std::cout << ("Found handle for jtag_vpi.cpp\n");
         } else {
-            vpi_printf("Failed to find handle for jtag_vpi.cpp\n");
+            std::cout << "Failed to find handle for jtag_vpi.cpp\n";
         }
     }
 
 }
 
 void JtagVpi::setTdi(int value) {
-    tdi.v = value;
 }
-
-
-for (int i =0; i < jtagInterfaceLines; i++) {
