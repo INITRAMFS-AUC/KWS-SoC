@@ -12,7 +12,8 @@ VERILATOR_SOURCES_F := verilator_sources.f
 TOP_MODULE := example_soc
 
 # C++ Wrapper file for verilator
-TESTBENCH_CPP := sim_main.cpp
+TESTBENCH_CPP := jtag_server/jtag_main.cpp jtag_server/logger.cpp
+
 #
 # Output executable name
 SIM_EXE := sim_main

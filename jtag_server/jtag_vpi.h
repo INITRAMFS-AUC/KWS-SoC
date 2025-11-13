@@ -5,24 +5,27 @@
 #include "verilated_vpi.h"
 #include "Vexample_soc.h"
 #include "register.h"
+#include <algorithm>
 #include <cstdint>
+#include <memory>
 
-const uint8_t jtagInterfaceLines = 5;
-const char* jtagInterfaceNames[] = {"tdi", "tdo", "tms", "tck", "trst_n"};
+const std::vector<std::string> jtagInterfaceNames = {"tdi", "tdo", "tms", "tck", "trst_n"};
 
 //JTAG VPI wrapper
 class JtagVpi {
 private:
-    Vexample_soc* top;
-    vpiHandle vpiHandle;
-    Register tdi;
-    Register tdo;
-    Register tms;
-    Register tck;
-    Register trst_n;
+    std::unique_ptr<Vexample_soc> top;
+    vpiHandle tdiHandle;
+    vpiHandle tdoHandle;
+    vpiHandle tmsHandle;
+    vpiHandle tckHandle;
+    vpiHandle trst_nHandle;
+
+    void initializeHandles();
+    void initializeTop(VerilatedContext* contextp = nullptr);
 
 public:
-    JtagVpi();
+    JtagVpi(VerilatedContext* contextp = nullptr);
     ~JtagVpi();
     Register getTdi();
     Register getTdo();

@@ -1,2 +1,4 @@
 obj_dir/
 verilator_sources.f
+.zed
+.vscode
