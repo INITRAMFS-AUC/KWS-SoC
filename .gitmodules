@@ -6,4 +6,4 @@
 	url = git@github.com:Wren6991/fpgascripts.git
 [submodule "example_soc/libfpga"]
 	path = Hazard3/example_soc/libfpga
-	url = git@github.com/Wren6991/libfpga.git
+	url = git@github.com:Wren6991/libfpga.git

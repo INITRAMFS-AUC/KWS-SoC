@@ -1,2 +1,13 @@
+
+# this is an executable
+example_soc_tb
+
+# build directories and output
 obj_dir/
+build/
 verilator_sources.f
+
+# development stuff
+tags
+.zed
+.vscode
