@@ -150,7 +150,7 @@ wire [31:0]               sbus_rdata;
 
 hazard3_dm #(
 	.N_HARTS      (N_HARTS),
-	.HAVE_SBA     (0),
+	.HAVE_SBA     (1), // System bus access, enable it for debugging
 	.NEXT_DM_ADDR (0)
 ) dm (
 	.clk                         (clk),

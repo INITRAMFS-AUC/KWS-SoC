@@ -149,6 +149,29 @@ Info : accepting 'gdb' connection on tcp/3333
 hazard3.cpu halted due to debug-request.
 ```
 
+## Running Example Assembly Code
 
+1. First compile the assembly code:
 
+```
+riscv32-unknown-elf-as -march=rv32i -g -o soc_test/asm/inf_loop.o soc_test/asm/inf_loop.s
+```
 
+2. Now Link the object file with the linker script, to generate an ELF file:
+```
+riscv32-unknown-elf-ld -T soc_test/asm/inf_loop.ld -o soc_test/asm/inf_loop.elf soc_test/asm/inf_loop.o
+```
+
+3. Run the remote debugging session as mentioned in the previous section expect when running gdb run:
+```
+riscv32-unknown-elf-gdb -x gdbinit
+```
+
+4. Load your ELF in GDB:
+
+```
+file soc_test/asm/inf_loop.elf
+load
+```
+
+Now your assembly code is loaded and you can start debugging.
