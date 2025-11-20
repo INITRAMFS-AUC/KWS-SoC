@@ -23,7 +23,7 @@
 // -----------------------------------------------------------------------------
 
 const char *help_str =
-"Usage: example_soc_tb [--port n] [--vcd x.vcd] [--cycles n] \\\n"
+"Usage: kws_soc_tb [--port n] [--vcd x.vcd] [--cycles n] \\\n"
 "                      [--jtagdump x] [--jtagreplay x]\n"
 "\n"
 "    --vcd x.vcd      : Path to dump waveforms to\n"
@@ -178,7 +178,7 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	cxxrtl_design::p_example__soc top;
+	cxxrtl_design::p_kws__soc top;
 
 	std::ofstream waves_fd;
 	cxxrtl::vcd_writer vcd;

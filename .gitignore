@@ -1,12 +1,12 @@
 
 # this is an executable
-example_soc_tb
+
 kws_soc_tb
 
 # build directories and output
 obj_dir/
 build/
-build-example-soc/
+
 build-kws-soc/
 verilator_sources.f
 *.elf

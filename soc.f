@@ -1,6 +1,6 @@
 # SoC integration file
 
-file example_soc.v
+file kws_soc.v
 
 # CPU + debug components
 

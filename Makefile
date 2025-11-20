@@ -1,14 +1,14 @@
-# Makefile for example_soc CXXRTL testbench
+# Makefile for kws_soc CXXRTL testbench
 # Root directory Makefile
 
 # Include project paths from Hazard3
 HAZARD3_ROOT := ./Hazard3
 include $(HAZARD3_ROOT)/project_paths.mk
 
-TOP       := example_soc
+TOP       := kws_soc
 DOTF      := soc.f
 CONFIG    := default
-TBEXEC    := example_soc_tb
+TBEXEC    := kws_soc_tb
 
 BUILD_DIR := build
 
@@ -35,11 +35,11 @@ $(BUILD_DIR)/dut.cpp: $(FILE_LIST) $(wildcard *.vh) $(DOTF)
 clean::
 	rm -rf $(BUILD_DIR) $(TBEXEC)
 
-$(TBEXEC): $(BUILD_DIR)/dut.cpp example_soc_tb.cpp
+$(TBEXEC): $(BUILD_DIR)/dut.cpp kws_soc_tb.cpp
 	$(CLANGXX) -O3 -std=c++14 $(addprefix -D,$(CDEFINES)) \
 		-I$(shell yosys-config --datdir)/include/backends/cxxrtl/runtime \
 		-I$(BUILD_DIR) \
-		example_soc_tb.cpp -o $(TBEXEC)
+		kws_soc_tb.cpp -o $(TBEXEC)
 
 lint:
 	verilator --lint-only --top-module $(TOP) -I$(HDL) $(FILE_LIST)

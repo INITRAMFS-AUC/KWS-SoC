@@ -8,7 +8,7 @@
 
 `default_nettype none
 
-module example_soc #(
+module kws_soc #(
 	parameter DTM_TYPE   = "JTAG",  // Can be "JTAG" or "ECP5"
 	parameter SRAM_DEPTH = 1 << 15, // Default 32 kwords -> 128 kB
 	parameter CLK_MHZ    = 12,      // For timer timebase

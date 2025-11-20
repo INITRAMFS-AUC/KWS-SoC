@@ -1,4 +1,4 @@
-# SoC `cxxrtl` Example
+# SoC `cxxrtl` Example (kws_soc)
 Implementation for a Simulated SoC model on `cxxrtl` with a jtag bitbanging wrapper testbench for `openocd` to connect to.
 
 ## Building
@@ -84,7 +84,7 @@ make
 ```
 
 >[!NOTE] 
-> This will result in compiling RTL into C++ code and compiling `example_soc_tb.cpp`, the output of which is the executable `example_soc_tb` this acts as your testbench and as a jtag server for `risv-openocd` to connect to.
+> This will result in compiling RTL into C++ code and compiling `kws_soc_tb.cpp`, the output of which is the executable `kws_soc_tb` this acts as your testbench and as a jtag server for `risv-openocd` to connect to.
 > More on `cxxrtl` [here](https://yosyshq.readthedocs.io/projects/yosys/en/0.38/cmd/write_cxxrtl.html).
 
 
@@ -99,7 +99,7 @@ make run
 
 You should see this output:
 ```
-./example_soc_tb --port 9824
+./kws_soc_tb --port 9824
 Waiting for connection on port 9824
 ```
 
@@ -134,7 +134,7 @@ Info : Listening on port 6666 for tcl connections
 Info : Listening on port 4444 for telnet connections
 ```
 
-You should see `Connected` in terminal 1 (`example_soc_tb` terminal).
+You should see `Connected` in terminal 1 (`kws_soc_tb` terminal).
 
 3. Now run `riscv32-unknown-elf-gdb` in the third terminal and run the following command:
 
