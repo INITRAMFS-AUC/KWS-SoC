@@ -174,4 +174,27 @@ file soc_test/asm/inf_loop.elf
 load
 ```
 
-Now your assembly code is loaded and you can start debugging.
+
+## Running Example C Code
+
+1. First compile the C code using the provided Makefile:
+
+```
+cd soc_test/c
+make
+cd ../..
+```
+
+2. Run the remote debugging session as mentioned in the "Running the SoC" section, except when running gdb run:
+```
+riscv32-unknown-elf-gdb -x gdbinit
+```
+
+3. Load your ELF in GDB:
+
+```
+file soc_test/c/inf_loop.elf
+load
+```
+
+Now your C code is loaded and you can start debugging.
