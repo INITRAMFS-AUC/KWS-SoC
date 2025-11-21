@@ -177,6 +177,9 @@ load
 
 ## Running Example C Code
 
+
+### Infinite Loop
+
 1. First compile the C code using the provided Makefile:
 
 ```
@@ -198,3 +201,33 @@ load
 ```
 
 Now your C code is loaded and you can start debugging.
+
+### Hello World
+
+1. First compile the C code using the provided Makefile:
+
+```
+cd soc_test/c
+make
+```
+
+2. Run the remote debugging session as mentioned in the "Running the SoC" section, except when running gdb run:
+```
+riscv32-unknown-elf-gdb -x gdbinit
+```
+
+3. Load your ELF in GDB:
+
+```
+file soc_test/c/hello_world.elf
+load
+```
+
+4. You can put breakpoints, or just run the program to find the uart output on the testbench `kws_soc_tb` terminal:
+
+```
+./kws_soc_tb --port 9824
+Waiting for connection on port 9824
+Connected
+Hello World!
+```
