@@ -97,6 +97,12 @@ You will need three terminals open.
 make run
 ```
 
+>[!NOTE]
+> To run the SoC with VCD dumping run:
+> ```bash
+> make run-vcd
+> ```
+
 You should see this output:
 ```
 ./kws_soc_tb --port 9824

@@ -12,6 +12,7 @@ verilator_sources.f
 *.elf
 *.o
 *.dis
+*.vcd
 
 # development stuff
 tags
