@@ -7,9 +7,12 @@ OBJDUMP = $(CROSS_COMPILE)objdump
 CFLAGS = -march=rv32i -g -c
 LDFLAGS = -T link.ld
 
-all: inf_loop.elf inf_loop.dis
+all: inf_loop.elf inf_loop.dis hello_world.elf hello_world.dis
 
 inf_loop.elf: crt0.o inf_loop.o
+	$(LD) $(LDFLAGS) -o $@ $^
+
+hello_world.elf: crt0.o hello_world.o
 	$(LD) $(LDFLAGS) -o $@ $^
 
 crt0.o: crt0.s
@@ -18,7 +21,13 @@ crt0.o: crt0.s
 inf_loop.o: inf_loop.c
 	$(CC) $(CFLAGS) -o $@ $<
 
+hello_world.o: hello_world.c
+	$(CC) $(CFLAGS) -o $@ $<
+
 inf_loop.dis: inf_loop.elf
+	$(OBJDUMP) -d $< > $@
+
+hello_world.dis: hello_world.elf
 	$(OBJDUMP) -d $< > $@
 
 clean:
