@@ -1,18 +1,17 @@
-
 # this is an executable
-
 kws_soc_tb
 
 # build directories and output
 obj_dir/
 build/
-
+quartus_work_dir/
 build-kws-soc/
 verilator_sources.f
 *.elf
 *.o
 *.dis
 *.vcd
+
 
 # development stuff
 tags

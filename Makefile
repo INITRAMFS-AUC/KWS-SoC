@@ -1,4 +1,3 @@
-# Makefile for kws_soc CXXRTL testbench
 # Root directory Makefile
 
 # Include project paths from Hazard3
@@ -11,6 +10,7 @@ CONFIG    := default
 TBEXEC    := kws_soc_tb
 
 BUILD_DIR := build
+QUARTUS_DIR := quartus_work_dir
 
 # Use listfiles script to generate file list from .f file
 FILE_LIST := $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
@@ -19,7 +19,7 @@ FILE_LIST := $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
 # optimisation levels. I have tried clang++-16 and clang++-17, both fine.
 CLANGXX   := clang++
 
-.PHONY: clean all lint run
+.PHONY: clean all lint run quartus_prep
 
 all: $(TBEXEC)
 
@@ -33,7 +33,7 @@ $(BUILD_DIR)/dut.cpp: $(FILE_LIST) $(wildcard *.vh) $(DOTF)
 	yosys -p '$(SYNTH_CMD)' 2>&1 | tee $(BUILD_DIR)/cxxrtl.log
 
 clean::
-	rm -rf $(BUILD_DIR) $(TBEXEC)
+	rm -rf $(BUILD_DIR) $(TBEXEC) $(QUARTUS_DIR)
 
 $(TBEXEC): $(BUILD_DIR)/dut.cpp kws_soc_tb.cpp
 	$(CLANGXX) -O3 -std=c++14 $(addprefix -D,$(CDEFINES)) \
@@ -43,6 +43,13 @@ $(TBEXEC): $(BUILD_DIR)/dut.cpp kws_soc_tb.cpp
 
 lint:
 	verilator --lint-only --top-module $(TOP) -I$(HDL) $(FILE_LIST)
+
+# Creates a working directory and symlinks all source files into it.
+# We use abspath so the links remain valid when placed inside the subdir.
+quartus_prep:
+	mkdir -p $(QUARTUS_DIR)
+	$(foreach src,$(FILE_LIST),ln -sf $(abspath $(src)) $(QUARTUS_DIR)/$(notdir $(src));)
+	@echo "Quartus working directory prepared at: $(QUARTUS_DIR)"
 
 # Helper target to run the testbench with default port
 run: $(TBEXEC)
