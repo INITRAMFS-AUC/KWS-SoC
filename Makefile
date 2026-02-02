@@ -13,7 +13,8 @@ BUILD_DIR := build
 QUARTUS_DIR := quartus_work_dir
 
 # Use listfiles script to generate file list from .f file
-FILE_LIST := $(shell python3 $(SCRIPTS)/listfiles -f flat --auto-vh $(DOTF))
+FILE_LIST := $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
+FILE_LIST_NO_VH := $(shell python3 $(SCRIPTS)/listfiles -f flat --auto-vh $(DOTF))
 
 # Note: clang++-18 has a >20x compile time regression, even at low
 # optimisation levels. I have tried clang++-16 and clang++-17, both fine.
@@ -48,7 +49,7 @@ lint:
 # We use abspath so the links remain valid when placed inside the subdir.
 quartus_prep:
 	mkdir -p $(QUARTUS_DIR)
-	$(foreach src,$(FILE_LIST),ln -sf $(abspath $(src)) $(QUARTUS_DIR)/$(notdir $(src));)
+	$(foreach src,$(FILE_LIST_NO_VH),ln -sf $(abspath $(src)) $(QUARTUS_DIR)/$(notdir $(src));)
 	@echo "Quartus working directory prepared at: $(QUARTUS_DIR)"
 
 # Helper target to run the testbench with default port
