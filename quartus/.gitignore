@@ -1,0 +1,44 @@
+# --- quartus/.gitignore ---
+
+# Ignore the copied source files (prevents duplication in repo)
+# Your script generates these; Git shouldn't see them.
+quartus_source_files/
+
+# Ignore Quartus compilation databases and outputs
+db/
+incremental_db/
+output_files/
+simulation/
+greybox_tmp/
+hc_output/
+.qsys_edit/
+hps_isw_handoff/
+hps_sdram_p0/
+
+# Ignore local user settings (window positions, etc.)
+*.qws
+*.qws_old
+
+# Ignore backup files
+*.bak
+*.orig
+*.rej
+*~
+
+# --- EXCEPTIONS (Whitelisting) ---
+# Ensure we strictly track project definitions and IP
+
+# Track the project file
+!*.qpf
+
+# Track the settings file (pin mappings, file lists)
+!*.qsf
+
+# Track constraints
+!*.sdc
+
+# Track IP definition files (Essential for PLLs)
+!*.qip
+!*.v
+!*.sv
+!*.ppf
