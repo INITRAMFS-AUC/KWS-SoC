@@ -12,6 +12,7 @@ TBEXEC    := kws_soc_tb
 BUILD_DIR := build
 QUARTUS_DIR := quartus
 QUARTUS_SOURCE_DIR := $(QUARTUS_DIR)/quartus_work_dir
+QIP_FILE := $(QUARTUS_SOURCE_DIR)/autogen_sources.qip
 
 # Use listfiles script to generate file list from .f file
 FILE_LIST := $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
@@ -49,9 +50,16 @@ lint:
 # Creates a working directory and symlinks all source files into it.
 # We use abspath so the links remain valid when placed inside the subdir.
 quartus_prep:
-	mkdir -p $(QUARTUS_SOURCE_DIR)
-	$(foreach src,$(FILE_LIST_NO_VH),ln -sf $(abspath $(src)) $(QUARTUS_SOURCE_DIR)/$(notdir $(src));)
-	@echo "Quartus working directory prepared at: $(QUARTUS_SOURCE_DIR)"
+	@mkdir -p $(QUARTUS_SOURCE_DIR)
+	@echo "# Auto-generated source list" > $(QIP_FILE)
+	$(foreach src,$(FILE_LIST_NO_VH), \
+		ln -sf $(abspath $(src)) $(QUARTUS_SOURCE_DIR)/$(notdir $(src)); \
+		f=$(notdir $(src)); \
+		if [ "$${f##*.}" != "vh" ]; then \
+			echo "set_global_assignment -name SYSTEMVERILOG_FILE [file join \$$::quartus(qip_path) $$f]" >> $(QIP_FILE); \
+		fi; \
+	)
+	@echo "Quartus prepared: $(QIP_FILE) updated."
 
 # Helper target to run the testbench with default port
 run: $(TBEXEC)
