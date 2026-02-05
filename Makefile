@@ -10,7 +10,8 @@ CONFIG    := default
 TBEXEC    := kws_soc_tb
 
 BUILD_DIR := build
-QUARTUS_DIR := quartus_work_dir
+QUARTUS_DIR := quartus
+QUARTUS_SOURCE_DIR := $(QUARTUS_DIR)/quartus_work_dir
 
 # Use listfiles script to generate file list from .f file
 FILE_LIST := $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
@@ -34,7 +35,7 @@ $(BUILD_DIR)/dut.cpp: $(FILE_LIST) $(wildcard *.vh) $(DOTF)
 	yosys -p '$(SYNTH_CMD)' 2>&1 | tee $(BUILD_DIR)/cxxrtl.log
 
 clean::
-	rm -rf $(BUILD_DIR) $(TBEXEC) $(QUARTUS_DIR)
+	rm -rf $(BUILD_DIR) $(TBEXEC) $(QUARTUS_SOURCE_DIR)
 
 $(TBEXEC): $(BUILD_DIR)/dut.cpp kws_soc_tb.cpp
 	$(CLANGXX) -O3 -std=c++14 $(addprefix -D,$(CDEFINES)) \
@@ -48,9 +49,9 @@ lint:
 # Creates a working directory and symlinks all source files into it.
 # We use abspath so the links remain valid when placed inside the subdir.
 quartus_prep:
-	mkdir -p $(QUARTUS_DIR)
-	$(foreach src,$(FILE_LIST_NO_VH),ln -sf $(abspath $(src)) $(QUARTUS_DIR)/$(notdir $(src));)
-	@echo "Quartus working directory prepared at: $(QUARTUS_DIR)"
+	mkdir -p $(QUARTUS_SOURCE_DIR)
+	$(foreach src,$(FILE_LIST_NO_VH),ln -sf $(abspath $(src)) $(QUARTUS_SOURCE_DIR)/$(notdir $(src));)
+	@echo "Quartus working directory prepared at: $(QUARTUS_SOURCE_DIR)"
 
 # Helper target to run the testbench with default port
 run: $(TBEXEC)
