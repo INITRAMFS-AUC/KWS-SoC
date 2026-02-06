@@ -17,3 +17,4 @@ verilator_sources.f
 tags
 .zed
 .vscode
+quartus/c5_pin_model_dump.txt
