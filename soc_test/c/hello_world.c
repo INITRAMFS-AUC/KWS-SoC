@@ -15,6 +15,8 @@
 #define UART_FSTAT_TXFULL (1 << 8)
 
 void uart_init() {
+    // TODO: Make this work on both sim and quartus (i.e. sane baud rate for both)
+    UART_DIV = 0x271; // Remove this line for it to work on sim
     // Enable UART
     UART_CSR |= UART_CSR_EN;
 }
@@ -33,7 +35,8 @@ void uart_puts(const char *s) {
 
 int main() {
     uart_init();
-    uart_puts("Hello World!\n");
-    while (1);
+    while (1) {
+        uart_puts("Hello World!\n");
+    }
     return 0;
 }
