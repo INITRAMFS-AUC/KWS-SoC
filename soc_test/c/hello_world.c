@@ -36,7 +36,7 @@ void uart_puts(const char *s) {
 int main() {
     uart_init();
     while (1) {
-        uart_puts("Hello World!\n");
+        uart_puts("Hello World!\r\n");
     }
     return 0;
 }
