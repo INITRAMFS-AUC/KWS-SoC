@@ -16,7 +16,7 @@ module kws_soc #(
 	`include "hazard3_config.vh"
 ) (
 	// System clock + reset
-	input wire               clk_50 /*verilator public_flat_rw*/,
+	input wire               clk /*verilator public_flat_rw*/,
 	input wire               rst_n /*verilator public_flat_rw*/,
 
 	// JTAG port to RISC-V JTAG-DTM
@@ -29,14 +29,6 @@ module kws_soc #(
 	// IO
 	output wire              uart_tx /*verilator public_flat_rd*/,
 	input  wire              uart_rx /*verilator public_flat_rw*/
-);
-
-// CLK
-wire clk;
-clock_pll_36 my_pll (
-	.refclk(clk_50),
-	.rst(!rst_n),
-	.outclk_0(clk)
 );
 // ----------------------------------------------------------------------------
 // Processor debug
