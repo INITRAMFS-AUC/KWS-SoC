@@ -17,6 +17,8 @@ hps_sdram_p0/
 # Ignore local user settings (window positions, etc.)
 *.qws
 *.qws_old
+*.qsf
+*.qpf
 
 # Ignore backup files
 *.bak
