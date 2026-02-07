@@ -17,10 +17,9 @@ verilator_sources.f
 *.qsf
 *.qpf
 
-
-
 # development stuff
 tags
 .zed
 .vscode
 quartus/c5_pin_model_dump.txt
+soc_conf.sh
