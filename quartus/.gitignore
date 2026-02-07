@@ -1,8 +1,7 @@
 # --- quartus/.gitignore ---
 
-# Ignore the copied source files (prevents duplication in repo)
-# Your script generates these; Git shouldn't see them.
 quartus_source_files/
+*.cdf
 
 # Ignore Quartus compilation databases and outputs
 db/
