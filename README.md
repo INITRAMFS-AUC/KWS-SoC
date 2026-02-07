@@ -5,7 +5,7 @@
 | Variable | desc | Makefile Default |
 | --- | --- | --- | 
 | `quartus_*` | These are quartus CLI commands such as `quartus_map`, `quartus_sh`. They are extremely important to have them in your `PATH` variable, locate your quartus Installation. | **No Default** |
-| `FPGA_FAMILY` | The family of the FPGA chip | "Cyclone V SE" |
+| `FPGA_FAMILY` | The family of the FPGA chip | "Cyclone V" |
 | `FPGA_PART` | The part model of the FPGA chip | 5CSXFC6D6F31C6N |
 
 shell config template can be found at `soc_conf.sh`, which is just a bunch of export statements
