@@ -80,25 +80,6 @@ $(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp
 lint:
 	verilator --lint-only --top-module $(TOP) -I$(HDL) $(FILE_LIST)
 
-# Creates a working directory and symlinks all source files into it.
-# We use abspath so the links remain valid when placed inside the subdir.
-# Only Done on First Clone of Repo #
-quartus_prep:
-	# TODO: make this in a separate tcl script along with the config target
-	#@mkdir -p $(QUARTUS_SRC_DIR)
-	#@echo "# Auto-generated source list" > $(QIP_FILE)
-	#$(foreach src,$(FILE_LIST_VH), \
-	#	ln -sf $(abspath $(src)) $(QUARTUS_SRC_DIR)/$(notdir $(src)); \
-	#	f=$(notdir $(src)); \
-	#	if [ "$${f##*.}" != "vh" ]; then \
-	#		echo "set_global_assignment -name SYSTEMVERILOG_FILE [file join \$$::quartus(qip_path) $$f]" >> $(QIP_FILE); \
-	#	fi; \
-	#)
-	#@echo "Quartus prepared: $(QIP_FILE) updated."
-	mkdir -p $(QUARTUS_SRC_DIR)
-	$(foreach src,$(FILE_LIST_VH),ln -sf $(abspath $(src)) $(QUARTUS_SRC_DIR)/$(notdir $(src));)
-	@echo "Quartus working directory prepared at: $(QUARTUS_SRC_DIR)"
-
 # Helper target to run the cxxrtl testbench with default port
 sim: $(TBEXEC)
 	./$(TBEXEC) --port 9824
