@@ -8,14 +8,29 @@
 | `FPGA_FAMILY` | The family of the FPGA chip | "Cyclone V SE" |
 | `FPGA_PART` | The part model of the FPGA chip | 5CSXFC6D6F31C6N |
 
+shell config template can be found at `soc_conf.sh`, which is just a bunch of export statements
+
 2. Quartus CLI Development Workflow
 
-
+| Target | desc | depends on |
+| --- | --- | --- |
+| `make config` | Quartus Project Generation | - |
+| `make map` | Synthesis | `config` |
+| `make fit` | Fitting | `map` | 
+| `make asm` | Bit Stream generation| `fit` |
+| `make sta` | Static Timing Analysis | `fit` |
+| `make check_timing` | Timing Violations | `sta` |
+| `make program` | Programing FPGA | `asm` |
 
 >[!NOTE]
 > **For GUI development:**
-> You can run `make quartus_prep` which will put symbolic links in `quartus/quartus_srcs`.
-> You can then add the files manually from the GUI.
+> You can just open the .qsf file generated in `quartus/` after running `make config`
+
+>[!IMPORTANT]
+> 1. If you change Global SoC config parameters such as `SRAM_DEPTH` you need to recompile the project
+>  so Run `make clean` and start over
+> 2. Programming Your FPGA will be done through USB-Blaster and JTAG chain, if your setup is different modify the `program` target in the Makefile
+> 3. Make knows that previous steps in EDA flow should not be re-done, i.e, if you ran `map` stage you do not need to redo it if you run `fit` stage.
 
 # SoC `cxxrtl` Example (kws_soc)
 Implementation for a Simulated SoC model on `cxxrtl` with a jtag bitbanging wrapper testbench for `openocd` to connect to.
