@@ -29,12 +29,6 @@ hps_sdram_p0/
 # --- EXCEPTIONS (Whitelisting) ---
 # Ensure we strictly track project definitions and IP
 
-# Track the project file
-!*.qpf
-
-# Track the settings file (pin mappings, file lists)
-!*.qsf
-
 # Track constraints
 !*.sdc
 
