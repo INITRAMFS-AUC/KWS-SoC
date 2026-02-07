@@ -1,3 +1,22 @@
+# FPGA prototyping on Quartus
+
+1.  Shell Vars You need:
+
+| Variable | desc | Makefile Default |
+| --- | --- | --- | 
+| `quartus_*` | These are quartus CLI commands such as `quartus_map`, `quartus_sh`. They are extremely important to have them in your `PATH` variable, locate your quartus Installation. | **No Default** |
+| `FPGA_FAMILY` | The family of the FPGA chip | "Cyclone V SE" |
+| `FPGA_PART` | The part model of the FPGA chip | 5CSXFC6D6F31C6N |
+
+2. Quartus CLI Development Workflow
+
+
+
+>[!NOTE]
+> **For GUI development:**
+> You can run `make quartus_prep` which will put symbolic links in `quartus/quartus_srcs`.
+> You can then add the files manually from the GUI.
+
 # SoC `cxxrtl` Example (kws_soc)
 Implementation for a Simulated SoC model on `cxxrtl` with a jtag bitbanging wrapper testbench for `openocd` to connect to.
 
