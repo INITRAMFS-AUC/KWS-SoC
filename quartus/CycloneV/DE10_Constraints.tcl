@@ -10,5 +10,5 @@ set_location_assignment PIN_AK3  -to tms    -comment "GPIO 3"
 set_location_assignment PIN_AJ1  -to trst_n -comment "GPIO 4"
 
 # UART
-set_location_assignment PIN_AJ2  -to uart_rx -comment "Gpio 5"
-set_location_assignment PIN_AH2  -to uart_tx -comment "gpio 6"
+set_location_assignment PIN_AJ2  -to uart_rx -comment "GPIO 5"
+set_location_assignment PIN_AH2  -to uart_tx -comment "GPIO 6"
