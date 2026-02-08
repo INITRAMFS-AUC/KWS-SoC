@@ -57,7 +57,7 @@ PGM := quartus_pgm
 SH  := quartus_sh
 
 
-.PHONY: clean all lint sim quartus_prep map fit asm sta program check_timing config
+.PHONY: clean all lint sim config map fit asm sta program check_timing
 
 all: $(TBEXEC)
 
@@ -117,7 +117,6 @@ $(ASM_RPT): $(FIT_RPT)
 	$(ASM) $(QUARTUS_PROJECT)
 
 # These just point to the real files above
-.PHONY: config map fit asm prog
 config: $(QSF_FILE)
 map:    $(MAP_RPT)
 fit:    $(FIT_RPT)
@@ -135,9 +134,19 @@ check_timing: sta
 
 # 6. Programming
 # JTAG mode, auto-detect cable. Replace 'USB-Blaster' with your specific cable name if needed.
-program: asm
-	@echo "--- Programming FPGA ---"
-	$(PGM) -c "USB-Blaster" -m JTAG -o "p;output_files/$(QUARTUS_PROJECT).sof"
+# TODO: Make this depend on asm without needing to rebuild everytime
+program:
+	@echo "--- Detecting Cable Index ---"
+	$(eval CABLE_INDEX := $(shell jtagconfig -n | grep "DE-SoC" | head -n 1 | awk '{print $$1+0}'))
+
+	@if [ -z "$(CABLE_INDEX)" ]; then \
+		echo "Error: No DE-SoC cable found!"; \
+		exit 1; \
+	fi
+	@echo "Using Cable Index: $(CABLE_INDEX)"
+
+	@echo "--- Programming FPGA (Device 2) ---"
+	$(PGM) -m jtag -c "$(CABLE_INDEX)" -o "p;$(SOF_FILE)@2"
 
 clean::
 	rm -rf $(YOSYS_BUILD_DIR) $(TBEXEC) *.vcd \
