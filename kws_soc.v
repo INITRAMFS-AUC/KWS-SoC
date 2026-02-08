@@ -6,11 +6,10 @@
 // Example file integrating a Hazard3 processor, processor JTAG + debug
 // components, some memory and a UART.
 
-`default_nettype none
 
 module kws_soc #(
 	parameter DTM_TYPE   = "JTAG",  // Can be "JTAG" or "ECP5"
-	parameter SRAM_DEPTH = 1 << 15, // Default 32 kwords -> 128 kB
+	parameter SRAM_DEPTH = (1 << 15), 
 	parameter CLK_MHZ    = 12,      // For timer timebase
 
 	`include "hazard3_config.vh"

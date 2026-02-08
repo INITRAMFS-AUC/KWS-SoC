@@ -1,14 +1,19 @@
 # Connect to OpenOCD right away
 target extended-remote localhost:3333
 
-# SRAM region: 128 KB at 0x00000000 (0x20000 bytes)
-# Readable, writable, executable, cached
-mem 0x00000000 0x00020000 rw
+python
+import os
+import gdb
 
-# Peripheral region: 64 KB starting at 0x40000000
-# Timer at 0x40000000, UART at 0x40004000
-# Readable, writable, but not executable, not cached
-mem 0x40000000 0x40010000 rw
+# Read SRAM_DEPTH from env, default to 32768 if not set
+depth = int(os.environ.get('SRAM_DEPTH', '32768'))
+size_bytes = depth * 4
+
+# 0x00000000 to size_bytes, rw
+gdb.execute(f"mem 0x00000000 {hex(size_bytes)} rw")
+gdb.execute("mem 0x40000000 0x40010000 rw")
+
+end
 
 # Display memory regions
 info mem

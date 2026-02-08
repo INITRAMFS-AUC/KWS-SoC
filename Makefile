@@ -11,22 +11,30 @@ DOTF      := soc.f
 ROOT_DIR  := $(shell pwd)
 
 # Use listfiles script to generate file list from .f file
-FILE_LIST 	 := $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
-FILE_LIST_VH := $(shell python3 $(SCRIPTS)/listfiles -f flat --auto-vh $(DOTF))
-SRC_LIST_IP_REL := $(shell find quartus/ip -name "*.qip")
-SRC_LIST_IP     := $(abspath $(SRC_LIST_IP_REL))
+FILE_LIST 	:= $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
+FILE_LIST_VH 	:= $(shell python3 $(SCRIPTS)/listfiles -f flat --auto-vh $(DOTF))
+
+ifeq ($(subst ",,$(FPGA_FAMILY)), Cyclone IV E)
+    # Cyclone IV Settings
+    PLL_SRC       	:= quartus/ip/ALTPLL_36/ALTPLL_36.qip
+    VERILOG_MACROS 	+= CYCLONE_IV=1
+else
+    # Default to Cyclone V
+    PLL_SRC		:= quartus/ip/clock_pll_36/clock_pll_36.qip
+    VERILOG_MACROS 	+= CYCLONE_V=1
+endif
+SRC_LIST_IP     	:= $(abspath $(PLL_SRC))
 
 ## YOSYS VARS
-YOSYS_CONFIG    := default
+YOSYS_CONFIG    		:= default
 TBEXEC    			:= kws_soc_tb
-YOSYS_BUILD_DIR := yosys_build
+YOSYS_BUILD_DIR 		:= yosys_build
 CLANGXX   			:= clang++
 
 ## QUARTUS VARS
-QUARTUS_DIR 				:= $(ROOT_DIR)/quartus
+QUARTUS_DIR 			:= $(ROOT_DIR)/quartus
 QUARTUS_PROJECT 		:= $(QUARTUS_DIR)/KWS-SoC
 QUARTUS_SRC_DIR 		:= $(QUARTUS_DIR)/quartus_src_dir
-QIP_COMPONENTS		  := $(shell find $(QUARTUS_DIR)/ip -name "*.qip")
 ALL_QUARTUS_SRCS 		:= $(sort $(FILE_LIST_VH) $(SRC_LIST_IP))
 
 # Sentinel files for Make to track
@@ -103,8 +111,9 @@ $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile
 
 # 1. Synthesis (Map)
 $(MAP_RPT): $(QSF_FILE) $(ALL_QUARTUS_SRCS)
-	@echo "--- Synthesizing with SRAM_DEPTH=$(SRAM_DEPTH) ---"
-	$(MAP) $(QUARTUS_PROJECT) --verilog_macro="SRAM_DEPTH=$(SRAM_DEPTH)"
+	@echo "--- Synthesizing ---"
+	$(MAP) $(QUARTUS_PROJECT) --verilog_macro="SRAM_DEPTH=$(SRAM_DEPTH)" \
+        	$(foreach m,$(VERILOG_MACROS),--verilog_macro="$(m)")
 
 # 2. Fitting (Place & Route)
 $(FIT_RPT): $(MAP_RPT)
@@ -116,12 +125,17 @@ $(ASM_RPT): $(FIT_RPT)
 	@echo "--- Generating Bitstream ---"
 	$(ASM) $(QUARTUS_PROJECT)
 
+$(PGM_RPT): $(ASM_RPT)
+	@echo "--- Programming FPGA ---"
+	$(PGM) -c "USB-Blaster" -m JTAG -o "p;output_files/$(QUARTUS_PROJECT).sof"
+
 # These just point to the real files above
-.PHONY: config map fit asm prog
-config: $(QSF_FILE)
-map:    $(MAP_RPT)
-fit:    $(FIT_RPT)
-asm:    $(ASM_RPT)
+.PHONY: config map fit asm program
+config: 	$(QSF_FILE)
+map:    	$(MAP_RPT)
+fit:    	$(FIT_RPT)
+asm:    	$(ASM_RPT)
+program: 	$(SOF_FILE)
 
 sta: fit
 	@echo "--- Running Timing Analysis ---"
@@ -133,13 +147,7 @@ check_timing: sta
 	# This is a simple check; for robust CI, parse the report files in output_files/
 	$(SH) --tcl_eval "project_open $(QUARTUS_PROJECT); set x [get_timing_analysis_summary_results -model slow]; puts \$$x; project_close"
 
-# 6. Programming
-# JTAG mode, auto-detect cable. Replace 'USB-Blaster' with your specific cable name if needed.
-program: asm
-	@echo "--- Programming FPGA ---"
-	$(PGM) -c "USB-Blaster" -m JTAG -o "p;output_files/$(QUARTUS_PROJECT).sof"
-
 clean::
 	rm -rf $(YOSYS_BUILD_DIR) $(TBEXEC) *.vcd \
-				 $(QUARTUS_SRC_DIR) $(QUARTUS)/db/ $(QUARTUS)/incremental_db/ $(QUARTUS)/output_files/ \
-				 $(QUARTUS)/*.qws $(QUARTUS)/*.sof $(QUARTUS)/*.pof $(QUARTUS)/*.rpt $(QUARTUS)/*.cdf
+		$(QUARTUS_SRC_DIR) $(QUARTUS_DIR)/db/ $(QUARTUS_DIR)/incremental_db/ $(QUARTUS_DIR)/output_files/  $(QUARTUS_DIR)/greybox_tmp/ \
+		$(QUARTUS_DIR)/*.qws $(QUARTUS_DIR)/*.sof $(QUARTUS_DIR)/*.pof $(QUARTUS_DIR)/*.rpt
