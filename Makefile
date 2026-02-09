@@ -11,25 +11,31 @@ DOTF      := soc.f
 ROOT_DIR  := $(shell pwd)
 
 # Use listfiles script to generate file list from .f file
-FILE_LIST 	:= $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
+FILE_LIST			:= $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
 FILE_LIST_VH 	:= $(shell python3 $(SCRIPTS)/listfiles -f flat --auto-vh $(DOTF))
 
-ifeq ($(subst ",,$(FPGA_FAMILY)), Cyclone IV E)
+# FPGA device family and party, set by env shell with defaults being the de-10 standard
+FPGA_FAMILY ?= "Cyclone V"
+FPGA_PART   ?= 5CSXFC6D6F31C6
+FPGA_BOARD  ?= DE10S
+FPGA_FAMILY_CLEAN := $(strip $(subst ",,$(FPGA_FAMILY)))
+
+ifeq ($(FPGA_FAMILY_CLEAN), Cyclone IV E)
     # Cyclone IV Settings
-    PLL_SRC       	:= quartus/ip/ALTPLL_36/ALTPLL_36.qip
+    PLL_SRC       	:= quartus/ip/ALTPLL_25/ALTPLL_25.qip
     VERILOG_MACROS 	+= CYCLONE_IV=1
 else
     # Default to Cyclone V
-    PLL_SRC		:= quartus/ip/clock_pll_36/clock_pll_36.qip
+    PLL_SRC					:= quartus/ip/clock_pll_36/clock_pll_36.qip
     VERILOG_MACROS 	+= CYCLONE_V=1
 endif
 SRC_LIST_IP     	:= $(abspath $(PLL_SRC))
 
 ## YOSYS VARS
 YOSYS_CONFIG    		:= default
-TBEXEC    			:= kws_soc_tb
+TBEXEC    					:= kws_soc_tb
 YOSYS_BUILD_DIR 		:= yosys_build
-CLANGXX   			:= clang++
+CLANGXX   					:= clang++
 
 ## QUARTUS VARS
 QUARTUS_DIR 			:= $(ROOT_DIR)/quartus
@@ -49,9 +55,6 @@ SOF_FILE  := $(QUARTUS_DIR)/output_files/KWS-SoC.sof
 CONSTRAINTS_SRC ?= $(QUARTUS_DIR)/CycloneV/DE10_Constraints.tcl
 TOP_FPGA        := fpga_top
 
-# FPGA device family and party, set by env shell with defaults being the de-10 standard
-FPGA_FAMILY ?= "Cyclone V"
-FPGA_PART   ?= 5CSXFC6D6F31C6
 
 # 128k Memory
 SRAM_DEPTH ?= 32768
@@ -63,7 +66,6 @@ ASM := quartus_asm
 STA := quartus_sta
 PGM := quartus_pgm
 SH  := quartus_sh
-
 
 .PHONY: clean all lint sim quartus_prep map fit asm sta program check_timing config
 
@@ -125,19 +127,33 @@ $(ASM_RPT): $(FIT_RPT)
 	@echo "--- Generating Bitstream ---"
 	$(ASM) $(QUARTUS_PROJECT)
 
-$(PGM_RPT): $(ASM_RPT)
+# 4
+program: $(ASM_RPT)
 	@echo "--- Programming FPGA ---"
-	$(PGM) -c "USB-Blaster" -m JTAG -o "p;output_files/$(QUARTUS_PROJECT).sof"
+ifeq ($(FPGA_BOARD), DE10S)
+	@echo "--- Detecting Cable Index ---"
+	$(eval CABLE_INDEX := $(shell jtagconfig -n | grep "DE-SoC" | head -n 1 | awk '{print $$1+0}'))
+
+	@if [ -z "$(CABLE_INDEX)" ]; then \
+		echo "Error: No DE-SoC cable found!"; \
+		exit 1; \
+	fi
+	@echo "Using Cable Index: $(CABLE_INDEX)"
+	@echo "--- Programming FPGA (Device 2) ---"
+	$(PGM) -m jtag -c "$(CABLE_INDEX)" -o "p;$(SOF_FILE)@2"
+else
+	$(PGM) -c "USB-Blaster" -m JTAG -o "p;$(SOF_FILE)"
+endif
+
 
 # These just point to the real files above
-.PHONY: config map fit asm program
+.PHONY: config map fit asm 
 config: 	$(QSF_FILE)
 map:    	$(MAP_RPT)
 fit:    	$(FIT_RPT)
 asm:    	$(ASM_RPT)
-program: 	$(SOF_FILE)
 
-sta: fit
+sta: $(FIT_RPT)
 	@echo "--- Running Timing Analysis ---"
 	$(STA) $(QUARTUS_PROJECT)
 
@@ -149,5 +165,5 @@ check_timing: sta
 
 clean::
 	rm -rf $(YOSYS_BUILD_DIR) $(TBEXEC) *.vcd \
-		$(QUARTUS_SRC_DIR) $(QUARTUS_DIR)/db/ $(QUARTUS_DIR)/incremental_db/ $(QUARTUS_DIR)/output_files/  $(QUARTUS_DIR)/greybox_tmp/ \
-		$(QUARTUS_DIR)/*.qws $(QUARTUS_DIR)/*.sof $(QUARTUS_DIR)/*.pof $(QUARTUS_DIR)/*.rpt
+				 $(QUARTUS_SRC_DIR) $(QUARTUS)/db/ $(QUARTUS)/incremental_db/ $(QUARTUS)/output_files/ \
+				 $(QUARTUS)/*.qws $(QUARTUS)/*.sof $(QUARTUS)/*.pof $(QUARTUS)/*.rpt $(QUARTUS)/*.cdf

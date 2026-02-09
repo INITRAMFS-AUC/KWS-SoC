@@ -31,7 +31,7 @@ module fpga_top (
             .locked   (pll_locked)
         );
     `elsif CYCLONE_IV
-        ALTPLL_36 my_pll (
+        ALTPLL_25 my_pll (
             .inclk0 (clk_50),      
             .c0     (sys_clk),  
             .locked (pll_locked)
