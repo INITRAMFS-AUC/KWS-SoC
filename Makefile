@@ -55,9 +55,44 @@ SOF_FILE  := $(QUARTUS_DIR)/output_files/KWS-SoC.sof
 CONSTRAINTS_SRC ?= $(QUARTUS_DIR)/CycloneV/DE10_Constraints.tcl
 TOP_FPGA        := fpga_top
 
+# Clock config
+# WARNING TODO: Must be set to 36 as current PLL setup does not allow for anything else
+CLK_MHZ ?= 36
 
 # 128k Memory
 SRAM_DEPTH ?= 32768
+
+# UART config
+UART_BAUD_RATE ?= 115200
+# The remaining are hardcoded in uart_mini and thus useless
+UART_DATA_WIDTH := 8
+UART_PARITY := N
+UART_STOP_BITS := 1
+UART_FLOW_CONTROL := 0
+
+UART_CFLAGS := -DCLK_MHZ=$(CLK_MHZ) \
+               -DUART_BAUD_RATE=$(UART_BAUD_RATE) \
+               -DUART_DATA_WIDTH=$(UART_DATA_WIDTH) \
+               -DUART_STOP_BITS=$(UART_STOP_BITS)
+
+
+# Parity
+ifeq ($(UART_PARITY), N)
+    UART_CFLAGS += -DUART_PARITY_NONE
+else ifeq ($(UART_PARITY), E)
+    UART_CFLAGS += -DUART_PARITY_EVEN
+else ifeq ($(UART_PARITY), O)
+    UART_CFLAGS += -DUART_PARITY_ODD
+else
+    $(error Invalid UART_PARITY: $(UART_PARITY). Use N, E, or O)
+endif
+
+# Flow Control
+ifeq ($(UART_FLOW_CONTROL), 1)
+    UART_CFLAGS += -DUART_FLOW_CTRL_EN
+endif
+
+export GLOBAL_UART_CONFIG := $(UART_CFLAGS)
 
 # important: these show be in PATH, locate your quartus installation
 MAP := quartus_map
@@ -67,9 +102,9 @@ STA := quartus_sta
 PGM := quartus_pgm
 SH  := quartus_sh
 
-.PHONY: clean all lint sim map fit asm sta program check_timing config
+.PHONY: clean all lint sim map fit asm sta program test check_timing config
 
-all: $(TBEXEC)
+all: $(TBEXEC) test
 
 # Yosys synthesis command to generate CXXRTL C++ code
 YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(FILE_LIST);
@@ -144,6 +179,9 @@ ifeq ($(FPGA_BOARD), DE10S)
 else
 	$(PGM) -c "1" -m JTAG -o "p;$(SOF_FILE)"
 endif
+
+test:
+	$(MAKE) -C soc_test/c
 
 
 # These just point to the real files above
