@@ -167,3 +167,4 @@ clean::
 	rm -rf $(YOSYS_BUILD_DIR) $(TBEXEC) *.vcd \
 				 $(QUARTUS_SRC_DIR) $(QUARTUS)/db/ $(QUARTUS)/incremental_db/ $(QUARTUS)/output_files/ \
 				 $(QUARTUS)/*.qws $(QUARTUS)/*.sof $(QUARTUS)/*.pof $(QUARTUS)/*.rpt $(QUARTUS)/*.cdf
+	$(MAKE) -C soc_test/c clean
