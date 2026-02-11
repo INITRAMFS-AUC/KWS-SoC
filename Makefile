@@ -117,7 +117,7 @@ $(YOSYS_BUILD_DIR)/dut.cpp: $(FILE_LIST) $(wildcard *.vh) $(DOTF)
 
 
 $(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp
-	$(CLANGXX) -O3 -std=c++14 $(addprefix -D,$(CDEFINES)) \
+	$(CLANGXX) -O3 -std=c++14 $(addprefix -D,$(CDEFINES)) $(UART_CFLAGS) \
 		-I$(shell yosys-config --datdir)/include/backends/cxxrtl/runtime \
 		-I$(YOSYS_BUILD_DIR) \
 		kws_soc_tb.cpp -o $(TBEXEC)
