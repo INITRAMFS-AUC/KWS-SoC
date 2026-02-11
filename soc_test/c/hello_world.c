@@ -16,7 +16,7 @@
     #error "CLK_MHZ is not defined. Check your Makefile variables!"
 #endif
 #ifndef UART_BAUD_RATE
-    #define UART_BAUD_RATE 115200
+    #error "CLK_MHZ is not defined. Check your Makefile variables!"
 #endif
 
 // --- BAUD CALCULATION ---
