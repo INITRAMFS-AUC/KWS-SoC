@@ -142,12 +142,12 @@ ifeq ($(FPGA_BOARD), DE10S)
 	@echo "--- Programming FPGA (Device 2) ---"
 	$(PGM) -m jtag -c "$(CABLE_INDEX)" -o "p;$(SOF_FILE)@2"
 else
-	$(PGM) -c "USB-Blaster" -m JTAG -o "p;$(SOF_FILE)"
+	$(PGM) -c "1" -m JTAG -o "p;$(SOF_FILE)"
 endif
 
 
 # These just point to the real files above
-.PHONY: config map fit asm 
+.PHONY: config map fit asm
 config: 	$(QSF_FILE)
 map:    	$(MAP_RPT)
 fit:    	$(FIT_RPT)
