@@ -67,7 +67,7 @@ STA := quartus_sta
 PGM := quartus_pgm
 SH  := quartus_sh
 
-.PHONY: clean all lint sim quartus_prep map fit asm sta program check_timing config
+.PHONY: clean all lint sim map fit asm sta program check_timing config
 
 all: $(TBEXEC)
 
