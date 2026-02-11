@@ -1,4 +1,38 @@
-# SoC `cxxrtl` Example
+# FPGA prototyping on Quartus
+
+1.  Shell Vars You need:
+
+| Variable | desc | Makefile Default |
+| --- | --- | --- | 
+| `quartus_*` | These are quartus CLI commands such as `quartus_map`, `quartus_sh`. They are extremely important to have them in your `PATH` variable, locate your quartus Installation. | **No Default** |
+| `FPGA_FAMILY` | The family of the FPGA chip | "Cyclone V" |
+| `FPGA_PART` | The part model of the FPGA chip | 5CSXFC6D6F31C6N |
+
+shell config template can be found at `soc_conf.sh`, which is just a bunch of export statements
+
+2. Quartus CLI Development Workflow
+
+| Target | desc | depends on |
+| --- | --- | --- |
+| `make config` | Quartus Project Generation | - |
+| `make map` | Synthesis | `config` |
+| `make fit` | Fitting | `map` | 
+| `make asm` | Bit Stream generation| `fit` |
+| `make sta` | Static Timing Analysis | `fit` |
+| `make check_timing` | Timing Violations | `sta` |
+| `make program` | Programing FPGA | `asm` |
+
+>[!NOTE]
+> **For GUI development:**
+> You can just open the .qsf file generated in `quartus/` after running `make config`
+
+>[!IMPORTANT]
+> 1. If you change Global SoC config parameters such as `SRAM_DEPTH` you need to recompile the project
+>  so Run `make clean` and start over
+> 2. Programming Your FPGA will be done through USB-Blaster and JTAG chain, if your setup is different modify the `program` target in the Makefile
+> 3. Make knows that previous steps in EDA flow should not be re-done, i.e, if you ran `map` stage you do not need to redo it if you run `fit` stage.
+
+# SoC `cxxrtl` Example (kws_soc)
 Implementation for a Simulated SoC model on `cxxrtl` with a jtag bitbanging wrapper testbench for `openocd` to connect to.
 
 ## Building
@@ -84,7 +118,7 @@ make
 ```
 
 >[!NOTE] 
-> This will result in compiling RTL into C++ code and compiling `example_soc_tb.cpp`, the output of which is the executable `example_soc_tb` this acts as your testbench and as a jtag server for `risv-openocd` to connect to.
+> This will result in compiling RTL into C++ code and compiling `kws_soc_tb.cpp`, the output of which is the executable `kws_soc_tb` this acts as your testbench and as a jtag server for `risv-openocd` to connect to.
 > More on `cxxrtl` [here](https://yosyshq.readthedocs.io/projects/yosys/en/0.38/cmd/write_cxxrtl.html).
 
 
@@ -97,9 +131,15 @@ You will need three terminals open.
 make run
 ```
 
+>[!NOTE]
+> To run the SoC with VCD dumping run:
+> ```bash
+> make run-vcd
+> ```
+
 You should see this output:
 ```
-./example_soc_tb --port 9824
+./kws_soc_tb --port 9824
 Waiting for connection on port 9824
 ```
 
@@ -134,7 +174,7 @@ Info : Listening on port 6666 for tcl connections
 Info : Listening on port 4444 for telnet connections
 ```
 
-You should see `Connected` in terminal 1 (`example_soc_tb` terminal).
+You should see `Connected` in terminal 1 (`kws_soc_tb` terminal).
 
 3. Now run `riscv32-unknown-elf-gdb` in the third terminal and run the following command:
 
@@ -174,4 +214,60 @@ file soc_test/asm/inf_loop.elf
 load
 ```
 
-Now your assembly code is loaded and you can start debugging.
+
+## Running Example C Code
+
+
+### Infinite Loop
+
+1. First compile the C code using the provided Makefile:
+
+```
+cd soc_test/c
+make
+cd ../..
+```
+
+2. Run the remote debugging session as mentioned in the "Running the SoC" section, except when running gdb run:
+```
+riscv32-unknown-elf-gdb -x gdbinit
+```
+
+3. Load your ELF in GDB:
+
+```
+file soc_test/c/inf_loop.elf
+load
+```
+
+Now your C code is loaded and you can start debugging.
+
+### Hello World
+
+1. First compile the C code using the provided Makefile:
+
+```
+cd soc_test/c
+make
+```
+
+2. Run the remote debugging session as mentioned in the "Running the SoC" section, except when running gdb run:
+```
+riscv32-unknown-elf-gdb -x gdbinit
+```
+
+3. Load your ELF in GDB:
+
+```
+file soc_test/c/hello_world.elf
+load
+```
+
+4. You can put breakpoints, or just run the program to find the uart output on the testbench `kws_soc_tb` terminal:
+
+```
+./kws_soc_tb --port 9824
+Waiting for connection on port 9824
+Connected
+Hello World!
+```

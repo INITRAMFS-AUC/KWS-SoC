@@ -6,11 +6,10 @@
 // Example file integrating a Hazard3 processor, processor JTAG + debug
 // components, some memory and a UART.
 
-`default_nettype none
 
-module example_soc #(
+module kws_soc #(
 	parameter DTM_TYPE   = "JTAG",  // Can be "JTAG" or "ECP5"
-	parameter SRAM_DEPTH = 1 << 15, // Default 32 kwords -> 128 kB
+	parameter SRAM_DEPTH = (1 << 15), 
 	parameter CLK_MHZ    = 12,      // For timer timebase
 
 	`include "hazard3_config.vh"
@@ -30,7 +29,6 @@ module example_soc #(
 	output wire              uart_tx /*verilator public_flat_rd*/,
 	input  wire              uart_rx /*verilator public_flat_rw*/
 );
-
 // ----------------------------------------------------------------------------
 // Processor debug
 
@@ -39,7 +37,7 @@ wire              dmi_penable;
 wire              dmi_pwrite;
 wire [8:0]        dmi_paddr;
 wire [31:0]       dmi_pwdata;
-reg  [31:0]       dmi_prdata;
+wire [31:0]       dmi_prdata;
 wire              dmi_pready;
 wire              dmi_pslverr;
 

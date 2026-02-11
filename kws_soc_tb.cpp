@@ -1,3 +1,6 @@
+// kws-soc based on Hazard3 implementation of tb_cxxrtl
+
+
 #include <iostream>
 #include <fstream>
 #include <cstdint>
@@ -13,6 +16,18 @@
 #include "dut.cpp"
 #include <cxxrtl/cxxrtl_vcd.h>
 
+// TODO: Delte todo or make this emit an error if not defined
+#ifndef CLK_MHZ
+    #error "CLK_MHZ is not defined. Check your Makefile variables!"
+#endif
+#ifndef UART_BAUD_RATE
+    #error "UART_BAUD_RATE is not defined. Check your Makefile variables!"
+#endif
+
+#define UART_IDLE 0
+#define UART_START 1
+#define UART_STOP 9
+
 // There must be a better way
 #ifdef __x86_64__
 #define I64_FMT "%ld"
@@ -23,7 +38,7 @@
 // -----------------------------------------------------------------------------
 
 const char *help_str =
-"Usage: example_soc_tb [--port n] [--vcd x.vcd] [--cycles n] \\\n"
+"Usage: kws_soc_tb [--port n] [--vcd x.vcd] [--cycles n] \\\n"
 "                      [--jtagdump x] [--jtagreplay x]\n"
 "\n"
 "    --vcd x.vcd      : Path to dump waveforms to\n"
@@ -178,7 +193,7 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	cxxrtl_design::p_example__soc top;
+	cxxrtl_design::p_kws__soc top;
 
 	std::ofstream waves_fd;
 	cxxrtl::vcd_writer vcd;
@@ -217,13 +232,35 @@ int main(int argc, char **argv) {
 
 		// UART TX monitoring (print to console)
 		bool uart_tx = top.p_uart__tx.get<bool>();
-		if (uart_tx != uart_tx_prev) {
+		static int uart_state = UART_IDLE; // 0=idle, 1=start, 2-9=data, 10=stop
+		static int uart_bit_timer = 0;
+		static int uart_shifter = 0;
+		const int uart_cycles_per_bit = (int)((CLK_MHZ * 1000000.0) / UART_BAUD_RATE);
+
+		if (uart_state == UART_IDLE) {
 			if (!uart_tx) {
-				// Start bit detected, could implement full UART decode here
-				// For now just note the transition
+				uart_state = UART_START;
+				uart_bit_timer = uart_cycles_per_bit + uart_cycles_per_bit / 2; // Wait 1.5 bit periods to sample middle of first data bit
 			}
-			uart_tx_prev = uart_tx;
+		} else {
+			if (--uart_bit_timer == 0) {
+				// if the uart is not idle, we are receiving data
+				if (uart_state >= UART_START && uart_state < UART_STOP) {
+					// shift the bit into our int buffer as long as uart_tx is up
+					uart_shifter |= (uart_tx ? 1 : 0) << (uart_state - 1);
+					uart_bit_timer = uart_cycles_per_bit;
+					uart_state++;
+				} else if (uart_state == UART_STOP) {
+					// if you want to be accurate, you should wait for the stop bit to finish
+					// but for simple print it's fine.
+					printf("%c", (char)uart_shifter);
+					fflush(stdout);
+					uart_shifter = 0;
+					uart_state = UART_IDLE;
+				}
+			}
 		}
+		uart_tx_prev = uart_tx;
 
 		// JTAG handling (same as tb.cpp)
 		bool got_exit_cmd = false;

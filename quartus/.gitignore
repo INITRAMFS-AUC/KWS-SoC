@@ -1,0 +1,39 @@
+# --- quartus/.gitignore ---
+
+quartus_source_files/
+*.cdf
+
+# Ignore Quartus compilation databases and outputs
+db/
+incremental_db/
+output_files/
+simulation/
+greybox_tmp/
+hc_output/
+.qsys_edit/
+hps_isw_handoff/
+hps_sdram_p0/
+
+# Ignore local user settings (window positions, etc.)
+*.qws
+*.qws_old
+*.qsf
+*.qpf
+
+# Ignore backup files
+*.bak
+*.orig
+*.rej
+*~
+
+# --- EXCEPTIONS (Whitelisting) ---
+# Ensure we strictly track project definitions and IP
+
+# Track constraints
+!*.sdc
+
+# Track IP definition files (Essential for PLLs)
+!*.qip
+!*.v
+!*.sv
+!*.ppf
