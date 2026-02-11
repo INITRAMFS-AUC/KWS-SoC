@@ -23,4 +23,5 @@ tags
 .vscode
 quartus/c5_pin_model_dump.txt
 soc_conf.sh
+# TODO: Add real template sh
 soc_conf_temp.sh
