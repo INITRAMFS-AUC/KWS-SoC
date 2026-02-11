@@ -177,7 +177,7 @@ ifeq ($(FPGA_BOARD), DE10S)
 	@echo "--- Programming FPGA (Device 2) ---"
 	$(PGM) -m jtag -c "$(CABLE_INDEX)" -o "p;$(SOF_FILE)@2"
 else
-	$(PGM) -c "1" -m JTAG -o "p;$(SOF_FILE)"
+	$(PGM) -c "USB-Blaster" -m JTAG -o "p;$(SOF_FILE)"
 endif
 
 test:
