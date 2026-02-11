@@ -16,6 +16,14 @@
 #include "dut.cpp"
 #include <cxxrtl/cxxrtl_vcd.h>
 
+// TODO: Delte todo or make this emit an error if not defined
+#ifndef CLK_MHZ
+    #error "CLK_MHZ is not defined. Check your Makefile variables!"
+#endif
+#ifndef UART_BAUD_RATE
+    #error "UART_BAUD_RATE is not defined. Check your Makefile variables!"
+#endif
+
 #define UART_IDLE 0
 #define UART_START 1
 #define UART_STOP 9
@@ -227,7 +235,7 @@ int main(int argc, char **argv) {
 		static int uart_state = UART_IDLE; // 0=idle, 1=start, 2-9=data, 10=stop
 		static int uart_bit_timer = 0;
 		static int uart_shifter = 0;
-		const int uart_cycles_per_bit = 8; // Default reset config
+		const int uart_cycles_per_bit = (int)((CLK_MHZ * 1000000.0) / UART_BAUD_RATE);
 
 		if (uart_state == UART_IDLE) {
 			if (!uart_tx) {

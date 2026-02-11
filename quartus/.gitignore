@@ -1,6 +1,7 @@
 # --- quartus/.gitignore ---
 
 quartus_source_files/
+*.cdf
 
 # Ignore Quartus compilation databases and outputs
 db/

@@ -11,22 +11,36 @@ DOTF      := soc.f
 ROOT_DIR  := $(shell pwd)
 
 # Use listfiles script to generate file list from .f file
-FILE_LIST 	 := $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
-FILE_LIST_VH := $(shell python3 $(SCRIPTS)/listfiles -f flat --auto-vh $(DOTF))
-SRC_LIST_IP_REL := $(shell find quartus/ip -name "*.qip")
-SRC_LIST_IP     := $(abspath $(SRC_LIST_IP_REL))
+FILE_LIST			:= $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
+FILE_LIST_VH 	:= $(shell python3 $(SCRIPTS)/listfiles -f flat --auto-vh $(DOTF))
+
+# FPGA device family and party, set by env shell with defaults being the de-10 standard
+FPGA_FAMILY ?= "Cyclone V"
+FPGA_PART   ?= 5CSXFC6D6F31C6
+FPGA_BOARD  ?= DE10S
+FPGA_FAMILY_CLEAN := $(strip $(subst ",,$(FPGA_FAMILY)))
+
+ifeq ($(FPGA_FAMILY_CLEAN), Cyclone IV E)
+    # Cyclone IV Settings
+    PLL_SRC       	:= quartus/ip/ALTPLL_25/ALTPLL_25.qip
+    VERILOG_MACROS 	+= CYCLONE_IV=1
+else
+    # Default to Cyclone V
+    PLL_SRC					:= quartus/ip/clock_pll_36/clock_pll_36.qip
+    VERILOG_MACROS 	+= CYCLONE_V=1
+endif
+SRC_LIST_IP     	:= $(abspath $(PLL_SRC))
 
 ## YOSYS VARS
-YOSYS_CONFIG    := default
-TBEXEC    			:= kws_soc_tb
-YOSYS_BUILD_DIR := yosys_build
-CLANGXX   			:= clang++
+YOSYS_CONFIG    		:= default
+TBEXEC    					:= kws_soc_tb
+YOSYS_BUILD_DIR 		:= yosys_build
+CLANGXX   					:= clang++
 
 ## QUARTUS VARS
-QUARTUS_DIR 				:= $(ROOT_DIR)/quartus
+QUARTUS_DIR 			:= $(ROOT_DIR)/quartus
 QUARTUS_PROJECT 		:= $(QUARTUS_DIR)/KWS-SoC
 QUARTUS_SRC_DIR 		:= $(QUARTUS_DIR)/quartus_src_dir
-QIP_COMPONENTS		  := $(shell find $(QUARTUS_DIR)/ip -name "*.qip")
 ALL_QUARTUS_SRCS 		:= $(sort $(FILE_LIST_VH) $(SRC_LIST_IP))
 
 # Sentinel files for Make to track
@@ -41,12 +55,44 @@ SOF_FILE  := $(QUARTUS_DIR)/output_files/KWS-SoC.sof
 CONSTRAINTS_SRC ?= $(QUARTUS_DIR)/CycloneV/DE10_Constraints.tcl
 TOP_FPGA        := fpga_top
 
-# FPGA device family and party, set by env shell with defaults being the de-10 standard
-FPGA_FAMILY ?= "Cyclone V"
-FPGA_PART   ?= 5CSXFC6D6F31C6
+# Clock config
+# WARNING TODO: Must be set to 36 as current PLL setup does not allow for anything else
+CLK_MHZ ?= 36
 
 # 128k Memory
 SRAM_DEPTH ?= 32768
+
+# UART config
+UART_BAUD_RATE ?= 115200
+# The remaining are hardcoded in uart_mini and thus useless
+UART_DATA_WIDTH := 8
+UART_PARITY := N
+UART_STOP_BITS := 1
+UART_FLOW_CONTROL := 0
+
+UART_CFLAGS := -DCLK_MHZ=$(CLK_MHZ) \
+               -DUART_BAUD_RATE=$(UART_BAUD_RATE) \
+               -DUART_DATA_WIDTH=$(UART_DATA_WIDTH) \
+               -DUART_STOP_BITS=$(UART_STOP_BITS)
+
+
+# Parity
+ifeq ($(UART_PARITY), N)
+    UART_CFLAGS += -DUART_PARITY_NONE
+else ifeq ($(UART_PARITY), E)
+    UART_CFLAGS += -DUART_PARITY_EVEN
+else ifeq ($(UART_PARITY), O)
+    UART_CFLAGS += -DUART_PARITY_ODD
+else
+    $(error Invalid UART_PARITY: $(UART_PARITY). Use N, E, or O)
+endif
+
+# Flow Control
+ifeq ($(UART_FLOW_CONTROL), 1)
+    UART_CFLAGS += -DUART_FLOW_CTRL_EN
+endif
+
+export GLOBAL_UART_CONFIG := $(UART_CFLAGS)
 
 # important: these show be in PATH, locate your quartus installation
 MAP := quartus_map
@@ -56,10 +102,9 @@ STA := quartus_sta
 PGM := quartus_pgm
 SH  := quartus_sh
 
+.PHONY: clean all lint sim map fit asm sta program test check_timing config
 
-.PHONY: clean all lint sim config map fit asm sta program check_timing
-
-all: $(TBEXEC)
+all: $(TBEXEC) test
 
 # Yosys synthesis command to generate CXXRTL C++ code
 YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(FILE_LIST);
@@ -72,7 +117,7 @@ $(YOSYS_BUILD_DIR)/dut.cpp: $(FILE_LIST) $(wildcard *.vh) $(DOTF)
 
 
 $(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp
-	$(CLANGXX) -O3 -std=c++14 $(addprefix -D,$(CDEFINES)) \
+	$(CLANGXX) -O3 -std=c++14 $(addprefix -D,$(CDEFINES)) $(UART_CFLAGS) \
 		-I$(shell yosys-config --datdir)/include/backends/cxxrtl/runtime \
 		-I$(YOSYS_BUILD_DIR) \
 		kws_soc_tb.cpp -o $(TBEXEC)
@@ -103,8 +148,9 @@ $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile
 
 # 1. Synthesis (Map)
 $(MAP_RPT): $(QSF_FILE) $(ALL_QUARTUS_SRCS)
-	@echo "--- Synthesizing with SRAM_DEPTH=$(SRAM_DEPTH) ---"
-	$(MAP) $(QUARTUS_PROJECT) --verilog_macro="SRAM_DEPTH=$(SRAM_DEPTH)"
+	@echo "--- Synthesizing ---"
+	$(MAP) $(QUARTUS_PROJECT) --verilog_macro="SRAM_DEPTH=$(SRAM_DEPTH)" \
+        	$(foreach m,$(VERILOG_MACROS),--verilog_macro="$(m)")
 
 # 2. Fitting (Place & Route)
 $(FIT_RPT): $(MAP_RPT)
@@ -116,13 +162,36 @@ $(ASM_RPT): $(FIT_RPT)
 	@echo "--- Generating Bitstream ---"
 	$(ASM) $(QUARTUS_PROJECT)
 
-# These just point to the real files above
-config: $(QSF_FILE)
-map:    $(MAP_RPT)
-fit:    $(FIT_RPT)
-asm:    $(ASM_RPT)
+# 4
+program: $(ASM_RPT)
+	@echo "--- Programming FPGA ---"
+ifeq ($(FPGA_BOARD), DE10S)
+	@echo "--- Detecting Cable Index ---"
+	$(eval CABLE_INDEX := $(shell jtagconfig -n | grep "DE-SoC" | head -n 1 | awk '{print $$1+0}'))
 
-sta: fit
+	@if [ -z "$(CABLE_INDEX)" ]; then \
+		echo "Error: No DE-SoC cable found!"; \
+		exit 1; \
+	fi
+	@echo "Using Cable Index: $(CABLE_INDEX)"
+	@echo "--- Programming FPGA (Device 2) ---"
+	$(PGM) -m jtag -c "$(CABLE_INDEX)" -o "p;$(SOF_FILE)@2"
+else
+	$(PGM) -c "USB-Blaster" -m JTAG -o "p;$(SOF_FILE)"
+endif
+
+test:
+	$(MAKE) -C soc_test/c
+
+
+# These just point to the real files above
+.PHONY: config map fit asm
+config: 	$(QSF_FILE)
+map:    	$(MAP_RPT)
+fit:    	$(FIT_RPT)
+asm:    	$(ASM_RPT)
+
+sta: $(FIT_RPT)
 	@echo "--- Running Timing Analysis ---"
 	$(STA) $(QUARTUS_PROJECT)
 
@@ -132,23 +201,8 @@ check_timing: sta
 	# This is a simple check; for robust CI, parse the report files in output_files/
 	$(SH) --tcl_eval "project_open $(QUARTUS_PROJECT); set x [get_timing_analysis_summary_results -model slow]; puts \$$x; project_close"
 
-# 6. Programming
-# JTAG mode, auto-detect cable. Replace 'USB-Blaster' with your specific cable name if needed.
-# TODO: Make this depend on asm without needing to rebuild everytime
-program:
-	@echo "--- Detecting Cable Index ---"
-	$(eval CABLE_INDEX := $(shell jtagconfig -n | grep "DE-SoC" | head -n 1 | awk '{print $$1+0}'))
-
-	@if [ -z "$(CABLE_INDEX)" ]; then \
-		echo "Error: No DE-SoC cable found!"; \
-		exit 1; \
-	fi
-	@echo "Using Cable Index: $(CABLE_INDEX)"
-
-	@echo "--- Programming FPGA (Device 2) ---"
-	$(PGM) -m jtag -c "$(CABLE_INDEX)" -o "p;$(SOF_FILE)@2"
-
 clean::
 	rm -rf $(YOSYS_BUILD_DIR) $(TBEXEC) *.vcd \
 				 $(QUARTUS_SRC_DIR) $(QUARTUS)/db/ $(QUARTUS)/incremental_db/ $(QUARTUS)/output_files/ \
 				 $(QUARTUS)/*.qws $(QUARTUS)/*.sof $(QUARTUS)/*.pof $(QUARTUS)/*.rpt $(QUARTUS)/*.cdf
+	$(MAKE) -C soc_test/c clean
