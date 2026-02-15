@@ -127,7 +127,7 @@ make
 
 ## Running C/ASM Tests
 
-All C and assembly tests are now organized under the `test/` directory. Example C tests are in `test/sanity_checks/c/` and `test/uart/c/`. To build and run all C/ASM tests:
+All C tests are now organized under `test/` directory. Example C tests are in `test/sanity_checks/c/` and `test/uart/c/`. To build and run all C tests:
 
 ```bash
 make test
@@ -145,7 +145,7 @@ Build artifacts are placed in `test/build/`.
 
 ## Running XIP (Execute-In-Place) Verilog Simulations
 
-XIP simulation tests are now fully integrated into the Makefile system. You can build and run the XIP Verilog testbenches (adapted from the shalan/SoC-Lab repo) using:
+You can build and run the XIP Verilog testbenches (adapted from the shalan/SoC-Lab repo) using:
 
 From the project root:
 ```bash
@@ -153,7 +153,7 @@ make test-xip
 ```
 This will:
 - Build the XIP Verilog testbench and all required HDL files
-- Copy the required `init.hex` to the simulation directory
+- Copy the required `init.hex` to the simulation directory for memory initialization.
 - Run the simulation using `vvp`
 
 Simulation output and temporary files are placed in `test/xip/build/`.
