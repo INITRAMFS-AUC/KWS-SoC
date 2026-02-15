@@ -14,13 +14,16 @@ shell config template can be found at `soc_conf.sh`, which is just a bunch of ex
 
 | Target | desc | depends on |
 | --- | --- | --- |
-| `make config` | Quartus Project Generation | - |
-| `make map` | Synthesis | `config` |
-| `make fit` | Fitting | `map` | 
-| `make asm` | Bit Stream generation| `fit` |
-| `make sta` | Static Timing Analysis | `fit` |
-| `make check_timing` | Timing Violations | `sta` |
-| `make program` | Programing FPGA | `asm` |
+| `make config`      | Quartus Project Generation         | -        |
+| `make map`         | Synthesis                         | `config` |
+| `make fit`         | Fitting                           | `map`    |
+| `make asm`         | Bit Stream generation             | `fit`    |
+| `make sta`         | Static Timing Analysis            | `fit`    |
+| `make check_timing`| Timing Violations                 | `sta`    |
+| `make program`     | Programming FPGA                  | `asm`    |
+| `make test`        | Build and test C/ASM code (see test/Makefile) | - |
+| `make test-xip`    | Build and run XIP Verilog simulations         | - |
+| `make clean`       | Clean all build artifacts                     | - |
 
 >[!NOTE]
 > **For GUI development:**
@@ -122,6 +125,54 @@ make
 > More on `cxxrtl` [here](https://yosyshq.readthedocs.io/projects/yosys/en/0.38/cmd/write_cxxrtl.html).
 
 
+## Running C/ASM Tests
+
+All C and assembly tests are now organized under the `test/` directory. Example C tests are in `test/sanity_checks/c/` and `test/uart/c/`. To build and run all C/ASM tests:
+
+```bash
+make test
+```
+
+You can also build individual test categories from within the `test/` directory:
+
+```bash
+cd test
+make sanity   # Sanity check tests
+make uart     # UART tests
+```
+
+Build artifacts are placed in `test/build/`.
+
+## Running XIP (Execute-In-Place) Verilog Simulations
+
+XIP simulation tests are now fully integrated into the Makefile system. You can build and run the XIP Verilog testbenches (adapted from the shalan/SoC-Lab repo) using:
+
+From the project root:
+```bash
+make test-xip
+```
+This will:
+- Build the XIP Verilog testbench and all required HDL files
+- Copy the required `init.hex` to the simulation directory
+- Run the simulation using `vvp`
+
+Simulation output and temporary files are placed in `test/xip/build/`.
+
+You can also run from the test directory:
+```bash
+cd test
+make xip
+```
+Or from the XIP test directory for more control:
+```bash
+cd test/xip
+make run         # Build and run the default cache testbench
+make run-cache   # Build and run the cache testbench
+make run-flash-ctrl # Build and run the flash controller testbench
+make run-ro-dmc  # Build and run the ro_dmc testbench
+```
+
+
 ## Running the SoC
 
 You will need three terminals open.
@@ -191,26 +242,22 @@ hazard3.cpu halted due to debug-request.
 
 ## Running Example Assembly Code
 
+
 1. First compile the assembly code:
-
+```bash
+riscv32-unknown-elf-as -march=rv32i -g -o test/common/inf_loop.o test/common/inf_loop.s
 ```
-riscv32-unknown-elf-as -march=rv32i -g -o soc_test/asm/inf_loop.o soc_test/asm/inf_loop.s
-```
-
 2. Now Link the object file with the linker script, to generate an ELF file:
+```bash
+riscv32-unknown-elf-ld -T test/common/inf_loop.ld -o test/build/inf_loop.elf test/common/inf_loop.o
 ```
-riscv32-unknown-elf-ld -T soc_test/asm/inf_loop.ld -o soc_test/asm/inf_loop.elf soc_test/asm/inf_loop.o
-```
-
 3. Run the remote debugging session as mentioned in the previous section expect when running gdb run:
-```
+```bash
 riscv32-unknown-elf-gdb -x gdbinit
 ```
-
 4. Load your ELF in GDB:
-
-```
-file soc_test/asm/inf_loop.elf
+```bash
+file test/build/inf_loop.elf
 load
 ```
 
@@ -220,23 +267,20 @@ load
 
 ### Infinite Loop
 
+
 1. First compile the C code using the provided Makefile:
-
-```
-cd soc_test/c
+```bash
+cd test/sanity_checks/c
 make
-cd ../..
+cd ../../..
 ```
-
 2. Run the remote debugging session as mentioned in the "Running the SoC" section, except when running gdb run:
-```
+```bash
 riscv32-unknown-elf-gdb -x gdbinit
 ```
-
 3. Load your ELF in GDB:
-
-```
-file soc_test/c/inf_loop.elf
+```bash
+file test/build/inf_loop.elf
 load
 ```
 
@@ -244,22 +288,19 @@ Now your C code is loaded and you can start debugging.
 
 ### Hello World
 
-1. First compile the C code using the provided Makefile:
 
-```
-cd soc_test/c
+1. First compile the C code using the provided Makefile:
+```bash
+cd test/uart/c
 make
 ```
-
 2. Run the remote debugging session as mentioned in the "Running the SoC" section, except when running gdb run:
-```
+```bash
 riscv32-unknown-elf-gdb -x gdbinit
 ```
-
 3. Load your ELF in GDB:
-
-```
-file soc_test/c/hello_world.elf
+```bash
+file test/build/hello_world.elf
 load
 ```
 
