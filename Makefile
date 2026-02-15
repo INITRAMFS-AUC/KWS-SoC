@@ -102,7 +102,7 @@ STA := quartus_sta
 PGM := quartus_pgm
 SH  := quartus_sh
 
-.PHONY: clean all lint sim map fit asm sta program test check_timing config
+.PHONY: clean all lint sim map fit asm sta program test test-xip check_timing config
 
 all: $(TBEXEC) test
 
@@ -183,6 +183,8 @@ endif
 test:
 	$(MAKE) -C test
 
+test-xip:
+	$(MAKE) -C test xip
 
 # These just point to the real files above
 .PHONY: config map fit asm

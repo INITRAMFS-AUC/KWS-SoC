@@ -32,9 +32,9 @@ sanity: $(SANITY_TARGETS)
 # UART targets  
 uart: $(UART_TARGETS)
 
-# XIP tests (placeholder - implement as needed)
+# XIP tests - Verilog simulations (auto-builds and runs)
 xip:
-	@echo "XIP tests not implemented yet"
+	$(MAKE) -C $(XIP_DIR) run
 
 # Build rules
 $(BUILD_DIR)/inf_loop.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/inf_loop.o
@@ -63,6 +63,7 @@ $(BUILD_DIR)/hello_world.dis: $(BUILD_DIR)/hello_world.elf
 # Clean up
 clean:
 	rm -rf $(BUILD_DIR) *.o *.elf *.dis
+	$(MAKE) -C $(XIP_DIR) clean
 
 # Phony targets
 .PHONY: all clean sanity uart xip
