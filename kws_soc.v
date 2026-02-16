@@ -546,6 +546,7 @@ ahbl_flash_ctrl_eb_cache #(
     .HCLK                (clk),
     .HRESETn             (rst_n),
 
+    .HSEL                (1'b1), // TODO: change splitter to avoid need for this
     .HADDR               (xip_haddr),
     .HTRANS              (xip_htrans),
     .HWRITE              (xip_),
