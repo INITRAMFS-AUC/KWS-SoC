@@ -61,9 +61,9 @@ The test performs:
 
 ## Pre-loading Data into Flash
 
-You must find a way to pre-load the flash with `test/xip/flash_init.hex`.
+You must find a way to pre-load the flash with `test/xip/c/init.hex`.
 
-### Flash Init File Format (`flash_init.hex`)
+### Flash Init File Format (`init.hex`)
 
 The file uses a simple hex format:
 ```
@@ -95,7 +95,7 @@ FE    ← byte at 0x02
 When CPU executes: `uint32_t val = *(uint32_t*)0x80000000;`  
 Result: `val == 0x12FEDCBA`
 
-### Current Test Data (`flash_init.hex`)
+### Current Test Data (`init.hex`)
 
 - **0x00-0x03:** 0x12FEDCBA
 - **0x04-0x07:** 0xA7A6A5A4
