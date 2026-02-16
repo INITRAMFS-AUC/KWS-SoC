@@ -192,6 +192,7 @@ testbench:
 config: 	$(QSF_FILE)
 map:    	$(MAP_RPT)
 fit:    	$(FIT_RPT)
+# TODO: asm does not correctly detect what to rerun for example sometimes it is necessary to recompile one module before attempting the top one
 asm:    	$(ASM_RPT)
 
 sta: $(FIT_RPT)
@@ -206,6 +207,6 @@ check_timing: sta
 
 clean::
 	rm -rf $(YOSYS_BUILD_DIR) $(TBEXEC) *.vcd \
-				 $(QUARTUS_SRC_DIR) $(QUARTUS)/db/ $(QUARTUS)/incremental_db/ $(QUARTUS)/output_files/ \
-				 $(QUARTUS)/*.qws $(QUARTUS)/*.sof $(QUARTUS)/*.pof $(QUARTUS)/*.rpt $(QUARTUS)/*.cdf
+				 $(QUARTUS_SRC_DIR) $(QUARTUS_DIR)/db/ $(QUARTUS_DIR)/incremental_db/ $(QUARTUS_DIR)/output_files/ \
+				 $(QUARTUS_DIR)/*.qws $(QUARTUS_DIR)/*.sof $(QUARTUS_DIR)/*.pof $(QUARTUS_DIR)/*.rpt $(QUARTUS_DIR)/*.cdf
 	$(MAKE) -C test clean
