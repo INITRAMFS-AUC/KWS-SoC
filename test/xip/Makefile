@@ -1,6 +1,6 @@
 # XIP Test Makefile
 ROOT_DIR = ../..
-XIP_HDL_DIR = $(ROOT_DIR)/xip/hdl
+XIP_HDL_DIR = $(ROOT_DIR)/xip
 TESTBENCH_DIR = testbench
 BUILD_DIR = build
 
@@ -14,6 +14,7 @@ TB_FLASH_CTRL = flash_ctrl_eb_tb
 TB_RO_DMC = ro_dmc_tb
 
 # HDL Sources
+# TODO: Make ths read xip.f for the first few files
 HDL_SRCS = \
 	$(XIP_HDL_DIR)/ahbl_flash_ctrl_eb_cache.v \
 	$(XIP_HDL_DIR)/flash_ctrl_eb.v \
