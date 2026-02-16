@@ -9,7 +9,7 @@
 
 module kws_soc #(
 	parameter DTM_TYPE   = "JTAG",  // Can be "JTAG" or "ECP5"
-	parameter SRAM_DEPTH = (1 << 15), 
+	parameter SRAM_DEPTH = (1 << 15),
 	parameter CLK_MHZ    = 12,      // For timer timebase
 
 	`include "hazard3_config.vh"
@@ -27,7 +27,14 @@ module kws_soc #(
 
 	// IO
 	output wire              uart_tx /*verilator public_flat_rd*/,
-	input  wire              uart_rx /*verilator public_flat_rw*/
+	input  wire              uart_rx /*verilator public_flat_rw*/,
+
+	// XIP
+	output wire              xip_csn,
+    output wire              xip_sck,
+    output wire [3:0]        xip_doe,
+    output wire [3:0]        xip_do,
+    input  wire [3:0]        flash_di
 );
 // ----------------------------------------------------------------------------
 // Processor debug
@@ -346,7 +353,7 @@ hazard3_cpu_1port #(
 // - UART at.......... 0x4000_4000
 
 // AHBL layer
-
+// Starting from 0x0 + 512 MB is all dedicated to sram
 wire               sram0_hready_resp;
 wire               sram0_hready;
 wire               sram0_hresp;
@@ -360,6 +367,7 @@ wire               sram0_hmastlock;
 wire [W_DATA-1:0]  sram0_hwdata;
 wire [W_DATA-1:0]  sram0_hrdata;
 
+// Starting from 0x4000_0000 + 512 MB is all dedicated to bridge
 wire               bridge_hready_resp;
 wire               bridge_hready;
 wire               bridge_hresp;
@@ -373,10 +381,25 @@ wire               bridge_hmastlock;
 wire [W_DATA-1:0]  bridge_hwdata;
 wire [W_DATA-1:0]  bridge_hrdata;
 
+// TODO: Verify that the W_ADDR and W_DATA values respect global config
+// Starting from 0x8000_0000 + 512 MB is all dedicated to XIP Flash
+wire               xip_hready_resp;
+wire               xip_hready;
+wire               xip_hresp;
+wire [W_ADDR-1:0]  xip_haddr;
+wire               xip_hwrite;
+wire [1:0]         xip_htrans;
+wire [2:0]         xip_hsize;
+wire [2:0]         xip_hburst;
+wire [3:0]         xip_hprot;
+wire               xip_hmastlock;
+wire [W_DATA-1:0]  xip_hwdata;
+wire [W_DATA-1:0]  xip_hrdata;
+
 ahbl_splitter #(
-	.N_PORTS     (2),
-	.ADDR_MAP    (64'h40000000_00000000),
-	.ADDR_MASK   (64'he0000000_e0000000)
+	.N_PORTS     (3),
+	.ADDR_MAP    (96'h80000000_40000000_00000000),
+	.ADDR_MASK   (96'he0000000_e0000000_e0000000)
 ) splitter_u (
 	.clk             (clk),
 	.rst_n           (rst_n),
@@ -394,18 +417,18 @@ ahbl_splitter #(
 	.src_hwdata      (proc_hwdata   ),
 	.src_hrdata      (proc_hrdata   ),
 
-	.dst_hready_resp ({bridge_hready_resp , sram0_hready_resp}),
-	.dst_hready      ({bridge_hready      , sram0_hready     }),
-	.dst_hresp       ({bridge_hresp       , sram0_hresp      }),
-	.dst_haddr       ({bridge_haddr       , sram0_haddr      }),
-	.dst_hwrite      ({bridge_hwrite      , sram0_hwrite     }),
-	.dst_htrans      ({bridge_htrans      , sram0_htrans     }),
-	.dst_hsize       ({bridge_hsize       , sram0_hsize      }),
-	.dst_hburst      ({bridge_hburst      , sram0_hburst     }),
-	.dst_hprot       ({bridge_hprot       , sram0_hprot      }),
-	.dst_hmastlock   ({bridge_hmastlock   , sram0_hmastlock  }),
-	.dst_hwdata      ({bridge_hwdata      , sram0_hwdata     }),
-	.dst_hrdata      ({bridge_hrdata      , sram0_hrdata     })
+	.dst_hready_resp ({xip_hready_resp , bridge_hready_resp , sram0_hready_resp}),
+	.dst_hready      ({xip_hready      , bridge_hready      , sram0_hready     }),
+	.dst_hresp       ({xip_hresp       , bridge_hresp       , sram0_hresp      }),
+	.dst_haddr       ({xip_haddr       , bridge_haddr       , sram0_haddr      }),
+	.dst_hwrite      ({xip_hwrite      , bridge_hwrite      , sram0_hwrite     }),
+	.dst_htrans      ({xip_htrans      , bridge_htrans      , sram0_htrans     }),
+	.dst_hsize       ({xip_hsize       , bridge_hsize       , sram0_hsize      }),
+	.dst_hburst      ({xip_hburst      , bridge_hburst      , sram0_hburst     }),
+	.dst_hprot       ({xip_hprot       , bridge_hprot       , sram0_hprot      }),
+	.dst_hmastlock   ({xip_hmastlock   , bridge_hmastlock   , sram0_hmastlock  }),
+	.dst_hwdata      ({xip_hwdata      , bridge_hwdata      , sram0_hwdata     }),
+	.dst_hrdata      ({xip_hrdata      , bridge_hrdata      , sram0_hrdata     })
 );
 
 // APB layer
@@ -513,6 +536,29 @@ ahb_sync_sram #(
 	.ahbls_hmastlock   (sram0_hmastlock),
 	.ahbls_hwdata      (sram0_hwdata),
 	.ahbls_hrdata      (sram0_hrdata)
+);
+
+// TODO: Make the following parameters config dependent
+ahbl_flash_ctrl_eb_cache #(
+    .LW(32*8),
+    .NL(32)
+) xip (
+    .HCLK                (clk),
+    .HRESETn             (rst_n),
+
+    .HADDR               (xip_haddr),
+    .HTRANS              (xip_htrans),
+    .HWRITE              (xip_),
+    .HREADY              (xip_hready),
+    .HREADYOUT           (xip_hready_resp),
+    .HRDATA              (xip_hrdata),
+
+    // External Interface to Quad I/O
+    .csn                  (xip_csn),
+    .sck                  (xip_sck),
+    .doe                  (xip_doe),
+    .do                   (xip_do),
+    .di                   (flash_di)
 );
 
 uart_mini uart_u (

@@ -3,19 +3,26 @@
 
 module fpga_top (
     // Physical FPGA Pins (Must match pins.tcl)
-    input wire  clk_50,
-    input wire  rst_n,
+    input wire          clk_50,
+    input wire          rst_n,
 
     // JTAG
-    input  wire tck,
-    input  wire trst_n,
-    input  wire tms,
-    input  wire tdi,
-    output wire tdo,
+    input  wire         tck,
+    input  wire         trst_n,
+    input  wire         tms,
+    input  wire         tdi,
+    output wire         tdo,
 
     // UART
-    output wire uart_tx,
-    input  wire uart_rx
+    output wire         uart_tx,
+    input  wire         uart_rx,
+
+	// XIP
+	output wire         xip_csn,
+    output wire         xip_sck,
+    output wire [3:0]   xip_doe,
+    output wire [3:0]   xip_do,
+    input  wire [3:0]   flash_di
 );
 
     // Instantiate the FPGA-Specific PLL
@@ -25,16 +32,16 @@ module fpga_top (
 
     `ifdef CYCLONE_V
         clock_pll_36 my_pll (
-            .refclk   (clk_50),      
-            .rst      (!rst_n),
-            .outclk_0 (sys_clk),  
-            .locked   (pll_locked)
+            .refclk     (clk_50),
+            .rst        (!rst_n),
+            .outclk_0   (sys_clk),
+            .locked     (pll_locked)
         );
     `elsif CYCLONE_IV
         ALTPLL_25 my_pll (
-            .inclk0 (clk_50),      
-            .c0     (sys_clk),  
-            .locked (pll_locked)
+            .inclk0     (clk_50),
+            .c0         (sys_clk),
+            .locked     (pll_locked)
         );
     `else
         initial $error("No PLL defined for this architecture!");
@@ -45,17 +52,23 @@ module fpga_top (
         .SRAM_DEPTH (`SRAM_DEPTH),
         .CLK_MHZ    (`CLK_MHZ)      	// Matches clock_pll_36 output // TODO: Make this linked to a global clk def instead of being a magic num
     ) soc_inst (
-        .clk     (sys_clk),   	// Connect PLL output to core input
-        .rst_n   (rst_n ),	// Safe Reset: Wait for PLL lock // Use & pll_locked for pll lock
+        .clk            (sys_clk),   	// Connect PLL output to core input
+        .rst_n          (rst_n ),	// Safe Reset: Wait for PLL lock // Use & pll_locked for pll lock
 
-        .tck     (tck),
-        .trst_n  (trst_n),
-        .tms     (tms),
-        .tdi     (tdi),
-        .tdo     (tdo),
+        .tck            (tck),
+        .trst_n         (trst_n),
+        .tms            (tms),
+        .tdi            (tdi),
+        .tdo            (tdo),
 
-        .uart_tx (uart_tx),
-        .uart_rx (uart_rx)
+        .uart_tx        (uart_tx),
+        .uart_rx        (uart_rx),
+
+        .xip_csn        (xip_csn),
+        .xip_sck        (xip_sck),
+        .xip_doe        (xip_doe),
+        .xip_do         (xip_do),
+        .flash_di       (flash_di)
     );
 
 endmodule
