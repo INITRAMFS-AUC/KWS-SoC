@@ -16,6 +16,8 @@
 #include "dut.cpp"
 #include <cxxrtl/cxxrtl_vcd.h>
 
+#include "sim/flashsim.h"
+
 // TODO: Delte todo or make this emit an error if not defined
 #ifndef CLK_MHZ
     #error "CLK_MHZ is not defined. Check your Makefile variables!"
@@ -49,6 +51,7 @@ const char *help_str =
 "    --jtagdump       : Dump OpenOCD JTAG bitbang commands to a file so they\n"
 "                       can be replayed. (Lower perf impact than VCD dumping)\n"
 "    --jtagreplay     : Play back some dumped OpenOCD JTAG bitbang commands\n"
+"    --flash x.bin    : Path to the firmware binary to load into QSPI flash\n"
 ;
 
 void exit_help(std::string errtext = "") {
@@ -88,6 +91,7 @@ int main(int argc, char **argv) {
 	std::string jtag_dump_path;
 	bool replay_jtag = false;
 	std::string jtag_replay_path;
+	std::string flash_bin_path = "";
 
 	for (int i = 1; i < argc; ++i) {
 		std::string s(argv[i]);
@@ -116,6 +120,12 @@ int main(int argc, char **argv) {
 			jtag_replay_path = argv[i + 1];
 			i += 1;
 		}
+		else if (s == "--flash") {
+            if (argc - i < 2)
+                exit_help("Option --flash requires an argument\n");
+            flash_bin_path = argv[i + 1];
+            i += 1;
+        }
 		else if (s == "--cycles") {
 			if (argc - i < 2)
 				exit_help("Option --cycles requires an argument\n");
@@ -193,6 +203,16 @@ int main(int argc, char **argv) {
 		}
 	}
 
+	// lglen=24 means 16MB of memory, debug=false, rddelay=1, ndummy=6
+	FLASHSIM qspi_flash(24, true, 1, 4);
+
+    if (!flash_bin_path.empty()) {
+        printf("Loading flash binary from %s\n", flash_bin_path.c_str());
+        qspi_flash.load(flash_bin_path.c_str());
+    } else {
+        printf("Warning: No --flash binary provided. Flash memory is empty (0xFF).\n");
+    }
+
 	cxxrtl_design::p_kws__soc top;
 
 	std::ofstream waves_fd;
@@ -222,6 +242,16 @@ int main(int argc, char **argv) {
 	bool uart_tx_prev = true;
 
 	for (int64_t cycle = 0; cycle < max_cycles || max_cycles == 0; ++cycle) {
+
+	    bool cs_n = top.p_xip__csn.get<bool>();
+        bool sck  = top.p_xip__sck.get<bool>();
+
+        uint8_t data_out = top.p_xip__do.get<uint32_t>();
+
+        int flash_response = qspi_flash(cs_n, sck, data_out);
+
+        top.p_flash__di.set<uint32_t>(flash_response & 0x0F);
+
 		top.p_clk.set<bool>(false);
 		top.step();
 		if (dump_waves)

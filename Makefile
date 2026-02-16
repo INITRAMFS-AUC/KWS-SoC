@@ -116,22 +116,27 @@ $(YOSYS_BUILD_DIR)/dut.cpp: $(FILE_LIST) $(wildcard *.vh) $(DOTF)
 	yosys -p '$(YOSYS_SYNTH_CMD)' 2>&1 | tee $(YOSYS_BUILD_DIR)/cxxrtl.log
 
 
-$(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp
+$(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp sim/flashsim.cpp sim/flashsim.h
 	$(CLANGXX) -O3 -std=c++14 $(addprefix -D,$(CDEFINES)) $(UART_CFLAGS) \
 		-I$(shell yosys-config --datdir)/include/backends/cxxrtl/runtime \
 		-I$(YOSYS_BUILD_DIR) \
-		kws_soc_tb.cpp -o $(TBEXEC)
+		-Isim \
+		kws_soc_tb.cpp sim/flashsim.cpp -o $(TBEXEC)
 
 lint:
 	verilator --lint-only --top-module $(TOP) -I$(HDL) $(FILE_LIST)
 
+# Allow passing a flash binary via `make sim FLASH=path/to/fw.bin`
+FLASH ?=
+FLASH_ARG = $(if $(FLASH),--flash $(FLASH),)
+
 # Helper target to run the cxxrtl testbench with default port
 sim: $(TBEXEC)
-	./$(TBEXEC) --port 9824
+	./$(TBEXEC) --port 9824 $(FLASH_ARG)
 
 # Helper target to run cxxrtl testbench with VCD dumping
 sim-vcd: $(TBEXEC)
-	./$(TBEXEC) --port 9824 --vcd waves.vcd
+	./$(TBEXEC) --port 9824 --vcd waves.vcd $(FLASH_ARG)
 
 # 0. Project Generation
 $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile

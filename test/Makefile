@@ -3,6 +3,7 @@ CROSS_COMPILE = riscv32-unknown-elf-
 CC = $(CROSS_COMPILE)gcc
 LD = $(CROSS_COMPILE)ld
 OBJDUMP = $(CROSS_COMPILE)objdump
+OBJCOPY = $(CROSS_COMPILE)objcopy
 
 # Directories
 BUILD_DIR = build
@@ -21,7 +22,8 @@ LDFLAGS = -T $(COMMON_DIR)/link.ld
 SANITY_TARGETS = $(BUILD_DIR)/inf_loop.elf $(BUILD_DIR)/inf_loop.dis
 UART_TARGETS = $(BUILD_DIR)/hello_world.elf $(BUILD_DIR)/hello_world.dis
 FLASH_TARGETS = $(BUILD_DIR)/flash_read_test.elf $(BUILD_DIR)/flash_read_test.dis
-ALL_TARGETS = $(SANITY_TARGETS) $(UART_TARGETS) $(FLASH_TARGETS)
+RAW_BIN_TARGETS = $(BUILD_DIR)/tests.elf $(BUILD_DIR)/tests.dis $(BUILD_DIR)/tests.bin
+ALL_TARGETS = $(SANITY_TARGETS) $(UART_TARGETS) $(FLASH_TARGETS) $(RAW_BIN_TARGETS)
 
 all: $(BUILD_DIR) $(ALL_TARGETS)
 
@@ -73,6 +75,18 @@ $(BUILD_DIR)/hello_world.dis: $(BUILD_DIR)/hello_world.elf
 
 $(BUILD_DIR)/flash_read_test.dis: $(BUILD_DIR)/flash_read_test.elf
 	$(OBJDUMP) -d $< > $@
+
+$(BUILD_DIR)/tests.o: $(XIP_C_DIR)/tests.S $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<
+
+$(BUILD_DIR)/tests.elf: $(BUILD_DIR)/tests.o
+	$(LD) $(LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/tests.dis: $(BUILD_DIR)/tests.elf
+	$(OBJDUMP) -d $< > $@
+
+$(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.elf
+	$(OBJCOPY) -O binary $< $@
 
 # Clean up
 clean:
