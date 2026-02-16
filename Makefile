@@ -183,8 +183,9 @@ endif
 test:
 	$(MAKE) -C test
 
-test-xip:
-	$(MAKE) -C test xip
+testbench:
+	# TODO: Make a python script that runs all testbenches using vvp and checks their output and gives a reprot
+	$(MAKE) -C test xip-testbench
 
 # These just point to the real files above
 .PHONY: config map fit asm

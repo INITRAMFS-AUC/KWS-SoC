@@ -27,7 +27,7 @@ TB_RO_DMC_SIM = $(BUILD_DIR)/$(TB_RO_DMC).out
 
 .PHONY: all clean run run-cache run-flash-ctrl run-ro-dmc
 
-all: run
+all: run-testbench
 
 # Create build directory
 $(BUILD_DIR):
@@ -77,9 +77,8 @@ run-ro-dmc: $(TB_RO_DMC_SIM)
 	cd $(BUILD_DIR) && $(VVP) $(TB_RO_DMC).out
 
 # Run all simulations
-run: run-cache
+run-testbench: run-cache
 
 # Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
-

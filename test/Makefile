@@ -4,7 +4,7 @@ CC = $(CROSS_COMPILE)gcc
 LD = $(CROSS_COMPILE)ld
 OBJDUMP = $(CROSS_COMPILE)objdump
 
-# Directories 
+# Directories
 BUILD_DIR = build
 COMMON_DIR = common
 SANITY_C_DIR = sanity_checks/c
@@ -31,15 +31,15 @@ $(BUILD_DIR):
 # Sanity check targets
 sanity: $(SANITY_TARGETS)
 
-# UART targets  
+# UART targets
 uart: $(UART_TARGETS)
 
 # Flash (XIP) targets
 flash: $(FLASH_TARGETS)
 
 # XIP tests - Verilog simulations (auto-builds and runs)
-xip:
-	$(MAKE) -C $(XIP_DIR) run
+xip-testbench:
+	$(MAKE) -C $(XIP_DIR) run-testbench
 
 # Build rules
 $(BUILD_DIR)/inf_loop.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/inf_loop.o
