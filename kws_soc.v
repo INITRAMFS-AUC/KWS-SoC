@@ -246,7 +246,7 @@ wire              timer_irq;
 
 hazard3_cpu_1port #(
 	// These must have the values given here for you to end up with a useful SoC:
-	.RESET_VECTOR    (32'h0000_0040),
+	.RESET_VECTOR    (32'h8000_0000),
 	.MTVEC_INIT      (32'h0000_0000),
 	.CSR_M_MANDATORY (1),
 	.CSR_M_TRAP      (1),
@@ -382,7 +382,8 @@ wire [W_DATA-1:0]  bridge_hwdata;
 wire [W_DATA-1:0]  bridge_hrdata;
 
 // TODO: Verify that the W_ADDR and W_DATA values respect global config
-// Starting from 0x8000_0000 + 512 MB is all dedicated to XIP Flash
+// Starting from 0x8000_0000 + 2 MB is all dedicated to XIP Flash
+// TODO: check if this this size might break anything?
 wire               xip_hready_resp;
 wire               xip_hready;
 wire               xip_hresp;
@@ -399,7 +400,7 @@ wire [W_DATA-1:0]  xip_hrdata;
 ahbl_splitter #(
 	.N_PORTS     (3),
 	.ADDR_MAP    (96'h80000000_40000000_00000000),
-	.ADDR_MASK   (96'he0000000_e0000000_e0000000)
+	.ADDR_MASK   (96'h00400000_e0000000_e0000000)
 ) splitter_u (
 	.clk             (clk),
 	.rst_n           (rst_n),

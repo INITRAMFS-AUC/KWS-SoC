@@ -203,7 +203,7 @@ int main(int argc, char **argv) {
 		}
 	}
 
-	// lglen=24 means 16MB of memory, debug=false, rddelay=1, ndummy=6
+	// lglen=24 means 16MB of memory, debug=true, rddelay=1, ndummy=6
 	FLASHSIM qspi_flash(24, true, 1, 4);
 
     if (!flash_bin_path.empty()) {

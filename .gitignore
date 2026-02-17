@@ -29,3 +29,8 @@ soc_conf_temp.sh
 # Simulation waveforms
 *.vcd
 *.fst
+*.gtkw
+
+# Personal notes
+notes.md
+images
