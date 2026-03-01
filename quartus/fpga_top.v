@@ -20,9 +20,7 @@ module fpga_top (
 	// XIP
 	output wire         xip_csn,
     output wire         xip_sck,
-    output wire [3:0]   xip_doe,
-    output wire [3:0]   xip_do,
-    input  wire [3:0]   flash_di
+    inout  wire [3:0]   flash_io   // Bidirectional QSPI data bus (IO0-IO3)
 );
 
     // Instantiate the FPGA-Specific PLL
@@ -47,6 +45,20 @@ module fpga_top (
         initial $error("No PLL defined for this architecture!");
     `endif
 
+
+    // Tristate buffers: merge internal do/doe/di onto the physical inout pads
+    wire [3:0] xip_doe;
+    wire [3:0] xip_do;
+    wire [3:0] flash_di_int; // Internal wires for flash data input
+
+    genvar i;
+    generate
+        for (i = 0; i < 4; i = i + 1) begin : qspi_io_buf
+            assign flash_io[i]    = xip_doe[i] ? xip_do[i] : 1'bz; // doe=1 → FPGA drives, doe=0 → High-Z (Flash drives)
+            assign flash_di_int[i] = flash_io[i];
+        end
+    endgenerate
+
     kws_soc #(
         .DTM_TYPE   (`DTM_TYPE),
         .SRAM_DEPTH (`SRAM_DEPTH),
@@ -68,7 +80,7 @@ module fpga_top (
         .xip_sck        (xip_sck),
         .xip_doe        (xip_doe),
         .xip_do         (xip_do),
-        .flash_di       (flash_di)
+        .flash_di       (flash_di_int)
     );
 
 endmodule

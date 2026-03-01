@@ -126,6 +126,9 @@ $(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp sim/flashsim.cpp sim/flashs
 lint:
 	verilator --lint-only --top-module $(TOP) -I$(HDL) $(FILE_LIST)
 
+lint_fpga:
+	verilator --lint-only --top-module $(TOP_FPGA) -I$(HDL) $(FILE_LIST)
+
 # Allow passing a flash binary via `make sim FLASH=path/to/fw.bin`
 FLASH ?=
 FLASH_ARG = $(if $(FLASH),--flash $(FLASH),)
