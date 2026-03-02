@@ -1,14 +1,12 @@
 OUTPUT_ARCH(riscv)
 ENTRY(_start)
 
-/* Define your memory map based on ahbl_splitter */
 MEMORY {
     SRAM (rwx)  : ORIGIN = 0x00000000, LENGTH = 128K
     FLASH (rx)  : ORIGIN = 0x80000000, LENGTH = 16M
 }
 
 SECTIONS {
-    /* Code and read-only data live in Flash */
     .text : {
         KEEP(*(.vectors))
         *(.text.init)
@@ -16,22 +14,22 @@ SECTIONS {
         *(.rodata .rodata.*)
         *(.srodata .srodata.*)
         . = ALIGN(4);
-        /* Mark the end of the Flash data. We will use this symbol in assembly
-           to know where to start copying from. */
         _sidata = .;
     } > FLASH
 
-    /* Initialized data has its VMA in SRAM, but LMA in FLASH */
     .data : AT(_sidata) {
         . = ALIGN(4);
-        _sdata = .;        /* Start of RAM data */
+        _sdata = .;
+
+        /* Define the global pointer for RISC-V linker relaxations */
+        PROVIDE(__global_pointer$ = . + 0x800);
+
         *(.data .data.*)
         *(.sdata .sdata.*)
         . = ALIGN(4);
-        _edata = .;        /* End of RAM data */
+        _edata = .;
     } > SRAM
 
-    /* Uninitialized data lives in SRAM (doesn't take up space in Flash) */
     .bss : {
         . = ALIGN(4);
         _sbss = .;
@@ -42,8 +40,8 @@ SECTIONS {
         _ebss = .;
     } > SRAM
 
-    /* Automatically set the stack pointer to the very top of SRAM */
-    PROVIDE(_stack_top = ORIGIN(SRAM) + LENGTH(SRAM));
+    /* Enforce 16-byte alignment for the stack top */
+    PROVIDE(_stack_top = ALIGN(ORIGIN(SRAM) + LENGTH(SRAM), 16));
 
     /DISCARD/ : { *(.note.GNU-stack) *(.comment) }
 }
