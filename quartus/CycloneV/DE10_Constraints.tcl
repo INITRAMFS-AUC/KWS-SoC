@@ -20,3 +20,5 @@ set_location_assignment PIN_AH5  -to flash_io[0]  -comment "GPIO 9"
 set_location_assignment PIN_AG1  -to flash_io[1]  -comment "GPIO 10"
 set_location_assignment PIN_AG2  -to flash_io[2]  -comment "GPIO 11"
 set_location_assignment PIN_AG3  -to flash_io[3]  -comment "GPIO 12"
+
+set_global_assignment -name STRATIX_DEVICE_IO_STANDARD "3.3-V LVTTL"

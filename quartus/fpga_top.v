@@ -24,7 +24,7 @@ module fpga_top (
 );
 
     // Instantiate the FPGA-Specific PLL
-    wire sys_clk;
+    (* keep = 1 *) wire sys_clk;
     // Optional: Can use to hold reset if needed
     wire pll_locked;
 
