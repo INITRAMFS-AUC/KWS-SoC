@@ -1,11 +1,13 @@
 // flash_read_test.c
-volatile int my_initialized_var = 42; // Goes to .data (copied from Flash)
-volatile int my_zeroed_var;           // Goes to .bss (zeroed by crt0.s)
+volatile int my_initialized_var = 42;
+volatile int my_zeroed_var;
 
 int main() {
-    // If crt0.s worked, my_initialized_var will be 42, not garbage.
-    my_initialized_var += 1;
-    my_zeroed_var = my_initialized_var;
+    volatile int *ptr = &my_initialized_var;
+    int val = *ptr;     // Explicit read
+    val += 1;           // Increment
+    *ptr = val;         // Write back
+    my_zeroed_var = val;
 
     while(1) {}
     return 0;
