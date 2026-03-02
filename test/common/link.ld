@@ -2,7 +2,7 @@ OUTPUT_ARCH(riscv)
 ENTRY(_start)
 
 MEMORY {
-    SRAM (rwx)  : ORIGIN = 0x00000000, LENGTH = 128K
+    SRAM (rwx)  : ORIGIN = 0x00000000, LENGTH = SRAM_SIZE
     FLASH (rx)  : ORIGIN = 0x80000000, LENGTH = 16M
 }
 
@@ -41,7 +41,7 @@ SECTIONS {
     } > SRAM
 
     /* Enforce 16-byte alignment for the stack top */
-    PROVIDE(_stack_top = ALIGN(ORIGIN(SRAM) + LENGTH(SRAM), 16));
+    PROVIDE(_stack_top = ORIGIN(SRAM) + LENGTH(SRAM) - 16);
 
     /DISCARD/ : { *(.note.GNU-stack) *(.comment) }
 }
