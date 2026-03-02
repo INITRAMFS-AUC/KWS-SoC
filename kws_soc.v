@@ -400,7 +400,7 @@ wire [W_DATA-1:0]  xip_hrdata;
 ahbl_splitter #(
 	.N_PORTS     (3),
 	.ADDR_MAP    (96'h80000000_40000000_00000000),
-	.ADDR_MASK   (96'h00400000_e0000000_e0000000)
+	.ADDR_MASK   (96'he0000000_e0000000_e0000000)
 ) splitter_u (
 	.clk             (clk),
 	.rst_n           (rst_n),
