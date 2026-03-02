@@ -12,7 +12,7 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=32*8, NL=32) (
 
     // External Interface to Quad I/O
     output wire                 csn,
-    output wire                 sck,
+    output wire                 sck, // TODO: depending on the supplied voltage and high performance requirements, the max sck is either 80, 104, or 120 Mhz. GD25Q32C Datasheet.
     output wire [3:0]           doe,
     output wire [3:0]           do,
     input  wire [3:0]           di
