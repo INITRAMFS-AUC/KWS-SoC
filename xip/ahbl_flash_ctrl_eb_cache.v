@@ -60,7 +60,7 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=32*8, NL=32) (
         .rst_n(HRESETn),
         .start(m_start),
         .done(done),
-        .A(last_HADDR[23:0]),
+        .A({last_HADDR[23:5], 5'b00000}), // TODO: verify this hardcoding
         .D(D),
         .csn(csn),
         .sck(sck),
@@ -85,13 +85,13 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=32*8, NL=32) (
         .m_done(done)
     );
 
-    always@ (posedge HCLK or negedge HRESETn) 
+    always@ (posedge HCLK or negedge HRESETn)
         if(~HRESETn) start <= 1'b0;
         else if(valid & ~cpu_hit) start <= 'b1;
         else start <= 'b0;
 
     reg hready;
-    always@ (posedge HCLK or negedge HRESETn) 
+    always@ (posedge HCLK or negedge HRESETn)
         if(~HRESETn) hready <= 1'b1;
         else if(valid & ~cpu_hit)  hready <= 'b0;
         else if(done & ~start)   hready <= 1'b1;
