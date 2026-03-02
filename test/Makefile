@@ -14,7 +14,7 @@ XIP_C_DIR = xip/c
 XIP_DIR = xip
 
 # Use rv32i to match the assembly example
-CFLAGS = -march=rv32i -g -c
+CFLAGS = -march=rv32i_zicsr -g -c
 CFLAGS += $(GLOBAL_UART_CONFIG)
 LDFLAGS = -T $(COMMON_DIR)/link.ld
 
