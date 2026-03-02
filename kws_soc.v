@@ -5,12 +5,12 @@
 
 // Example file integrating a Hazard3 processor, processor JTAG + debug
 // components, some memory and a UART.
-
+`include "kws_soc_config.vh"
 
 module kws_soc #(
-	parameter DTM_TYPE   = "JTAG",  // Can be "JTAG" or "ECP5"
-	parameter SRAM_DEPTH = (1 << 15),
-	parameter CLK_MHZ    = 12,      // For timer timebase
+    parameter DTM_TYPE   = `DTM_TYPE,
+    parameter SRAM_DEPTH = `SRAM_DEPTH,
+    parameter CLK_MHZ    = `CLK_MHZ, // For timer timebase
 
 	`include "hazard3_config.vh"
 ) (
@@ -550,7 +550,7 @@ ahbl_flash_ctrl_eb_cache #(
     .HSEL                (1'b1), // TODO: change splitter to avoid need for this
     .HADDR               (xip_haddr),
     .HTRANS              (xip_htrans),
-    .HWRITE              (xip_),
+    .HWRITE              (xip_hwrite),
     .HREADY              (xip_hready),
     .HREADYOUT           (xip_hready_resp),
     .HRDATA              (xip_hrdata),

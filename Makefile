@@ -62,6 +62,8 @@ CLK_MHZ ?= 36
 # 128k Memory
 SRAM_DEPTH ?= 32768
 
+export SRAM_DEPTH := $(SRAM_DEPTH)
+
 # UART config
 UART_BAUD_RATE ?= 115200
 # The remaining are hardcoded in uart_mini and thus useless
@@ -107,7 +109,7 @@ SH  := quartus_sh
 all: $(TBEXEC) test
 
 # Yosys synthesis command to generate CXXRTL C++ code
-YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(FILE_LIST);
+YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(FILE_LIST);
 YOSYS_SYNTH_CMD += hierarchy -top $(TOP);
 YOSYS_SYNTH_CMD += write_cxxrtl $(YOSYS_BUILD_DIR)/dut.cpp
 
@@ -124,10 +126,10 @@ $(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp sim/flashsim.cpp sim/flashs
 		kws_soc_tb.cpp sim/flashsim.cpp -o $(TBEXEC)
 
 lint:
-	verilator --lint-only --top-module $(TOP) -I$(HDL) $(FILE_LIST)
+	verilator --lint-only --top-module $(TOP) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) $(FILE_LIST)
 
 lint_fpga:
-	verilator --lint-only --top-module $(TOP_FPGA) -I$(HDL) $(FILE_LIST)
+	verilator --lint-only --top-module $(TOP_FPGA) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) $(FILE_LIST)
 
 # Allow passing a flash binary via `make sim FLASH=path/to/fw.bin`
 FLASH ?=
