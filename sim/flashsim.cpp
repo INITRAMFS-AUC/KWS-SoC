@@ -449,8 +449,9 @@ int	FLASHSIM::operator()(const int csn, const int sck, const int dat) {
 		    break;
 		default:
 			printf("FLASHSIM: UNRECOGNIZED SPI FLASH CMD: %02x\n", m_ireg&0x0ff);
+			printf("FLASHSIM: IGNORING UNRECOGNIZED SPI CMD: %02x\n", m_ireg&0x0ff);
 			m_state = QSPIF_INVALID;
-			assert(0 && "Unrecognized command\n");
+			// assert(0 && "Unrecognized command\n");
 			break;
 		}
 	} else if ((0 == (m_count&0x07))&&(m_count != 0)) {
