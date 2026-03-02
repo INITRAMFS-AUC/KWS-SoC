@@ -204,7 +204,7 @@ int main(int argc, char **argv) {
 	}
 
 	// lglen=24 means 16MB of memory, debug=true, rddelay=1, ndummy=6
-	FLASHSIM qspi_flash(24, true, 1, 4);
+	FLASHSIM qspi_flash(24, true, 1, 6);
 
     if (!flash_bin_path.empty()) {
         printf("Loading flash binary from %s\n", flash_bin_path.c_str());
