@@ -1,3 +1,4 @@
+set_global_assignment -name STRATIX_DEVICE_IO_STANDARD "3.3-V LVTTL"
 # Clock and Reset
 set_location_assignment PIN_AF14 -to clk_50 -comment Clock50
 set_location_assignment PIN_AB30 -to rst_n  -comment "Switch 0"
