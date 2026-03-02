@@ -246,8 +246,8 @@ wire              timer_irq;
 
 hazard3_cpu_1port #(
 	// These must have the values given here for you to end up with a useful SoC:
-	.RESET_VECTOR    (32'h8000_0000),
-	.MTVEC_INIT      (32'h0000_0000),
+	.RESET_VECTOR    (RESET_VECTOR),
+	.MTVEC_INIT      (MTVEC_INIT),
 	.CSR_M_MANDATORY (1),
 	.CSR_M_TRAP      (1),
 	.DEBUG_SUPPORT   (1),
