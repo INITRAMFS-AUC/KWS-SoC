@@ -126,7 +126,7 @@ module flash_ctrl_eb #(parameter LW = 256) (
         if(!rst_n)
             dbyte <= 'b0;
         else
-            if(bit_cntr > 39)
+            if(bit_cntr > 39) // TODO: add ~cntr[0] to ensure we only sample on posedge if timing issue arrises
                 case (bit_cntr[0])
                     0: dbyte[7:4] <= di;
                     1: dbyte[3:0] <= di;
