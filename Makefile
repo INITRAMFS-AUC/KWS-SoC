@@ -109,7 +109,7 @@ SH  := quartus_sh
 all: $(TBEXEC) test
 
 # Yosys synthesis command to generate CXXRTL C++ code
-YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(FILE_LIST);
+YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) -DSIMULATION=1 -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(FILE_LIST);
 YOSYS_SYNTH_CMD += hierarchy -top $(TOP);
 YOSYS_SYNTH_CMD += write_cxxrtl $(YOSYS_BUILD_DIR)/dut.cpp
 
@@ -126,10 +126,10 @@ $(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp sim/flashsim.cpp sim/flashs
 		kws_soc_tb.cpp sim/flashsim.cpp -o $(TBEXEC)
 
 lint:
-	verilator --lint-only --top-module $(TOP) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) $(FILE_LIST)
+	verilator --lint-only --top-module $(TOP) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) $(FILE_LIST)
 
 lint_fpga:
-	verilator --lint-only --top-module $(TOP_FPGA) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) $(FILE_LIST)
+	verilator --lint-only --top-module $(TOP_FPGA) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) $(FILE_LIST)
 
 # Allow passing a flash binary via `make sim FLASH=path/to/fw.bin`
 FLASH ?=
@@ -160,6 +160,7 @@ $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile
 $(MAP_RPT): $(QSF_FILE) $(ALL_QUARTUS_SRCS)
 	@echo "--- Synthesizing ---"
 	$(MAP) $(QUARTUS_PROJECT) --verilog_macro="SRAM_DEPTH=$(SRAM_DEPTH)" \
+			--verilog_macro="CLK_MHZ=$(CLK_MHZ)" \
         	$(foreach m,$(VERILOG_MACROS),--verilog_macro="$(m)")
 
 # 2. Fitting (Place & Route)

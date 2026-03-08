@@ -1,3 +1,7 @@
+`ifndef CLK_MHZ
+    `define CLK_MHZ 36
+`endif
+
 module flash_ctrl_eb #(parameter LW = 256) (
     input  wire             clk,
     input  wire             rst_n,
@@ -13,12 +17,21 @@ module flash_ctrl_eb #(parameter LW = 256) (
 );
     localparam ENDCNT = 80 + LW/2;
     localparam CNTRW = $clog2(80+LW/2);
+
+    // TODO: fix the slowdown this causes
+    `ifdef SIMULATION
+        localparam TRST_CYCLES = 2; // Fast bypass so testbenches don't time out
+    `else
+        localparam TRST_CYCLES = 30 * `CLK_MHZ; // Real 30us delay for hardware
+    `endif
+
+
     wire trans_off = (bit_cntr == 'd8) | (bit_cntr == 'd18) | (cntr == ENDCNT);
     wire trans_on = (start) | (cntr == 'd19) | (cntr == 'd39);
 
 
-    reg [10:0] delay_cntr;
-    wire in_tRST_delay = (cntr == 'd38) && (delay_cntr < 11'd1080);
+    reg [15:0] delay_cntr; // TODO: make size scale with TRST_CYCLES
+    wire in_tRST_delay = (cntr == 'd38) && (delay_cntr < TRST_CYCLES);
 
     always@(posedge clk, negedge rst_n) begin
         if(!rst_n) delay_cntr <= 0;
