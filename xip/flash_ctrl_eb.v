@@ -16,6 +16,16 @@ module flash_ctrl_eb #(parameter LW = 256) (
     wire trans_off = (bit_cntr == 'd8) | (bit_cntr == 'd18) | (cntr == ENDCNT);
     wire trans_on = (start) | (cntr == 'd19) | (cntr == 'd39);
 
+
+    reg [10:0] delay_cntr;
+    wire in_tRST_delay = (cntr == 'd38) && (delay_cntr < 11'd1080);
+
+    always@(posedge clk, negedge rst_n) begin
+        if(!rst_n) delay_cntr <= 0;
+        else if (in_tRST_delay) delay_cntr <= delay_cntr + 1;
+        else delay_cntr <= 0;
+    end
+
     reg run;
     always@(posedge clk, negedge rst_n)
         if(!rst_n)
@@ -29,7 +39,7 @@ module flash_ctrl_eb #(parameter LW = 256) (
     always@(posedge clk, negedge rst_n)
         if(!rst_n)
             first <= 1'b1;
-        else if(bit_cntr == 'd40) 
+        else if(bit_cntr == 'd40)
             first <= 1'b0;
 
     reg csn_reg;
@@ -51,7 +61,7 @@ module flash_ctrl_eb #(parameter LW = 256) (
             cntr <= 'b0;
         else if(start & ~first)
             cntr <= 'd56;
-        else if(run)
+        else if(run & ~in_tRST_delay)
             cntr <= cntr + 'b1;
 
     reg [3:0] do_reg;
@@ -138,7 +148,7 @@ module flash_ctrl_eb #(parameter LW = 256) (
             sck_reg <= 1'b0;
         else if(~csn)
             sck_reg <= ~sck_reg;
-        
+
     assign sck = sck_reg;
 
     assign done = (cntr > ENDCNT); //first ? (cntr>48) : csn;
