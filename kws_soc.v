@@ -54,6 +54,7 @@ wire dmihardreset_req;
 wire assert_dmi_reset = !rst_n || dmihardreset_req;
 wire rst_n_dmi;
 
+// TODO: investiagte how to reset everyone else properly
 reset_sync dmi_reset_sync_u (
 	.clk       (clk),
 	.rst_n_in  (!assert_dmi_reset),
@@ -403,7 +404,7 @@ ahbl_splitter #(
 	.ADDR_MASK   (96'he0000000_e0000000_e0000000)
 ) splitter_u (
 	.clk             (clk),
-	.rst_n           (rst_n),
+	.rst_n           (rst_n_cpu),
 
 	.src_hready_resp (proc_hready   ),
 	.src_hready      (proc_hready   ),
@@ -463,7 +464,7 @@ wire        timer_pslverr;
 
 ahbl_to_apb apb_bridge_u (
 	.clk               (clk),
-	.rst_n             (rst_n),
+	.rst_n             (rst_n_cpu),
 
 	.ahbls_hready      (bridge_hready),
 	.ahbls_hready_resp (bridge_hready_resp),
@@ -523,7 +524,7 @@ ahb_sync_sram #(
 	.DEPTH (SRAM_DEPTH)
 ) sram0 (
 	.clk               (clk),
-	.rst_n             (rst_n),
+	.rst_n             (rst_n_cpu),
 
 	.ahbls_hready_resp (sram0_hready_resp),
 	.ahbls_hready      (sram0_hready),
@@ -545,7 +546,7 @@ ahbl_flash_ctrl_eb_cache #(
     .NL(32)
 ) xip (
     .HCLK                (clk),
-    .HRESETn             (rst_n),
+    .HRESETn             (rst_n_cpu),
 
     .HSEL                (1'b1), // TODO: change splitter to avoid need for this
     .HADDR               (xip_haddr),
