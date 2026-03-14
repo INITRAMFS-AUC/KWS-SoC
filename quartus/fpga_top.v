@@ -1,6 +1,7 @@
 `default_nettype none
 `include "kws_soc_config.vh"
 
+// TODO: rst signal based on jtag needs to reach external flash somehow
 module fpga_top (
     // Physical FPGA Pins (Must match pins.tcl)
     input wire          clk_50,
