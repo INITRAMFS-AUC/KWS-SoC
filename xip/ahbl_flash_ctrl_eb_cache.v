@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module ahbl_flash_ctrl_eb_cache #(parameter LW=256) (
+module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
     input   wire                HCLK,
     input   wire                HRESETn,
     input   wire                HSEL,
@@ -10,7 +10,9 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256) (
     input   wire                HREADY,
     output  wire                HREADYOUT,
     output  wire [31:0]         HRDATA,
+    output  wire                HRESP,      // Added for AHB-Lite Compliance
 
+    // External Interface to Quad I/O
     output wire                 csn,
     output wire                 sck,
     output wire [3:0]           doe,
@@ -18,9 +20,12 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256) (
     input  wire [3:0]           di
 );
 
-    reg [31:0]  addr_reg;
-    reg [2:0]   state;
-    reg         start_reg;
+    // AHB-Lite OKAY Response
+    assign HRESP = 1'b0;
+
+    reg [31:0]   addr_reg;
+    reg [2:0]    state;
+    reg          start_reg;
     reg [LW-1:0] data_reg;
 
     // 4-Phase Handshake States
@@ -33,6 +38,7 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256) (
     wire flash_done;
     wire [LW-1:0] flash_data_bus;
 
+    // Request is valid ONLY for Reads
     wire valid_req = HSEL && HTRANS[1] && !HWRITE && HREADY;
 
     always @(posedge HCLK or negedge HRESETn) begin
@@ -40,7 +46,7 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256) (
             state     <= IDLE;
             start_reg <= 1'b0;
             addr_reg  <= 32'b0;
-            data_reg  <= 256'b0;
+            data_reg  <= {LW{1'b0}};
         end else begin
             case (state)
                 IDLE: begin
@@ -73,7 +79,7 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256) (
                 end
 
                 DONE: begin
-                    // Wait for Master to sample
+                    // Wait for Master to sample the data
                     if (HREADY) state <= IDLE;
                 end
 
@@ -82,8 +88,7 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256) (
         end
     end
 
-    // --- Clean Word Alignment (No Swaps) ---
-    // The raw data printout proved this maps perfectly to RISC-V expectations
+    // --- Clean Word Alignment ---
     wire [2:0]  word_idx = addr_reg[4:2];
     assign HRDATA = data_reg[word_idx * 32 +: 32];
 
