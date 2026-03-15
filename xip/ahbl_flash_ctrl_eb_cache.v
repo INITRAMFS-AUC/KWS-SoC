@@ -1,5 +1,6 @@
-module ahbl_flash_ctrl_eb_cache #(parameter LW=32*8, NL=32) (
-    // AHB-Lite Slave Interface
+`timescale 1ns / 1ps
+
+module ahbl_flash_ctrl_eb_cache #(parameter LW=256) (
     input   wire                HCLK,
     input   wire                HRESETn,
     input   wire                HSEL,
@@ -10,92 +11,94 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=32*8, NL=32) (
     output  wire                HREADYOUT,
     output  wire [31:0]         HRDATA,
 
-    // External Interface to Quad I/O
     output wire                 csn,
-    output wire                 sck, // TODO: depending on the supplied voltage and high performance requirements, the max sck is either 80, 104, or 120 Mhz. GD25Q32C Datasheet.
+    output wire                 sck,
     output wire [3:0]           doe,
     output wire [3:0]           do,
     input  wire [3:0]           di
 );
 
-    //AHB-Lite Address Phase Regs
-    reg             last_HSEL;
-    reg [31:0]      last_HADDR;
-    reg             last_HWRITE;
-    reg [1:0]       last_HTRANS;
-    reg             last_valid;
+    reg [31:0]  addr_reg;
+    reg [2:0]   state;
+    reg         start_reg;
+    reg [LW-1:0] data_reg;
 
-    wire            valid = HSEL & HTRANS[1] & HREADY;
+    // 4-Phase Handshake States
+    localparam IDLE       = 3'd0;
+    localparam START_CMD  = 3'd1;
+    localparam WAIT_LOW   = 3'd2;
+    localparam WAIT_HIGH  = 3'd3;
+    localparam DONE       = 3'd4;
 
-    wire            cpu_hit;
-    wire [31:0]     cpu_data;
-    wire [LW-1:0]   D;
-    wire [31:0]     m_data;
-    wire [31:0]     m_addr;
+    wire flash_done;
+    wire [LW-1:0] flash_data_bus;
 
-    always@ (posedge HCLK or negedge HRESETn)
-        if(~HRESETn) begin
-            last_HSEL   <= 'b0;
-            last_HADDR  <= 'b0;
-            last_HWRITE <= 'b0;
-            last_HTRANS <= 'b0;
-            last_valid  <= 'b0;
+    wire valid_req = HSEL && HTRANS[1] && !HWRITE && HREADY;
+
+    always @(posedge HCLK or negedge HRESETn) begin
+        if (!HRESETn) begin
+            state     <= IDLE;
+            start_reg <= 1'b0;
+            addr_reg  <= 32'b0;
+            data_reg  <= 256'b0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (valid_req) begin
+                        addr_reg  <= HADDR;
+                        start_reg <= 1'b1;
+                        state     <= START_CMD;
+                    end
+                end
+
+                START_CMD: begin
+                    start_reg <= 1'b0; // Pulse start for exactly 1 cycle
+                    state     <= WAIT_LOW;
+                end
+
+                WAIT_LOW: begin
+                    // Wait for Flash Controller to acknowledge the start
+                    // by clearing its 'done' flag
+                    if (!flash_done) begin
+                        state <= WAIT_HIGH;
+                    end
+                end
+
+                WAIT_HIGH: begin
+                    // Now wait for the actual fetch to finish
+                    if (flash_done) begin
+                        data_reg <= flash_data_bus;
+                        state    <= DONE;
+                    end
+                end
+
+                DONE: begin
+                    // Wait for Master to sample
+                    if (HREADY) state <= IDLE;
+                end
+
+                default: state <= IDLE;
+            endcase
         end
-        else if(HREADY) begin
-            last_HSEL   <= HSEL;
-            last_HADDR  <= HADDR;
-            last_HWRITE <= HWRITE;
-            last_HTRANS <= HTRANS;
-            last_valid  <= valid;
-        end
+    end
 
-    reg         start;
-    wire        done;
+    // --- Clean Word Alignment (No Swaps) ---
+    // The raw data printout proved this maps perfectly to RISC-V expectations
+    wire [2:0]  word_idx = addr_reg[4:2];
+    assign HRDATA = data_reg[word_idx * 32 +: 32];
 
-    //wire [23:0]  A;
-    //wire [31:0]  D;
+    // Stall the bus when not IDLE and not presenting DONE data
+    assign HREADYOUT = (state == IDLE) || (state == DONE);
 
+    // Flash Controller
     flash_ctrl_eb #(.LW(LW)) flash_ctrl (
         .clk(HCLK),
         .rst_n(HRESETn),
-        .start(m_start),
-        .done(done),
-        .A({last_HADDR[23:5], 5'b00000}), // TODO: verify this hardcoding
-        .D(D),
-        .csn(csn),
-        .sck(sck),
-        .doe(doe),
-        .do(do),
-        .di(di)
+        .start(start_reg),
+        .done(flash_done),
+        .A({addr_reg[23:5], 5'b00000}),
+        .D(flash_data_bus),
+        .csn(csn), .sck(sck), .doe(doe), .do(do), .di(di)
     );
-
-    ro_dmc #(.LW(LW), .NL(NL)) cache (
-        .clk(HCLK),
-        .rst_n(HRESETn),
-        // CPU/Bus Interface
-        .cpu_rd(valid),
-        .cpu_aaddr(HADDR),
-        .cpu_daddr(last_HADDR),
-        .cpu_hit(cpu_hit),
-        .cpu_data(HRDATA),
-        // Slow Memory Interface
-        .m_data(D),
-        //.m_addr(m_addr),
-        .m_start(m_start),
-        .m_done(done)
-    );
-
-    always@ (posedge HCLK or negedge HRESETn)
-        if(~HRESETn) start <= 1'b0;
-        else if(valid & ~cpu_hit) start <= 'b1;
-        else start <= 'b0;
-
-    reg hready;
-    always@ (posedge HCLK or negedge HRESETn)
-        if(~HRESETn) hready <= 1'b1;
-        else if(valid & ~cpu_hit)  hready <= 'b0;
-        else if(done & ~start)   hready <= 1'b1;
-
-    assign HREADYOUT = hready;
 
 endmodule

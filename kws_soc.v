@@ -407,7 +407,6 @@ ahbl_splitter #(
 	.rst_n           (rst_n_cpu),
 
 	.src_hready_resp (proc_hready   ),
-	.src_hready      (proc_hready   ),
 	.src_hresp       (proc_hresp    ),
 	.src_haddr       (proc_haddr    ),
 	.src_hwrite      (proc_hwrite   ),
@@ -540,6 +539,7 @@ ahb_sync_sram #(
 	.ahbls_hrdata      (sram0_hrdata)
 );
 
+wire xip_hsel_internal = (xip_haddr[31:28] == 4'h8);
 // TODO: Make the following parameters config dependent
 ahbl_flash_ctrl_eb_cache #(
     .LW(32*8),
@@ -548,7 +548,7 @@ ahbl_flash_ctrl_eb_cache #(
     .HCLK                (clk),
     .HRESETn             (rst_n_cpu),
 
-    .HSEL                (1'b1), // TODO: change splitter to avoid need for this
+    .HSEL                (xip_hsel_internal), // TODO: change splitter to avoid need for this
     .HADDR               (xip_haddr),
     .HTRANS              (xip_htrans),
     .HWRITE              (xip_hwrite),
