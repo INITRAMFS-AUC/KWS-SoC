@@ -152,17 +152,8 @@ module flash_ctrl_eb #(parameter LW = 256) (
             if(cntr[1:0] == 2'b0)
                 data <= {dbyte, data[LW-1:8]};
 
-    //assign sck = cntr[0] & ~csn;
-    reg sck_reg;
-    always@(posedge clk, negedge rst_n)
-        if(!rst_n)
-            sck_reg <= 1'b0;
-        else if(trans_off)
-            sck_reg <= 1'b0;
-        else if(~csn)
-            sck_reg <= ~sck_reg;
+    assign sck = cntr[0] & ~csn;
 
-    assign sck = sck_reg;
 
     assign done = (cntr > ENDCNT); //first ? (cntr>48) : csn;
     assign D = data;

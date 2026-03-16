@@ -344,7 +344,19 @@ hazard3_cpu_1port #(
 	.soft_irq                   (1'b0),
 	.timer_irq                  (timer_irq)
 );
+always @(posedge clk) begin
+    // sbus_vld means the DM is requesting a read/write
+    if (sbus_vld && sbus_rdy) begin
+        $display("[PROBE 1 - DM SBUS] OpenOCD requested Addr: %x | Write: %b", sbus_addr, sbus_write);
+    end
+end
 
+always @(posedge clk) begin
+    // proc_htrans[1] being HIGH means it's an active AHB transfer (NONSEQ or SEQ)
+    if (proc_htrans[1] && proc_hready) begin
+        $display("[PROBE 2 - AHB MASTER] CPU issuing AHB request to Addr: %x | Write: %b", proc_haddr, proc_hwrite);
+    end
+end
 
 // ----------------------------------------------------------------------------
 // Bus fabric
@@ -406,6 +418,8 @@ ahbl_splitter #(
 	.clk             (clk),
 	.rst_n           (rst_n_cpu),
 
+
+	.src_hready      (proc_hready   ),
 	.src_hready_resp (proc_hready   ),
 	.src_hresp       (proc_hresp    ),
 	.src_haddr       (proc_haddr    ),
@@ -538,7 +552,6 @@ ahb_sync_sram #(
 	.ahbls_hwdata      (sram0_hwdata),
 	.ahbls_hrdata      (sram0_hrdata)
 );
-
 wire xip_hsel_internal = (xip_haddr[31:28] == 4'h8);
 // TODO: Make the following parameters config dependent
 ahbl_flash_ctrl_eb_cache #(
@@ -555,6 +568,7 @@ ahbl_flash_ctrl_eb_cache #(
     .HREADY              (xip_hready),
     .HREADYOUT           (xip_hready_resp),
     .HRDATA              (xip_hrdata),
+    .HRESP               (xip_hresp),
 
     // External Interface to Quad I/O
     .csn                  (xip_csn),

@@ -80,7 +80,18 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
 
                 DONE: begin
                     // Wait for Master to sample the data
-                    if (HREADY) state <= IDLE;
+                    if (HREADY) begin
+                        if (valid_req) begin
+                            // Master is pipelining the next address phase!
+                            // Capture it and start the next flash read immediately.
+                            addr_reg  <= HADDR;
+                            start_reg <= 1'b1;
+                            state     <= START_CMD;
+                        end else begin
+                            // Bus is idle, go back to sleep
+                            state <= IDLE;
+                        end
+                    end
                 end
 
                 default: state <= IDLE;
@@ -105,5 +116,11 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
         .D(flash_data_bus),
         .csn(csn), .sck(sck), .doe(doe), .do(do), .di(di)
     );
+
+    always @(posedge HCLK) begin
+        if (valid_req) begin
+            $display("[AHB PROBE] XIP Wrapper received read request for Address: %h", HADDR);
+        end
+    end
 
 endmodule
