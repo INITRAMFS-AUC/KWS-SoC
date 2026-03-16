@@ -3,10 +3,6 @@
 |                     SPDX-License-Identifier: Apache-2.0                     |
 \*****************************************************************************/
 
-// Example file integrating a Hazard3 processor, processor JTAG + debug
-// components, some memory and a UART.
-
-
 module kws_soc #(
 	parameter DTM_TYPE   = "JTAG",  // Can be "JTAG" or "ECP5"
 	parameter SRAM_DEPTH = (1 << 15), 
@@ -27,6 +23,7 @@ module kws_soc #(
 
 	// IO
 	output wire              uart_tx /*verilator public_flat_rd*/,
+  output wire              sd,
 	input  wire              uart_rx /*verilator public_flat_rw*/
 );
 // ----------------------------------------------------------------------------
@@ -236,6 +233,7 @@ wire              unblock_out;
 
 wire              uart_irq;
 wire              timer_irq;
+wire              i2s_irq;
 
 hazard3_cpu_1port #(
 	// These must have the values given here for you to end up with a useful SoC:
@@ -244,7 +242,7 @@ hazard3_cpu_1port #(
 	.CSR_M_MANDATORY (1),
 	.CSR_M_TRAP      (1),
 	.DEBUG_SUPPORT   (1),
-	.NUM_IRQS        (1),
+	.NUM_IRQS        (3),
 	.RESET_REGFILE   (0),
 	// Can be overridden from the defaults in hazard3_config.vh during
 	// instantiation of example_soc():
@@ -331,7 +329,7 @@ hazard3_cpu_1port #(
 	.dbg_sbus_wdata             (sbus_wdata),
 	.dbg_sbus_rdata             (sbus_rdata),
 
-	.irq                        (uart_irq),
+	.irq                        ({uart_irq, i2s_irq}),
 
 	.soft_irq                   (1'b0),
 	.timer_irq                  (timer_irq)
@@ -375,8 +373,8 @@ wire [W_DATA-1:0]  bridge_hrdata;
 
 ahbl_splitter #(
 	.N_PORTS     (2),
-	.ADDR_MAP    (64'h40000000_00000000),
-	.ADDR_MASK   (64'he0000000_e0000000)
+	.ADDR_MAP    (64'h40000000_00000000_00000000),
+	.ADDR_MASK   (64'he0000000_e0000000_00000000)
 ) splitter_u (
 	.clk             (clk),
 	.rst_n           (rst_n),
@@ -437,6 +435,14 @@ wire [31:0] timer_prdata;
 wire        timer_pready;
 wire        timer_pslverr;
 
+wire        i2s_apbs_sel;
+wire        i2s_apbs_penable;
+wire        i2s_apbs_pwrite;
+wire [15:0] i2s_apbs_paddr;
+wire [31:0] i2s_apbs_pwdata;
+wire [31:0] i2s_apbs_prdata;
+wire        i2s_apbs_pready;
+
 ahbl_to_apb apb_bridge_u (
 	.clk               (clk),
 	.rst_n             (rst_n),
@@ -465,9 +471,9 @@ ahbl_to_apb apb_bridge_u (
 );
 
 apb_splitter #(
-	.N_SLAVES   (2),
-	.ADDR_MAP   (32'h4000_0000),
-	.ADDR_MASK  (32'hc000_c000)
+	.N_SLAVES   (3),
+	.ADDR_MAP   (48'h4000_0000_8000),
+	.ADDR_MASK  (48'hc000_c000_c000)
 ) inst_apb_splitter (
 	.apbs_paddr   (bridge_paddr),
 	.apbs_psel    (bridge_psel),
@@ -478,14 +484,14 @@ apb_splitter #(
 	.apbs_prdata  (bridge_prdata),
 	.apbs_pslverr (bridge_pslverr),
 
-	.apbm_paddr   ({uart_paddr   , timer_paddr  }),
+	.apbm_paddr   ({uart_paddr   , timer_paddr  , i2s_apbs_paddr    }),
 	.apbm_psel    ({uart_psel    , timer_psel   }),
-	.apbm_penable ({uart_penable , timer_penable}),
-	.apbm_pwrite  ({uart_pwrite  , timer_pwrite }),
-	.apbm_pwdata  ({uart_pwdata  , timer_pwdata }),
-	.apbm_pready  ({uart_pready  , timer_pready }),
-	.apbm_prdata  ({uart_prdata  , timer_prdata }),
-	.apbm_pslverr ({uart_pslverr , timer_pslverr})
+	.apbm_penable ({uart_penable , timer_penable, i2s_apbs_penable  }),
+	.apbm_pwrite  ({uart_pwrite  , timer_pwrite , i2s_apbs_pwrite   }),
+	.apbm_pwdata  ({uart_pwdata  , timer_pwdata , i2s_apbs_pwdata   }),
+	.apbm_pready  ({uart_pready  , timer_pready , i2s_apbs_pready   }),
+	.apbm_prdata  ({uart_prdata  , timer_prdata , i2s_apbs_prdata   }),
+	.apbm_pslverr ({uart_pslverr , timer_pslverr })
 );
 
 // ----------------------------------------------------------------------------
@@ -535,6 +541,24 @@ uart_mini uart_u (
 	.irq          (uart_irq),
 	.dreq         (/* unused */)
 );
+
+apb_i2s_receiver apb_i2s (
+  .clk (clk),
+  .rst_n (rst_n),
+  .sd (sd),
+
+  .apbs_psel    (i2s_apbs_sel),
+  .apbs_penable (i2s_apbs_penable),
+  .apbs_pwrite  (i2s_apbs_pwrite),
+  .apbs_paddr   (i2s_apbs_paddr),
+  .apbs_pwdata  (i2s_apbs_pwdata),
+  .apbs_prdata  (i2s_apbs_prdata),
+  .apbs_pready  (i2s_apbs_pready),
+
+  .sck_out      (), // left empty for now until a proper clock tree is made
+  .i2s_irq      (i2s_irq)
+);
+
 
 // Microsecond timebase for timer
 
