@@ -243,22 +243,38 @@ int main(int argc, char **argv) {
 
 	for (int64_t cycle = 0; cycle < max_cycles || max_cycles == 0; ++cycle) {
 
-	    bool cs_n = top.p_xip__csn.get<bool>();
-        bool sck  = top.p_xip__sck.get<bool>();
+        // --- FIRST HALF-CYCLE (CLK LOW) ---
+        top.p_clk.set<bool>(false);
+        top.step();
 
+        // Flash sees the new SCK state after CLK falls
+        bool cs_n = top.p_xip__csn.get<bool>();
+        bool sck  = top.p_xip__sck.get<bool>();
         uint8_t data_out = top.p_xip__do.get<uint32_t>();
 
-        int flash_response = qspi_flash(cs_n, sck, data_out);
+        static bool last_csn = true;
+        if (cs_n != last_csn) {
+            printf("\n[Cycle %ld] HARDWARE TRIGGERED: CSN went %s!\n", cycle, cs_n ? "HIGH" : "LOW");
+            last_csn = cs_n;
+        }
 
+        int flash_response = qspi_flash(cs_n, sck, data_out);
         top.p_flash__di.set<uint32_t>(flash_response & 0x0F);
 
-		top.p_clk.set<bool>(false);
-		top.step();
-		if (dump_waves)
-			vcd.sample(cycle * 2);
-		top.p_clk.set<bool>(true);
-		top.step();
-		top.step(); // workaround for github.com/YosysHQ/yosys/issues/2780
+        if (dump_waves) vcd.sample(cycle * 2);
+
+        // --- SECOND HALF-CYCLE (CLK HIGH) ---
+        top.p_clk.set<bool>(true);
+        top.step();
+        top.step(); // workaround for github.com/YosysHQ/yosys/issues/2780
+
+        // Flash sees the new SCK state after CLK rises
+        cs_n = top.p_xip__csn.get<bool>();
+        sck  = top.p_xip__sck.get<bool>();
+        data_out = top.p_xip__do.get<uint32_t>();
+
+        flash_response = qspi_flash(cs_n, sck, data_out);
+        top.p_flash__di.set<uint32_t>(flash_response & 0x0F);
 
 		// UART TX monitoring (print to console)
 		bool uart_tx = top.p_uart__tx.get<bool>();
