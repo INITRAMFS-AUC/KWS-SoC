@@ -22,7 +22,7 @@ module ro_dmc_tb;
         .cpu_rd(cpu_rd),
         .cpu_aaddr(cpu_aaddr),
         .cpu_daddr(cpu_daddr),
-        .cpu_hit(cpu_hit),
+        .cpu_ahit(cpu_hit),
         .cpu_data(cpu_data),
         .m_data(m_data),
         .m_addr(m_addr),
@@ -30,7 +30,7 @@ module ro_dmc_tb;
         .m_done(m_done)
     );
 
-    // --- Mock Flash Memory Behavior ---
+    // --- Smart Mock Flash Memory ---
     reg [3:0] flash_delay;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -39,7 +39,7 @@ module ro_dmc_tb;
             flash_delay <= 0;
         end else begin
             if (m_start && flash_delay == 0) begin
-                flash_delay <= 5; // Emulate 5 cycle latency
+                flash_delay <= 5;
                 m_done <= 0;
             end else if (flash_delay > 1) begin
                 flash_delay <= flash_delay - 1;
@@ -47,15 +47,44 @@ module ro_dmc_tb;
             end else if (flash_delay == 1) begin
                 flash_delay <= 0;
                 m_done <= 1;
-                // Generate dummy data: [Word 1=0x11111111, Word 0=0x00000000] etc.
-                m_data <= { {224{1'b0}}, 32'h33333333, 32'h22222222, 32'h11111111, 32'h00000000 };
+                // Generate dynamic data based on the requested address
+                // Word 0 = base addr, Word 1 = base+4, Word 2 = base+8...
+                m_data <= { {256{1'b0}},
+                            m_addr + 32'h1c, m_addr + 32'h18,
+                            m_addr + 32'h14, m_addr + 32'h10,
+                            m_addr + 32'h0c, m_addr + 32'h08,
+                            m_addr + 32'h04, m_addr };
             end else begin
                 m_done <= 0;
             end
         end
     end
 
-    // --- AHB Pipeline Emulation ---
+    // --- AHB Pipeline Emulation Task ---
+    task ahb_read(input [31:0] addr);
+    begin
+        // 1. Address Phase Setup
+        cpu_rd    <= 1;
+        cpu_aaddr <= addr;
+
+        // Wait for the clock edge where the cache samples the request
+        @(posedge clk);
+
+        // 2. Emulate AHB Stall (HREADY)
+        // We use #1 to avoid delta-cycle race conditions with combinational logic
+        #1;
+        while (!cpu_hit) begin
+            @(posedge clk);
+            #1;
+        end
+
+        // 3. Move to Data Phase
+        cpu_rd    <= 0;
+        cpu_daddr <= addr;
+        @(posedge clk);
+    end
+    endtask
+
     initial begin
         cpu_rd = 0;
         cpu_aaddr = 0;
@@ -64,45 +93,23 @@ module ro_dmc_tb;
         @(posedge rst_n);
         @(posedge clk);
 
-        $display("\n--- Test 1: Cold Miss on 0x8000_0000 ---");
-        // Address Phase
-        cpu_rd = 1;
-        cpu_aaddr = 32'h8000_0000;
-        @(posedge clk);
+        $display("\n--- Test 1: Cold Miss on 0x8000_0000 (Index 0) ---");
+        ahb_read(32'h8000_0000);
+        $display("Data received: %h (Expected: 80000000) | Hit: %b", cpu_data, cpu_hit);
 
-        // Data Phase begins (but cache misses, so bus stalls)
-        cpu_rd = 0;
-        cpu_daddr = 32'h8000_0000;
+        $display("\n--- Test 2: Cache Hit on Next Word 0x8000_0004 ---");
+        ahb_read(32'h8000_0004);
+        $display("Data received: %h (Expected: 80000004) | Hit: %b", cpu_data, cpu_hit);
 
-        // Wait for cache hit (which happens when m_done fires)
-        wait(cpu_hit);
-        @(posedge clk);
-        $display("Data received: %h (Expected: 00000000)", cpu_data);
+        $display("\n--- Test 3: Eviction/Collision Miss on 0x8000_1000 ---");
+        ahb_read(32'h8000_1000);
+        $display("Data received: %h (Expected: 80001000) | Hit: %b", cpu_data, cpu_hit);
 
+        $display("\n--- Test 4: Thrashing Miss back to 0x8000_0000 ---");
+        ahb_read(32'h8000_0000);
+        $display("Data received: %h (Expected: 80000000) | Hit: %b", cpu_data, cpu_hit);
 
-        $display("\n--- Test 2: Cache Hit on Next Word (0x8000_0004) ---");
-        cpu_rd = 1;
-        cpu_aaddr = 32'h8000_0004;
-        @(posedge clk);
-
-        cpu_rd = 0;
-        cpu_daddr = 32'h8000_0004;
-        @(posedge clk);
-        $display("Data received: %h (Expected: 11111111) | Hit: %b", cpu_data, cpu_hit);
-
-
-        $display("\n--- Test 3: Cache Hit on Another Word (0x8000_0008) ---");
-        cpu_rd = 1;
-        cpu_aaddr = 32'h8000_0008;
-        @(posedge clk);
-
-        cpu_rd = 0;
-        cpu_daddr = 32'h8000_0008;
-        @(posedge clk);
-        $display("Data received: %h (Expected: 22222222) | Hit: %b", cpu_data, cpu_hit);
-
-        #100;
+        #50;
         $finish;
     end
-
 endmodule

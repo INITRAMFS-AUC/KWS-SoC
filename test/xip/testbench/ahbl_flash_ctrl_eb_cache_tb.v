@@ -31,67 +31,76 @@ module ahbl_flash_ctrl_eb_cache_tb;
         .csn(csn), .sck(sck), .doe(doe), .do(do), .di(di)
     );
 
-    // Flash Model Connection
-    wire [3:0] SIO = (doe == 4'b1111) ? do : 4'bzzzz;
+    // Correctly handle tri-state bidirectional logic per pin based on doe mask
+    wire [3:0] SIO;
+    assign SIO[0] = doe[0] ? do[0] : 1'bz;
+    assign SIO[1] = doe[1] ? do[1] : 1'bz;
+    assign SIO[2] = doe[2] ? do[2] : 1'bz;
+    assign SIO[3] = doe[3] ? do[3] : 1'bz;
+
     assign di = SIO;
     sst26wf080b FLASH (.SCK(sck), .SIO(SIO), .CEb(csn));
 
-    // Monitor
     initial begin
-        $dumpfile("ahbl_cacheless_tb.vcd");
+        $dumpfile("ahbl_cache_tb.vcd");
         $dumpvars(0, ahbl_flash_ctrl_eb_cache_tb);
     end
 
     // Test Procedure
+    // Test Procedure
     initial begin
-        // 1. Load the Flash memory!
-        #1 $readmemh("init.hex", FLASH.I0.memory);
+        // Explicitly define boundaries to silence 1364-2005 warning
+        // Assuming your flash memory array is defined as [0:MAX_ADDR]
+        #1 $readmemh("init.hex", FLASH.I0.memory, 0, 1048575); // Adjust limit to your model size
 
-        // 2. Reset
         #100 HRESETn = 1;
         repeat(5) @(posedge HCLK);
 
-        // 3. Sequential Read Test (0x00, 0x04, 0x08)
-        // Since this is cacheless, each one will trigger a full SPI fetch
-        $display("[%0t] Starting Cacheless Reads...", $time);
+        $display("\n[%0t] Starting Cached Pipeline Reads...", $time);
 
+        // 1. Cold Miss
+        $display("[%0t] Issuing Read to 0x80000000 (Expect Stall)", $time);
         ahb_read(32'h80000000);
-        $display("[%0t] Read 0x00: %h (Expected: 0100006f)", $time, HRDATA);
+        $display("[%0t] Completed 0x00: %h", $time, HRDATA);
 
+        // 2. Cache Hit
+        $display("[%0t] Issuing Read to 0x80000004 (Expect Instant Hit)", $time);
         ahb_read(32'h80000004);
-        $display("[%0t] Read 0x04: %h", $time, HRDATA);
-
-        ahb_read(32'h80000018);
-        $display("[%0t] Read 0x18: %h (Expected: 30529073)", $time, HRDATA);
+        $display("[%0t] Completed 0x04: %h", $time, HRDATA);
 
         #1000;
-        $finish;
+        $finish; // End cleanly here. Ensure there are no other $finish calls!
     end
 
-    // Simple AHB-Lite Read Task
+    // AHB-Lite Read Task with Cycle Counting
     task ahb_read(input [31:0] addr);
+        integer stall_cycles;
         begin
-            // 1. Wait for Slave to be ready for Address Phase
-            while(!HREADYOUT) @(posedge HCLK);
+            stall_cycles = 0;
 
-            // 2. Drive Address Phase
+            // Address Phase
+            while(!HREADYOUT) @(posedge HCLK);
             HADDR  <= addr;
-            HTRANS <= 2'b10;
+            HTRANS <= 2'b10; // NONSEQ
             HWRITE <= 1'b0;
 
-            // 3. Move to Data Phase (Slave will drop HREADYOUT on this edge)
+            // Move to Data Phase
             @(posedge HCLK);
-            #1; // Delay to allow Slave state machine to transition
-            HADDR  <= 32'hBAADF00D; // Change address to prove lockout
-            HTRANS <= 2'b00;
+            #1;
+            HADDR  <= 32'hBAADF00D; // Prove lockout
+            HTRANS <= 2'b00;        // IDLE
 
-            // 4. Wait for Slave to finish Fetching
-            // Data is valid ONLY when HREADYOUT returns to 1
-            while(!HREADYOUT) @(posedge HCLK);
+            // Wait Phase (Count stalls)
+            while (!HREADYOUT) begin
+                stall_cycles = stall_cycles + 1;
+                @(posedge HCLK);
+                #1;
+            end
 
-            // The rising edge has occurred where HREADYOUT is 1.
-            // In a real CPU, the data is sampled EXACTLY at this posedge.
-            $display("[%0t] TB: Sampled HRDATA for %h = %h", $time, addr, HRDATA);
+            if (stall_cycles > 0)
+                $display("      -> Cache MISS. Bus stalled for %0d cycles.", stall_cycles);
+            else
+                $display("      -> Cache HIT. 0 wait states.");
         end
     endtask
 endmodule
