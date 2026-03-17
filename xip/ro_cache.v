@@ -1,3 +1,4 @@
+// TODO: Next-Line Prefetching, Critical-Word-First / Early Restart, Software Cache Invalidation on firmware update
 module ro_dmc #(parameter LW=32*16, NL=64) (
     input  wire             clk,
     input  wire             rst_n,
