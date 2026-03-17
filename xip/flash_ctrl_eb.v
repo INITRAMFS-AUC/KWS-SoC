@@ -1,3 +1,5 @@
+// TODO: current we have a clk divider of 2, but a very fast clk would mean it would be too fast for flash
+// so a param for prescalar and a ODDR for Clock Forwarding is needed
 `ifndef CLK_MHZ
     `define CLK_MHZ 36
 `endif
