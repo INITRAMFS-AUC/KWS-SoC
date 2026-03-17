@@ -78,7 +78,7 @@ run-ro-dmc: $(TB_RO_DMC_SIM)
 	cd $(BUILD_DIR) && $(VVP) $(TB_RO_DMC).out
 
 # Run all simulations
-run-testbench: run-cache
+run-testbench: run-cache run-ro-dmc run-flash-ctrl
 
 # Clean build artifacts
 clean:
