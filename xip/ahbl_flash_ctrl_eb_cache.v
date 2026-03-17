@@ -10,7 +10,7 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
     input   wire                HREADY,
     output  wire                HREADYOUT,
     output  wire [31:0]         HRDATA,
-    output  wire                HRESP,      // Added for AHB-Lite Compliance
+    output  wire                HRESP,
 
     // External Interface to Quad I/O
     output wire                 csn,
@@ -20,105 +20,119 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
     input  wire [3:0]           di
 );
 
-    // AHB-Lite OKAY Response
-    assign HRESP = 1'b0;
+    assign HRESP = 1'b0; // Always OKAY
 
-    reg [31:0]   addr_reg;
-    reg [2:0]    state;
-    reg          start_reg;
-    reg [LW-1:0] data_reg;
+    // --- AHB Pipeline Tracking ---
+    // A valid address phase request
+    wire address_phase_req = HSEL && HTRANS[1] && !HWRITE && HREADY;
 
-    // 4-Phase Handshake States
-    localparam IDLE       = 3'd0;
-    localparam START_CMD  = 3'd1;
-    localparam WAIT_LOW   = 3'd2;
-    localparam WAIT_HIGH  = 3'd3;
-    localparam DONE       = 3'd4;
-
-    wire flash_done;
-    wire [LW-1:0] flash_data_bus;
-
-    // Request is valid ONLY for Reads
-    wire valid_req = HSEL && HTRANS[1] && !HWRITE && HREADY;
+    // We must track what is happening in the DATA phase to drive HREADYOUT correctly
+    reg        dphase_active;
+    reg [31:0] dphase_addr;
 
     always @(posedge HCLK or negedge HRESETn) begin
         if (!HRESETn) begin
-            state     <= IDLE;
-            start_reg <= 1'b0;
-            addr_reg  <= 32'b0;
-            data_reg  <= {LW{1'b0}};
+            dphase_active <= 1'b0;
+            dphase_addr   <= 32'b0;
+        end else if (HREADY) begin
+            // When the bus advances, latch the address phase into the data phase
+            dphase_active <= HSEL && HTRANS[1] && !HWRITE;
+            dphase_addr   <= HADDR;
+        end
+    end
+
+    // --- Cache Instantiation ---
+    wire        cpu_ahit;
+    wire        cpu_dhit;
+    wire        m_start;
+    wire [31:0] m_addr;
+    wire [31:0] cpu_data;
+
+    reg         m_done_reg;
+    wire [LW-1:0] flash_data_bus;
+
+    ro_dmc #(.LW(LW), .NL(NL)) cache_inst (
+        .clk(HCLK),
+        .rst_n(HRESETn),
+        .cpu_rd(address_phase_req), // Address phase triggers a cache check
+        .cpu_aaddr(HADDR),          // Address phase address
+        .cpu_daddr(dphase_addr),    // Data phase address
+        .cpu_ahit(cpu_ahit),
+        .cpu_dhit(cpu_dhit),
+        .cpu_data(cpu_data),
+
+        // Memory Interface to FSM
+        .m_data(flash_data_bus),
+        .m_addr(m_addr),
+        .m_start(m_start),
+        .m_done(m_done_reg)
+    );
+
+    // --- AHB Output Logic ---
+    assign HRDATA = cpu_data;
+    // Stall the bus only if we are actively in a data phase and the cache missed
+    assign HREADYOUT = dphase_active ? cpu_dhit : 1'b1;
+
+    // --- Flash Fetch FSM ---
+    localparam ST_IDLE      = 2'd0;
+    localparam ST_START_CMD = 2'd1;
+    localparam ST_WAIT_LOW  = 2'd2;
+    localparam ST_WAIT_HIGH = 2'd3;
+
+    reg [1:0] state;
+    reg       flash_start_reg;
+    wire      flash_done;
+
+    always @(posedge HCLK or negedge HRESETn) begin
+        if (!HRESETn) begin
+            state           <= ST_IDLE;
+            flash_start_reg <= 1'b0;
+            m_done_reg      <= 1'b0;
         end else begin
+            m_done_reg <= 1'b0; // Default to 0 (pulse for 1 cycle)
+
             case (state)
-                IDLE: begin
-                    if (valid_req) begin
-                        addr_reg  <= HADDR;
-                        start_reg <= 1'b1;
-                        state     <= START_CMD;
+                ST_IDLE: begin
+                    // Cache missed during an address phase, start fetch!
+                    if (m_start) begin
+                        flash_start_reg <= 1'b1;
+                        state           <= ST_START_CMD;
                     end
                 end
 
-                START_CMD: begin
-                    start_reg <= 1'b0; // Pulse start for exactly 1 cycle
-                    state     <= WAIT_LOW;
+                ST_START_CMD: begin
+                    flash_start_reg <= 1'b0;
+                    state           <= ST_WAIT_LOW;
                 end
 
-                WAIT_LOW: begin
-                    // Wait for Flash Controller to acknowledge the start
-                    // by clearing its 'done' flag
-                    if (!flash_done) begin
-                        state <= WAIT_HIGH;
-                    end
+                ST_WAIT_LOW: begin
+                    if (!flash_done) state <= ST_WAIT_HIGH;
                 end
 
-                WAIT_HIGH: begin
-                    // Now wait for the actual fetch to finish
+                ST_WAIT_HIGH: begin
                     if (flash_done) begin
-                        data_reg <= flash_data_bus;
-                        state    <= DONE;
+                        m_done_reg <= 1'b1; // Tell the cache to latch the data!
+                        state      <= ST_IDLE;
                     end
                 end
-
-                DONE: begin
-                    // Wait for Master to sample the data
-                    if (HREADY) begin
-                        if (valid_req) begin
-                            // Master is pipelining the next address phase!
-                            // Capture it and start the next flash read immediately.
-                            addr_reg  <= HADDR;
-                            start_reg <= 1'b1;
-                            state     <= START_CMD;
-                        end else begin
-                            // Bus is idle, go back to sleep
-                            state <= IDLE;
-                        end
-                    end
-                end
-
-                default: state <= IDLE;
             endcase
         end
     end
 
-    // --- Clean Word Alignment ---
-    wire [2:0]  word_idx = addr_reg[4:2];
-    assign HRDATA = data_reg[word_idx * 32 +: 32];
-
-    // Stall the bus when not IDLE and not presenting DONE data
-    assign HREADYOUT = (state == IDLE) || (state == DONE);
-
-    // Flash Controller
+    // --- Flash Controller ---
     flash_ctrl_eb #(.LW(LW)) flash_ctrl (
         .clk(HCLK),
         .rst_n(HRESETn),
-        .start(start_reg),
+        .start(flash_start_reg),
         .done(flash_done),
-        .A({addr_reg[23:5], 5'b00000}),
+        // Send the latched miss address to the flash controller, aligned to 32 bytes
+        .A({m_addr[23:5], 5'b00000}),
         .D(flash_data_bus),
         .csn(csn), .sck(sck), .doe(doe), .do(do), .di(di)
     );
 
     always @(posedge HCLK) begin
-        if (valid_req) begin
+        if (address_phase_req) begin
             $display("[AHB PROBE] XIP Wrapper received read request for Address: %h", HADDR);
         end
     end

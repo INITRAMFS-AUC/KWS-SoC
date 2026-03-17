@@ -6,12 +6,13 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
     input  wire             cpu_rd,
     input  wire [31:0]      cpu_aaddr,
     input  wire [31:0]      cpu_daddr,
-    output wire             cpu_hit,
+    output wire             cpu_ahit,
+    output wire             cpu_dhit,
     output wire [31:0]      cpu_data,
 
     // Slow Memory Interface
     input  wire [LW-1:0]    m_data,
-    output wire [31:0]      m_addr,  // Changed to 32 bits to match standard address
+    output wire [31:0]      m_addr,
     output wire             m_start,
     input  wire             m_done
 );
@@ -20,7 +21,6 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
     localparam      LFW = $clog2(NL);
     localparam      OFW = $clog2(LWB);
     localparam      TFW = 32 - LFW - OFW;
-    localparam      OFS = 0;
     localparam      LFS = $clog2(LWB);
     localparam      TFS = LFW + OFW;
     localparam      OFE = $clog2(LWB) - 1;
@@ -30,6 +30,16 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
     reg[LW-1:0]     DATA[NL-1:0];
     reg[TFW-1:0]    TAG[NL-1:0];
     reg             VALID[NL-1:0];
+
+    // --- Safe Initialization for Sim & Synthesis ---
+    integer i;
+    initial begin
+        for(i=0; i<NL; i=i+1) begin
+            VALID[i] = 1'b0;
+            TAG[i]   = 'b0;
+            DATA[i]  = {LW{1'b0}};
+        end
+    end
 
     // --- Address Phase Signals ---
     wire [LFW-1:0]  aline_no = cpu_aaddr[LFE:LFS];
@@ -44,34 +54,46 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
     wire ahit = (TAG[aline_no] == atag) & (VALID[aline_no] == 1'b1);
     wire dhit = (TAG[dline_no] == dtag) & (VALID[dline_no] == 1'b1);
 
-    // --- Miss Handling & Update Logic ---
-    // Safely latch the address that caused the miss so we update the correct line later
+    // --- State Machine & Miss Handling ---
+    localparam ST_IDLE  = 1'b0;
+    localparam ST_FETCH = 1'b1;
+
+    reg        state;
     reg [31:0] miss_addr_reg;
+    reg        m_start_reg;  // NEW: Registered start pulse
+
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) miss_addr_reg <= 32'b0;
-        else if (m_start) miss_addr_reg <= cpu_aaddr;
-    end
-
-    wire [LFW-1:0] mline_no = miss_addr_reg[LFE:LFS];
-    wire [TFW-1:0] mtag     = miss_addr_reg[TFE:TFS];
-
-    integer i;
-    always@(posedge clk, negedge rst_n) begin
-        if(!rst_n) begin
-            for(i=0; i<NL; i=i+1) begin
-                VALID[i] <= 1'b0;
-                TAG[i] <= 'b0;
-            end
-        end else if(m_done) begin
-            DATA[mline_no]  <= m_data;
-            VALID[mline_no] <= 1'b1;
-            TAG[mline_no]   <= mtag;
+        if (!rst_n) begin
+            state         <= ST_IDLE;
+            miss_addr_reg <= 32'b0;
+            m_start_reg   <= 1'b0;
+        end else begin
+            case (state)
+                ST_IDLE: begin
+                    if (cpu_rd && !ahit) begin
+                        state           <= ST_FETCH;
+                        miss_addr_reg   <= cpu_aaddr;
+                        VALID[aline_no] <= 1'b0;
+                        m_start_reg     <= 1'b1; // Safely latch the start trigger
+                    end
+                end
+                ST_FETCH: begin
+                    m_start_reg <= 1'b0; // Instantly clear to create a 1-cycle pulse
+                    if (m_done) begin
+                        state                         <= ST_IDLE;
+                        DATA[miss_addr_reg[LFE:LFS]]  <= m_data;
+                        TAG[miss_addr_reg[LFE:LFS]]   <= miss_addr_reg[TFE:TFS];
+                        VALID[miss_addr_reg[LFE:LFS]] <= 1'b1;
+                    end
+                end
+            endcase
         end
     end
 
-    assign cpu_hit = cpu_rd ? ahit : dhit;
-    assign m_start = cpu_rd & ~ahit;
-    assign m_addr  = cpu_aaddr;
+    assign cpu_ahit = ahit;
+    assign cpu_dhit = dhit;
+    assign m_start  = m_start_reg; // Driven by flip-flop now
+    assign m_addr   = miss_addr_reg;
 
     // --- Read Logic ---
     localparam NW = LW/32;
