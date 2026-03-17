@@ -1,4 +1,5 @@
 // TODO: Next-Line Prefetching, Critical-Word-First / Early Restart, Software Cache Invalidation on firmware update
+// TODO: far in the future this can become an FSM as we will know exactly what to fetch in terms of weights and code
 module ro_dmc #(parameter LW=32*16, NL=64) (
     input  wire             clk,
     input  wire             rst_n,
