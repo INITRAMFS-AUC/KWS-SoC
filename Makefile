@@ -123,7 +123,18 @@ YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(
 YOSYS_SYNTH_CMD += hierarchy -top $(TOP);
 YOSYS_SYNTH_CMD += write_cxxrtl $(YOSYS_BUILD_DIR)/dut.cpp
 
-$(YOSYS_BUILD_DIR)/dut.cpp: $(FILE_LIST) $(wildcard *.vh) $(DOTF)
+# --- GENERATED FILES ---
+HAZARD3_CONFIG  :=$(ROOT_DIR)/hazard3_config.vh
+GEN_PARAMS_VH   := hazard3_instantiation_params.vh
+
+# TODO: Diffrentiate between scripts (ours) and libfpga scripts
+# Target to generate the instantiation parameters
+$(GEN_PARAMS_VH): $(HAZARD3_CONFIG)
+	@echo "--- Generating Instantiation Parameters ---"
+	python3 scripts/gen_inst_params.py $< $@
+
+
+$(YOSYS_BUILD_DIR)/dut.cpp: $(FILE_LIST) $(wildcard *.vh) $(DOTF) $(GEN_PARAMS_VH)
 	mkdir -p $(YOSYS_BUILD_DIR)
 	yosys -p '$(YOSYS_SYNTH_CMD)' 2>&1 | tee $(YOSYS_BUILD_DIR)/cxxrtl.log
 
@@ -167,7 +178,7 @@ $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile
 	$(SH) -t $(QUARTUS_DIR)/setup_project.tcl
 
 # 1. Synthesis (Map)
-$(MAP_RPT): $(QSF_FILE) $(ALL_QUARTUS_SRCS)
+$(MAP_RPT): $(QSF_FILE) $(ALL_QUARTUS_SRCS) $(GEN_PARAMS_VH)
 	@echo "--- Synthesizing ---"
 	$(MAP) $(QUARTUS_PROJECT) --verilog_macro="SRAM_DEPTH=$(SRAM_DEPTH)" \
 			--verilog_macro="CLK_MHZ=$(CLK_MHZ)" \
@@ -250,4 +261,5 @@ clean::
 				 $(QUARTUS_SRC_DIR) $(QUARTUS_DIR)/db/ $(QUARTUS_DIR)/incremental_db/ $(QUARTUS_DIR)/output_files/ \
 				 $(QUARTUS_DIR)/*.qws $(QUARTUS_DIR)/*.sof $(QUARTUS_DIR)/*.pof $(QUARTUS_DIR)/*.rpt $(QUARTUS_DIR)/*.cdf \
 				 $(QUARTUS_DIR)/*.qsf $(QUARTUS_DIR)/*.qpf $(QUARTUS_DIR)/*.qws $(QUARTUS_DIR)/*dump.txt
+	rm -f $(GEN_PARAMS_VH)
 	$(MAKE) -C test clean
