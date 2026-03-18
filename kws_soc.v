@@ -15,19 +15,20 @@ module kws_soc #(
 	`include "hazard3_config.vh"
 ) (
 	// System clock + reset
-	input wire               clk /*verilator public_flat_rw*/,
-	input wire               rst_n /*verilator public_flat_rw*/,
+	input wire               clk    /*verilator public_flat_rw*/,
+	input wire               rst_n  /*verilator public_flat_rw*/,
 
 	// JTAG port to RISC-V JTAG-DTM
-	input  wire              tck /*verilator public_flat_rw*/,
+	input  wire              tck    /*verilator public_flat_rw*/,
 	input  wire              trst_n /*verilator public_flat_rw*/,
-	input  wire              tms /*verilator public_flat_rw*/,
-	input  wire              tdi /*verilator public_flat_rw*/,
-	output wire              tdo /*verilator public_flat_rd*/,
+	input  wire              tms    /*verilator public_flat_rw*/,
+	input  wire              tdi    /*verilator public_flat_rw*/,
+	output wire              tdo    /*verilator public_flat_rd*/,
 
 	// IO
 	output wire              uart_tx /*verilator public_flat_rd*/,
-	input  wire              uart_rx /*verilator public_flat_rw*/
+	input  wire              uart_rx /*verilator public_flat_rw*/,
+    input  wire              sd      /*verilator public_flat_rw*/
 );
 // ----------------------------------------------------------------------------
 // Processor debug
@@ -236,6 +237,7 @@ wire              unblock_out;
 
 wire              uart_irq;
 wire              timer_irq;
+wire              i2s_irq;
 
 hazard3_cpu_1port #(
 	// These must have the values given here for you to end up with a useful SoC:
@@ -244,7 +246,10 @@ hazard3_cpu_1port #(
 	.CSR_M_MANDATORY (1),
 	.CSR_M_TRAP      (1),
 	.DEBUG_SUPPORT   (1),
-	.NUM_IRQS        (1),
+    // interrupts
+    // timer 
+    // i2s
+	.NUM_IRQS        (2),
 	.RESET_REGFILE   (0),
 	// Can be overridden from the defaults in hazard3_config.vh during
 	// instantiation of example_soc():
@@ -331,7 +336,7 @@ hazard3_cpu_1port #(
 	.dbg_sbus_wdata             (sbus_wdata),
 	.dbg_sbus_rdata             (sbus_rdata),
 
-	.irq                        (uart_irq),
+	.irq                        ({uart_irq, i2s_irq}),
 
 	.soft_irq                   (1'b0),
 	.timer_irq                  (timer_irq)
@@ -437,6 +442,17 @@ wire [31:0] timer_prdata;
 wire        timer_pready;
 wire        timer_pslverr;
 
+// i2s_apb
+wire        i2s_psel;
+wire        i2s_penable;
+wire        i2s_pwrite;
+wire [15:0] i2s_paddr;
+wire [31:0] i2s_pwdata;
+wire [31:0] i2s_prdata;
+wire        i2s_pready;
+wire        i2s_pslverr; // unconnected
+assign      i2s_pslverr = 1'b0;
+
 ahbl_to_apb apb_bridge_u (
 	.clk               (clk),
 	.rst_n             (rst_n),
@@ -465,9 +481,9 @@ ahbl_to_apb apb_bridge_u (
 );
 
 apb_splitter #(
-	.N_SLAVES   (2),
-	.ADDR_MAP   (32'h4000_0000),
-	.ADDR_MASK  (32'hc000_c000)
+	.N_SLAVES   (3),
+	.ADDR_MAP   (48'h4000_0000_8000),
+	.ADDR_MASK  (48'hc000_c000_c000)
 ) inst_apb_splitter (
 	.apbs_paddr   (bridge_paddr),
 	.apbs_psel    (bridge_psel),
@@ -478,14 +494,14 @@ apb_splitter #(
 	.apbs_prdata  (bridge_prdata),
 	.apbs_pslverr (bridge_pslverr),
 
-	.apbm_paddr   ({uart_paddr   , timer_paddr  }),
-	.apbm_psel    ({uart_psel    , timer_psel   }),
-	.apbm_penable ({uart_penable , timer_penable}),
-	.apbm_pwrite  ({uart_pwrite  , timer_pwrite }),
-	.apbm_pwdata  ({uart_pwdata  , timer_pwdata }),
-	.apbm_pready  ({uart_pready  , timer_pready }),
-	.apbm_prdata  ({uart_prdata  , timer_prdata }),
-	.apbm_pslverr ({uart_pslverr , timer_pslverr})
+	.apbm_paddr   ({uart_paddr   , timer_paddr   , i2s_paddr   }),
+	.apbm_psel    ({uart_psel    , timer_psel    , i2s_psel    }),
+	.apbm_penable ({uart_penable , timer_penable , i2s_penable }),
+	.apbm_pwrite  ({uart_pwrite  , timer_pwrite  , i2s_pwrite  }),
+	.apbm_pwdata  ({uart_pwdata  , timer_pwdata  , i2s_pwdata  }),
+	.apbm_pready  ({uart_pready  , timer_pready  , i2s_pready  }),
+	.apbm_prdata  ({uart_prdata  , timer_prdata  , i2s_prdata  }),
+	.apbm_pslverr ({uart_pslverr , timer_pslverr , i2s_pslverr })
 );
 
 // ----------------------------------------------------------------------------
@@ -535,6 +551,24 @@ uart_mini uart_u (
 	.irq          (uart_irq),
 	.dreq         (/* unused */)
 );
+
+apb_i2s_receiver #(
+  .FIFO_DEPTH(8)
+) dut (
+  .clk          (clk),
+  .rst_n        (rst_n),
+  .sd           (sd),
+  .apbs_psel    (i2s_psel),
+  .apbs_penable (i2s_penable),
+  .apbs_pwrite  (i2s_pwrite),
+  .apbs_paddr   (i2s_paddr),
+  .apbs_pwdata  (i2s_pwdata),
+  .apbs_prdata  (i2s_prdata),
+  .apbs_pready  (i2s_pready),
+  .sck_out      (sck_out),
+  .i2s_irq      (i2s_irq)
+);
+
 
 // Microsecond timebase for timer
 
