@@ -63,7 +63,8 @@ module fpga_top (
     kws_soc #(
         .DTM_TYPE   (`DTM_TYPE),
         .SRAM_DEPTH (`SRAM_DEPTH),
-        .CLK_MHZ    (`CLK_MHZ)      	// Matches clock_pll_36 output // TODO: Make this linked to a global clk def instead of being a magic num
+        .CLK_MHZ    (`CLK_MHZ),      	// Matches clock_pll_36 output // TODO: Make this linked to a global clk def instead of being a magic num
+        `include "hazard3_instantiation_params.vh"
     ) soc_inst (
         .clk            (sys_clk),   	// Connect PLL output to core input
         .rst_n          (rst_n ),	// Safe Reset: Wait for PLL lock // Use & pll_locked for pll lock
