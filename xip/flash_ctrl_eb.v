@@ -64,9 +64,9 @@ module flash_ctrl_eb #(parameter LW = 256) (
             CMD_EB:    if (phase_tick == 15) next_state = ADDR;
             ADDR:      if (phase_tick == 11) next_state = MODE;
             MODE:      if (phase_tick == 3)  next_state = DUMMY;
-
-            // FIX: Cold Boot uses 4 dummy clocks (7 ticks). CRM uses 2 dummy clocks (3 ticks).
-            DUMMY:     if (phase_tick == (is_first ? 7 : 3)) next_state = DATA;
+            // TODO: CRM assumes we can shorten to 2 cycles and so does flashsim.cpp but GD25 does not support this
+            // DUMMY:     if (phase_tick == (is_first ? 7 : 3)) next_state = DATA;
+            DUMMY:     if (phase_tick == 7 ) next_state = DATA;
 
             DATA:      if (phase_tick == 127) next_state = DONE_WAIT;
 
