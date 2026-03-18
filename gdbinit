@@ -1,9 +1,11 @@
-# Connect to OpenOCD right away
-target extended-remote localhost:3333
-
 python
 import os
 import gdb
+
+
+gdb_port = os.environ.get('GDB_PORT', '3333')
+print(f"Connecting to OpenOCD on port {gdb_port}...")
+gdb.execute(f"target extended-remote localhost:{gdb_port}")
 
 # Read SRAM_DEPTH from env, default to 32768 if not set
 depth = int(os.environ.get('SRAM_DEPTH', '32768'))

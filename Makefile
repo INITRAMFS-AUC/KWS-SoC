@@ -13,7 +13,7 @@ GDB_PORT    ?= $(shell expr 10000 + $(USER_ID) % 1000)
 TELNET_PORT ?= $(shell expr 11000 + $(USER_ID) % 1000)
 
 # Export SIM_PORT so JimTcl inside openocd/sim.cfg can read it
-export SIM_PORT
+export SIM_PORT GDB_PORT
 
 ## COMMON
 TOP       := kws_soc
