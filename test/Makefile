@@ -18,7 +18,7 @@ SRAM_DEPTH ?= 32768
 SRAM_SIZE_BYTES = $(shell echo $$(($(SRAM_DEPTH) * 4)))
 
 # Use rv32i to match the assembly example
-CFLAGS = -march=rv32i_zicsr -g -c
+CFLAGS = -march=rv32i_zicsr -g -c -MMD -MP
 CFLAGS += $(GLOBAL_UART_CONFIG)
 LDFLAGS = -T $(COMMON_DIR)/link.ld --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
 
@@ -99,3 +99,5 @@ clean:
 
 # Phony targets
 .PHONY: all clean sanity uart flash xip
+
+-include $(wildcard $(BUILD_DIR)/*.d)

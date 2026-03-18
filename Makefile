@@ -5,6 +5,16 @@
 HAZARD3_ROOT := ./Hazard3
 include $(HAZARD3_ROOT)/project_paths.mk
 
+# --- DYNAMIC PORT CONFIGURATION ---
+# Generate unique ports per user based on Linux UID to avoid collisions
+USER_ID := $(shell id -u 2>/dev/null || echo 1000)
+SIM_PORT    ?= $(shell expr 9000 + $(USER_ID) % 1000)
+GDB_PORT    ?= $(shell expr 10000 + $(USER_ID) % 1000)
+TELNET_PORT ?= $(shell expr 11000 + $(USER_ID) % 1000)
+
+# Export SIM_PORT so JimTcl inside openocd/sim.cfg can read it
+export SIM_PORT
+
 ## COMMON
 TOP       := kws_soc
 DOTF      := soc.f
@@ -104,7 +114,7 @@ STA := quartus_sta
 PGM := quartus_pgm
 SH  := quartus_sh
 
-.PHONY: clean all lint sim map fit asm sta program test test-xip check_timing config
+.PHONY: clean all lint sim sim-vcd map fit asm sta program test test-xip check_timing config openocd-sim openocd-hw gdb telnet
 
 all: $(TBEXEC) test
 
@@ -136,12 +146,12 @@ FLASH ?=
 FLASH_ARG = $(if $(FLASH),--flash $(FLASH),)
 
 # Helper target to run the cxxrtl testbench with default port
-sim: $(TBEXEC)
-	./$(TBEXEC) --port 9824 $(FLASH_ARG)
+sim: $(TBEXEC) test
+	./$(TBEXEC) --port $(SIM_PORT) $(FLASH_ARG)
 
 # Helper target to run cxxrtl testbench with VCD dumping
-sim-vcd: $(TBEXEC)
-	./$(TBEXEC) --port 9824 --vcd waves.vcd $(FLASH_ARG)
+sim-vcd: $(TBEXEC) test
+	./$(TBEXEC) --port $(SIM_PORT) --vcd waves.vcd $(FLASH_ARG)
 
 # 0. Project Generation
 $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile
@@ -215,6 +225,25 @@ check_timing: sta
 	# Grep the summary for "Critical Warning" or negative slack
 	# This is a simple check; for robust CI, parse the report files in output_files/
 	$(SH) --tcl_eval "project_open $(QUARTUS_PROJECT); set x [get_timing_analysis_summary_results -model slow]; puts \$$x; project_close"
+
+openocd-sim:
+	@echo "Starting OpenOCD (Simulation)..."
+	@echo " -> Sim Port:    $(SIM_PORT)"
+	@echo " -> GDB Port:    $(GDB_PORT)"
+	@echo " -> Telnet Port: $(TELNET_PORT)"
+	riscv-openocd -c "gdb port $(GDB_PORT)" -c "telnet port $(TELNET_PORT)" -c "tcl port disabled" -f openocd/sim.cfg
+
+openocd-hw:
+	@echo "Starting OpenOCD (Hardware)..."
+	@echo " -> GDB Port:    $(GDB_PORT)"
+	@echo " -> Telnet Port: $(TELNET_PORT)"
+	riscv-openocd -c "gdb port $(GDB_PORT)" -c "telnet port $(TELNET_PORT)" -c "tcl port disabled" -f openocd/picodriver.cfg
+
+gdb:
+	riscv32-unknown-elf-gdb -x gdbinit
+
+telnet:
+	telnet localhost $(TELNET_PORT)
 
 clean::
 	rm -rf $(YOSYS_BUILD_DIR) $(TBEXEC) *.vcd \
