@@ -551,25 +551,24 @@ int	FLASHSIM::operator()(const int csn, const int sck, const int dat) {
 			} else m_oreg = 0;
 			break;
 		case QSPIF_QUAD_READ_CMD:
-			// The command to go into quad read mode took 8 bits
-			// that changes the timings, else we'd use quad_Read
-			// below
-			if (m_count == 32) {
-				m_addr = m_ireg & m_memmask;
-				// printf("FAST READ, ADDR = %08x\n", m_addr);
-				// printf("QSPI: QUAD READ, ADDR = %06x\n", m_addr);
-				assert((m_addr & (~(m_memmask)))==0);
-			} else if (m_count == 32+8) {
-				m_mode_byte = (m_ireg) & 0x0ff;
-				if (m_debug) printf("QSPI: MODE BYTE = %02x\n", m_mode_byte);
-				if (NDUMMY == 2)
-					QOREG(m_mem[m_addr++]);
-			} else if ((m_count > 32+4*NDUMMY)&&(0 == (m_sreg&0x01))) {
-				QOREG(m_mem[m_addr++]);
-				// printf("QSPIF[%08x]/QR = %02x\n",
-					// m_addr-1, m_oreg);
-			} else m_oreg = 0;
-			break;
+            // 0xEB Cold Boot: CMD (8) + ADDR (24) = 32 bits
+            if (m_count == 32) {
+                m_addr = m_ireg & m_memmask;
+                assert((m_addr & (~(m_memmask)))==0);
+            }
+            // MODE byte takes 2 QSPI clocks (8 bits). 32 + 8 = 40 bits
+            else if (m_count == 40) {
+                m_mode_byte = (m_ireg) & 0x0ff;
+                if (m_debug) printf("QSPI: MODE BYTE = %02x\n", m_mode_byte);
+            }
+            // DUMMY phase takes 4 QSPI clocks (16 bits). 40 + 16 = 56 bits
+            // Only output data after the full 56 bits have elapsed
+            else if ((m_count >= 56) && (0 == (m_sreg&0x01))) {
+                QOREG(m_mem[m_addr++]);
+            } else {
+                m_oreg = 0;
+            }
+            break;
 		case QSPIF_DUAL_READ:
 			if (m_count == 32) {
 				m_mode_byte = (m_ireg & 0x0ff);
@@ -579,18 +578,21 @@ int	FLASHSIM::operator()(const int csn, const int sck, const int dat) {
 			if (m_debug) printf("DSPIF[%08x]/DR = %02x\n", m_addr-1, m_oreg & 0x0ff);
 			break;
 		case QSPIF_QUAD_READ:
-			if (m_count == 24+4*2) {
-				m_mode_byte = (m_ireg & 0x0ff);
-				if (m_debug) printf("QSPI/QR: MODE BYTE = %02x\n", m_mode_byte);
-				if (NDUMMY == 2) {
-					QOREG(m_mem[m_addr++]);
-					if (m_debug) printf("QSPIF[%08x]/QR = %02x\n", m_addr-1, m_oreg & 0x0ff);
-				}
-			} else if ((m_count >= 24+4*NDUMMY)&&(0 == (m_sreg&0x01))) {
-				QOREG(m_mem[m_addr++]);
-				if (m_debug) printf("QSPIF[%08x]/QR = %02x\n", m_addr-1, m_oreg & 0x0ff);
-			} else m_oreg = 0;
-			break;
+            // Continuous Read Mode (CRM): ADDR (24) = 24 bits
+            // Mode byte takes 2 QSPI clocks (8 bits). 24 + 8 = 32 bits
+            if (m_count == 32) {
+                m_mode_byte = (m_ireg & 0x0ff);
+                if (m_debug) printf("QSPI/QR: MODE BYTE = %02x\n", m_mode_byte);
+            }
+            // DUMMY phase takes 4 QSPI clocks (16 bits). 32 + 16 = 48 bits
+            // Only output data after the full 48 bits have elapsed
+            else if ((m_count >= 48) && (0 == (m_sreg&0x01))) {
+                QOREG(m_mem[m_addr++]);
+                if (m_debug) printf("QSPIF[%08x]/QR = %02x\n", m_addr-1, m_oreg & 0x0ff);
+            } else {
+                m_oreg = 0;
+            }
+            break;
 		case QSPIF_PP:
 			if (m_count == 32) {
 				m_addr = m_ireg & m_memmask;
