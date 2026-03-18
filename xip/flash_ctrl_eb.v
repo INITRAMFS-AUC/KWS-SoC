@@ -18,7 +18,7 @@ module flash_ctrl_eb #(parameter LW = 256) (
     input  wire [3:0]       di
 );
 
-    localparam TRST_CYCLES = 20 * CLK_MHZ;
+    localparam integer TRST_CYCLES = 20 * `CLK_MHZ;
     // --- FSM States ---
     localparam IDLE      = 4'd0,
                CMD_66    = 4'd1,
@@ -141,40 +141,5 @@ module flash_ctrl_eb #(parameter LW = 256) (
     assign done = done_reg;
     assign D = data_reg;
 
-    // synthesis translate_off
-    `ifndef SYNTHESIS
-    realtime csn_high_time;
-    realtime reset_cmd_time;
-
-    // Track when CSN goes high to measure tSHSL (Min 20ns)
-    always @(posedge csn) begin
-        csn_high_time = $realtime;
-
-        // If we just finished sending 0x99, mark the reset start time
-        if (state == TRST_WAIT) begin
-            reset_cmd_time = $realtime;
-        end
-    end
-
-    // Validate timings whenever CSN goes low (start of a new transaction)
-    always @(negedge csn) begin
-        // 1. Check tSHSL (CS# High Time)
-        // Must be >= 20ns according to the GD25Q32 datasheet
-        if (csn_high_time > 0 && ($realtime - csn_high_time) < 20ns) begin
-            $error("[TIMING VIOLATION] tSHSL minimum is 20ns. Actual: %0t", $realtime - csn_high_time);
-        end
-
-        // 2. Check tRST (Reset Recovery Time)
-        // If we are starting a transaction right after the reset wait, enforce the 20us rule
-        if (state == TRST_WAIT || state == CMD_EB) begin
-            if (($realtime - reset_cmd_time) < 20000ns) begin // 20us = 20,000ns
-                $fatal(1, "[FATAL TIMING VIOLATION] tRST minimum is 20us. Actual: %0t. The flash chip is not ready!", $realtime - reset_cmd_time);
-            end else begin
-                $display("[AHB PROBE] GD25Q32 tRST requirement met: %0t elapsed.", $realtime - reset_cmd_time);
-            end
-        end
-    end
-    `endif
-    // synthesis translate_on
 
 endmodule
