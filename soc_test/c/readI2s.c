@@ -3,7 +3,7 @@
 #include "uart.h"
 
 
-#define I2S_BASE_ADDR 0x80000000
+#define I2S_BASE_ADDR 0x40008000
 
 // how it works: struct members places sequentially in mem
 // therefore they are offsetted automatically by C by their biggest type
@@ -39,6 +39,7 @@ uint32_t i2s_read_fifo(void) {
 
 int main(void) {
     // smoke tewst
+    uart_init();
     uint32_t id = i2s_get_id();
     uart_printf("[Smoke test] ID: 0x%x\n\n", id);
     

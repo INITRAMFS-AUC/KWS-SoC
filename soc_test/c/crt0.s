@@ -6,10 +6,8 @@ _reset_vector:
 .section .text.init
 .global _start
 _start:
-    /* Set up stack pointer to top of 128KB SRAM */
-    lui sp, 0x20000
-    
-    /* Call main function */
+    /* Set up stack pointer to the one supplied by the linker */
+    li sp, 0x2000
     call main
 
     /* If main returns, loop forever */
