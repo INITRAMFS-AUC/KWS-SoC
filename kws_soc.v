@@ -28,7 +28,9 @@ module kws_soc #(
 	// IO
 	output wire              uart_tx /*verilator public_flat_rd*/,
 	input  wire              uart_rx /*verilator public_flat_rw*/,
-    input  wire              sd      /*verilator public_flat_rw*/
+    input  wire              sd      /*verilator public_flat_rw*/,
+    output wire              sck_out,
+    output wire              ws_out
 );
 // ----------------------------------------------------------------------------
 // Processor debug
@@ -565,7 +567,8 @@ apb_i2s_receiver #(
   .apbs_pwdata  (i2s_pwdata),
   .apbs_prdata  (i2s_prdata),
   .apbs_pready  (i2s_pready),
-  .sck_out      (/*left empty*/),
+  .sck_out      (sck_out),
+  .ws_out       (ws_out),
   .i2s_irq      (i2s_irq)
 );
 

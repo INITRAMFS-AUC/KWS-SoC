@@ -12,3 +12,8 @@ set_location_assignment PIN_AJ1  -to trst_n -comment "GPIO 4"
 # UART
 set_location_assignment PIN_AJ2  -to uart_rx -comment "GPIO 5"
 set_location_assignment PIN_AH2  -to uart_tx -comment "GPIO 6"
+
+# i2s
+set_location_assignment PIN_AE7 -to ws -comment "GPIO Connection [23]"
+set_location_assignment PIN_AF9 -to sd -comment "GPIO Connection [21]"
+set_location_assignment PIN_AF6 -to sck -comment "GPIO Connection [19]"

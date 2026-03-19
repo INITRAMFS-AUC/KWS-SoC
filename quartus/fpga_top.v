@@ -16,7 +16,9 @@ module fpga_top (
     // UART
     output wire uart_tx,
     input  wire uart_rx,
-    input  wire sd
+    input  wire sd,
+    output wire ws,
+    output wire sck
 );
 
     // Instantiate the FPGA-Specific PLL
@@ -57,7 +59,9 @@ module fpga_top (
 
         .uart_tx (uart_tx),
         .uart_rx (uart_rx),
-        .sd      (sd)
+        .sd      (sd),
+        .ws_out  (ws),
+        .sck_out (sck)
     );
 
 endmodule
