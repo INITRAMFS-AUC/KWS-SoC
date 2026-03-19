@@ -21,13 +21,16 @@ CFLAGS += $(GLOBAL_UART_CONFIG)
 LDFLAGS = -nostartfiles -Wl,-T,link.ld 
 
 # 3. Targets
-all: inf_loop.elf inf_loop.dis hello_world.elf hello_world.dis
+all: inf_loop.elf inf_loop.dis hello_world.elf hello_world.dis readI2s.elf readI2s.dis
 
 # Link step (using CC instead of LD)
 inf_loop.elf: crt0.o inf_loop.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
 hello_world.elf: crt0.o hello_world.o
+	$(CC) $(LDFLAGS) -o $@ $^
+
+readI2s.elf: crt0.s readI2s.o uart.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
 # Compile steps
@@ -40,11 +43,20 @@ inf_loop.o: inf_loop.c $(ROOT_MAKEFILE)
 hello_world.o: hello_world.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
 
+readI2s.o: readI2s.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<
+
+uart.o: uart.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<
+
 # Disassembly steps
 inf_loop.dis: inf_loop.elf
 	$(OBJDUMP) -d $< > $@
 
 hello_world.dis: hello_world.elf
+	$(OBJDUMP) -d $< > $@
+
+readI2s.dis: readI2s.elf
 	$(OBJDUMP) -d $< > $@
 
 clean:

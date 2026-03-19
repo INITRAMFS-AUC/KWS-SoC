@@ -12,6 +12,7 @@ size_bytes = depth * 4
 # 0x00000000 to size_bytes, rw
 gdb.execute(f"mem 0x00000000 {hex(size_bytes)} rw")
 gdb.execute("mem 0x40000000 0x40010000 rw")
+gdb.execute("mem 0x80000000 0x80010000 rw")
 
 end
 

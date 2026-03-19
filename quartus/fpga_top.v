@@ -15,7 +15,8 @@ module fpga_top (
 
     // UART
     output wire uart_tx,
-    input  wire uart_rx
+    input  wire uart_rx,
+    input  wire sd
 );
 
     // Instantiate the FPGA-Specific PLL
@@ -45,8 +46,8 @@ module fpga_top (
         .SRAM_DEPTH (`SRAM_DEPTH),
         .CLK_MHZ    (`CLK_MHZ)      	// Matches clock_pll_36 output // TODO: Make this linked to a global clk def instead of being a magic num
     ) soc_inst (
-        .clk     (sys_clk),   	// Connect PLL output to core input
-        .rst_n   (rst_n ),	// Safe Reset: Wait for PLL lock // Use & pll_locked for pll lock
+        .clk     (sys_clk),   	        // Connect PLL output to core input
+        .rst_n   (rst_n),	            // Safe Reset: Wait for PLL lock // Use & pll_locked for pll lock
 
         .tck     (tck),
         .trst_n  (trst_n),
@@ -55,7 +56,8 @@ module fpga_top (
         .tdo     (tdo),
 
         .uart_tx (uart_tx),
-        .uart_rx (uart_rx)
+        .uart_rx (uart_rx),
+        .sd      (sd)
     );
 
 endmodule

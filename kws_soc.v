@@ -554,7 +554,7 @@ uart_mini uart_u (
 
 apb_i2s_receiver #(
   .FIFO_DEPTH(8)
-) dut (
+) apb_i2s_receiver_inst (
   .clk          (clk),
   .rst_n        (rst_n),
   .sd           (sd),
@@ -565,7 +565,7 @@ apb_i2s_receiver #(
   .apbs_pwdata  (i2s_pwdata),
   .apbs_prdata  (i2s_prdata),
   .apbs_pready  (i2s_pready),
-  .sck_out      (sck_out),
+  .sck_out      (/*left empty*/),
   .i2s_irq      (i2s_irq)
 );
 
