@@ -10,6 +10,9 @@ TOP       := kws_soc
 DOTF      := soc.f
 ROOT_DIR  := $(shell pwd)
 
+## SIM  
+SIM_DIR	:= $(ROOT_DIR)/sim
+
 # Use listfiles script to generate file list from .f file
 FILE_LIST			:= $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
 FILE_LIST_VH 	:= $(shell python3 $(SCRIPTS)/listfiles -f flat --auto-vh $(DOTF))
@@ -116,11 +119,11 @@ $(YOSYS_BUILD_DIR)/dut.cpp: $(FILE_LIST) $(wildcard *.vh) $(DOTF)
 	yosys -p '$(YOSYS_SYNTH_CMD)' 2>&1 | tee $(YOSYS_BUILD_DIR)/cxxrtl.log
 
 
-$(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp
+$(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp sim/i2s_mic_sim.cpp
 	$(CLANGXX) -O3 -std=c++14 $(addprefix -D,$(CDEFINES)) $(UART_CFLAGS) \
 		-I$(shell yosys-config --datdir)/include/backends/cxxrtl/runtime \
 		-I$(YOSYS_BUILD_DIR) \
-		kws_soc_tb.cpp -o $(TBEXEC)
+		sim/i2s_mic_sim.cpp kws_soc_tb.cpp -o $(TBEXEC)
 
 lint:
 	verilator --lint-only --top-module $(TOP) -I$(HDL) $(FILE_LIST)
@@ -131,7 +134,7 @@ sim: $(TBEXEC)
 
 # Helper target to run cxxrtl testbench with VCD dumping
 sim-vcd: $(TBEXEC)
-	./$(TBEXEC) --port 9824 --vcd waves.vcd
+	./$(TBEXEC) --port 9824 --vcd waves.vcd --mic sim/debug_audio.hex
 
 # 0. Project Generation
 $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile
@@ -201,9 +204,22 @@ check_timing: sta
 	# This is a simple check; for robust CI, parse the report files in output_files/
 	$(SH) --tcl_eval "project_open $(QUARTUS_PROJECT); set x [get_timing_analysis_summary_results -model slow]; puts \$$x; project_close"
 
-clean::
+clean_all::
 	rm -rf $(YOSYS_BUILD_DIR) $(TBEXEC) *.vcd \
 				 $(QUARTUS_DIR)/db/ $(QUARTUS_DIR)/incremental_db/ $(QUARTUS_DIR)/output_files/ \
 				 $(QUARTUS_DIR)/*.qws $(QUARTUS_DIR)/*.sof $(QUARTUS_DIR)/*.pof $(QUARTUS_DIR)/*.rpt $(QUARTUS_DIR)/*.cdf \
 				 $(QUARTUS_DIR)/*.q*
 	$(MAKE) -C soc_test/c clean
+
+clean_test::
+	$(MAKE) -C soc_test/c clean
+
+
+clean_sim::
+	rm -rf $(YOSYS_BUILD_DIR) $(TBEXEC) *.vcd
+
+
+clean_quartus::
+	rm -rf $(QUARTUS_DIR)/db/ $(QUARTUS_DIR)/incremental_db/ $(QUARTUS_DIR)/output_files/ \
+		$(QUARTUS_DIR)/*.qws $(QUARTUS_DIR)/*.sof $(QUARTUS_DIR)/*.pof $(QUARTUS_DIR)/*.rpt $(QUARTUS_DIR)/*.cdf \
+		$(QUARTUS_DIR)/*.q*

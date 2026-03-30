@@ -41,11 +41,12 @@ int main(void) {
     // smoke tewst
     uart_init();
     uint32_t id = i2s_get_id();
-    uart_printf("[Smoke test] ID: 0x%x\n\n", id);
-    
     // Example: Clock divider = 4, Interrupts Enabled, WS = 1
     uint8_t ws = 1;
     i2s_configure(4, 1, ws);
+
+    uart_printf("[Smoke test] ID: 0x%x\n\n", id);
+    
     
     // simple polling loop to read from FIFO
     while(1) {
