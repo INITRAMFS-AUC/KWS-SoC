@@ -580,7 +580,7 @@ ahbl_flash_ctrl_eb_cache #(
 
 uart_mini uart_u (
 	.clk          (clk),
-	.rst_n        (rst_n),
+	.rst_n        (rst_n_cpu),
 
 	.apbs_psel    (uart_psel),
 	.apbs_penable (uart_penable),
@@ -620,7 +620,7 @@ end
 
 hazard3_riscv_timer timer_u (
 	.clk       (clk),
-	.rst_n     (rst_n),
+	.rst_n     (rst_n_cpu),
 
 	.psel      (timer_psel),
 	.penable   (timer_penable),
