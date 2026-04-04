@@ -32,7 +32,7 @@ else
     PLL_SRC					:= quartus/ip/clock_pll_36/clock_pll_36.qip
     VERILOG_MACROS 	+= CYCLONE_V=1
 endif
-SRC_LIST_IP     	:= $(abspath $(PLL_SRC))
+SRC_LIST_IP     		:= $(abspath $(PLL_SRC))
 
 ## YOSYS VARS
 YOSYS_CONFIG    		:= default
@@ -41,7 +41,7 @@ YOSYS_BUILD_DIR 		:= yosys_build
 CLANGXX   					:= clang++
 
 ## QUARTUS VARS
-QUARTUS_DIR 			:= $(ROOT_DIR)/quartus
+QUARTUS_DIR 				:= $(ROOT_DIR)/quartus
 QUARTUS_PROJECT 		:= $(QUARTUS_DIR)/KWS-SoC
 QUARTUS_SRC_DIR 		:= $(QUARTUS_DIR)/quartus_src_dir
 ALL_QUARTUS_SRCS 		:= $(sort $(FILE_LIST_VH) $(SRC_LIST_IP))
@@ -105,7 +105,7 @@ STA := quartus_sta
 PGM := quartus_pgm
 SH  := quartus_sh
 
-.PHONY: clean all lint sim map fit asm sta program test check_timing config
+.PHONY: clean all lint sim map fit asm sta program test check_timing config sim-verilator
 
 all: $(TBEXEC) test
 
@@ -116,7 +116,7 @@ YOSYS_SYNTH_CMD += write_cxxrtl $(YOSYS_BUILD_DIR)/dut.cpp
 
 $(YOSYS_BUILD_DIR)/dut.cpp: $(FILE_LIST) $(wildcard *.vh) $(DOTF)
 	mkdir -p $(YOSYS_BUILD_DIR)
-	yosys -p '$(YOSYS_SYNTH_CMD)' 2>&1 | tee $(YOSYS_BUILD_DIR)/cxxrtl.log
+	yosys -p '$(YOSYS_SYNTH_CMD)'
 
 
 $(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp sim/i2s_mic_sim.cpp
@@ -135,6 +135,44 @@ sim: $(TBEXEC)
 # Helper target to run cxxrtl testbench with VCD dumping
 sim-vcd: $(TBEXEC)
 	./$(TBEXEC) --port 9824 --vcd waves.vcd --mic sim/debug_audio.hex
+
+
+##### VERILATOR SIMULATION (fast) #####
+ 
+# Verilator binary + default flags
+VERILATOR ?= verilator
+VERILATOR_FLAGS ?= -Wall -Wno-fatal --cc --trace
+VERILATOR_BUILD_DIR ?= build_verilator
+ 
+# Build Verilator model and link the C++ testbench (kws_soc_vpi.cpp)
+#
+# -CFLAGS "-I$(ROOT_DIR)"  tells Verilator to add ROOT_DIR to the C++ compiler's
+# include path when it compiles our user sources (kws_soc_vpi.cpp,
+# sim/i2s_mic_sim.cpp). Without this, the compiler runs from inside
+# $(VERILATOR_BUILD_DIR)/ and cannot find "sim/i2s_mic_sim.h" via a relative path.
+#
+# The same -I$(ROOT_DIR) is appended to the inner CXXFLAGS for the same reason
+# (Verilator's generated .mk re-invokes the compiler for user sources).
+$(VERILATOR_BUILD_DIR)/Vkws_soc: $(FILE_LIST) kws_soc_vpi.cpp sim/i2s_mic_sim.cpp $(wildcard *.vh) $(DOTF)
+	mkdir -p $(VERILATOR_BUILD_DIR)
+	$(VERILATOR) $(VERILATOR_FLAGS) --top-module $(TOP) --Mdir $(VERILATOR_BUILD_DIR) \
+		-CFLAGS "-I$(ROOT_DIR)" \
+		--exe kws_soc_vpi.cpp sim/i2s_mic_sim.cpp $(FILE_LIST) -I$(HDL)
+	$(MAKE) -C $(VERILATOR_BUILD_DIR) -j -f V$(TOP).mk \
+		CXXFLAGS='$(UART_CFLAGS) -std=c++14 -O3 -I$(ROOT_DIR)' V$(TOP)
+ 
+.PHONY: sim-verilator
+sim-verilator: $(VERILATOR_BUILD_DIR)/Vkws_soc
+	./$(VERILATOR_BUILD_DIR)/Vkws_soc --port 9824
+ 
+sim-verilator-vcd: $(VERILATOR_BUILD_DIR)/Vkws_soc
+	./$(VERILATOR_BUILD_DIR)/Vkws_soc --port 9824 --vcd waves.vcd --mic sim/debug_audio.hex
+ 
+clean_verilator:
+	rm -rf $(VERILATOR_BUILD_DIR) waves.vcd
+
+
+##### QUARTUS Targets #####
 
 # 0. Project Generation
 $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile

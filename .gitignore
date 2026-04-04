@@ -4,6 +4,7 @@ kws_soc_tb
 # build directories and output
 obj_dir/
 build/
+build_verilator/
 yosys_build/
 quartus_work_dir/
 quartus_src_dir/
