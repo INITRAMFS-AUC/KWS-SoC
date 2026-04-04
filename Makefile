@@ -144,33 +144,105 @@ VERILATOR ?= verilator
 VERILATOR_FLAGS ?= -Wall -Wno-fatal --cc --trace
 VERILATOR_BUILD_DIR ?= build_verilator
  
-# Build Verilator model and link the C++ testbench (kws_soc_vpi.cpp)
+##### VERILATOR SIMULATION (fast) #####
+ 
+VERILATOR         ?= verilator
+VERILATOR_BUILD_DIR ?= build_verilator
+ 
+# ---------------------------------------------------------------------------
+# VERILATOR_FLAGS — what each flag does and why it is here
+# ---------------------------------------------------------------------------
 #
-# -CFLAGS "-I$(ROOT_DIR)"  tells Verilator to add ROOT_DIR to the C++ compiler's
-# include path when it compiles our user sources (kws_soc_vpi.cpp,
-# sim/i2s_mic_sim.cpp). Without this, the compiler runs from inside
-# $(VERILATOR_BUILD_DIR)/ and cannot find "sim/i2s_mic_sim.h" via a relative path.
+# --cc              : C++ output mode (not SystemC).
 #
-# The same -I$(ROOT_DIR) is appended to the inner CXXFLAGS for the same reason
-# (Verilator's generated .mk re-invokes the compiler for user sources).
+# --trace           : Emit VCD tracing support.  Required by kws_soc_vpi.cpp
+#                     (VerilatedVcdC).  Remove if you never use --vcd to save
+#                     a small amount of per-cycle overhead.
+#
+#                     FASTER ALTERNATIVE: replace --trace with --trace-fst to
+#                     emit FST (Fast Signal Trace) support instead.  FST files
+#                     are ~10-50x smaller than VCD and write proportionally
+#                     faster.  Requires changing kws_soc_vpi.cpp to include
+#                     verilated_fst_c.h and use VerilatedFstC instead of
+#                     VerilatedVcdC.
+#
+# --x-initial 0     : Initialise all X (uninitialised) bits to 0 instead of
+#                     random.  Removes X-propagation tracking machinery from
+#                     the generated C++, which measurably reduces eval() cost.
+#
+# -Wall -Wno-fatal  : Surface lint warnings without aborting the build.
+#
+# OPTIONAL ADDITIONS (uncomment to use):
+#   --threads 4     : Multi-threaded simulation.  Can halve wall-clock time for
+#                     designs that Verilator can partition.  Requires g++/clang
+#                     to also see -lpthread; add it to LDFLAGS or CXXFLAGS.
+#   --no-timing     : Disable timing-aware evaluation (default in --cc mode,
+#                     listed here for clarity).
+ 
+VERILATOR_FLAGS ?= -Wall -Wno-fatal --cc --trace --x-initial 0
+ 
+# ---------------------------------------------------------------------------
+# VERILATOR_CXXFLAGS — what each flag does and why it is here
+# ---------------------------------------------------------------------------
+#
+# -O3               : Full optimisation.  Verilator's generated eval() is
+#                     heavily inlined and benefits from auto-vectorisation.
+#
+# -march=native     : Allow the compiler to emit AVX/AVX2/etc. instructions
+#                     for the host CPU.  Provides a further 10-30 % speedup
+#                     on modern x86-64 machines for wide register-array accesses
+#                     in the generated model.  Remove when cross-compiling or
+#                     when the build and run hosts differ.
+#
+# -std=c++14        : Required by kws_soc_vpi.cpp.
+#
+# -I$(ROOT_DIR)     : kws_soc_vpi.cpp includes "sim/i2s_mic_sim.h" with a
+#                     path relative to the project root.  Without this, the
+#                     compiler (which runs from inside $(VERILATOR_BUILD_DIR)/)
+#                     cannot resolve the path.
+#
+# $(UART_CFLAGS)    : -DCLK_MHZ, -DUART_BAUD_RATE, etc. — required by the
+#                     #error guards in kws_soc_vpi.cpp.
+ 
+VERILATOR_CXXFLAGS := $(UART_CFLAGS) -std=c++14 -O3 -march=native -I$(ROOT_DIR)
+ 
+# ---------------------------------------------------------------------------
+# Build rule
+#
+# -CFLAGS "..."     : Flags forwarded to the C++ compiler for ALL sources
+#                     (including Verilator's own generated files).
+#                     -I$(ROOT_DIR) here covers the verilator-invocation phase.
+#                     -march=native here covers the generated model itself.
+# ---------------------------------------------------------------------------
 $(VERILATOR_BUILD_DIR)/Vkws_soc: $(FILE_LIST) kws_soc_vpi.cpp sim/i2s_mic_sim.cpp $(wildcard *.vh) $(DOTF)
 	mkdir -p $(VERILATOR_BUILD_DIR)
-	$(VERILATOR) $(VERILATOR_FLAGS) --top-module $(TOP) --Mdir $(VERILATOR_BUILD_DIR) \
-		-CFLAGS "-I$(ROOT_DIR)" \
-		--exe kws_soc_vpi.cpp sim/i2s_mic_sim.cpp $(FILE_LIST) -I$(HDL)
+	$(VERILATOR) $(VERILATOR_FLAGS) \
+		--top-module $(TOP) \
+		--Mdir $(VERILATOR_BUILD_DIR) \
+		-CFLAGS "-I$(ROOT_DIR) -march=native" \
+		--exe kws_soc_vpi.cpp sim/i2s_mic_sim.cpp \
+		$(FILE_LIST) -I$(HDL)
 	$(MAKE) -C $(VERILATOR_BUILD_DIR) -j -f V$(TOP).mk \
-		CXXFLAGS='$(UART_CFLAGS) -std=c++14 -O3 -I$(ROOT_DIR)' V$(TOP)
+		CXXFLAGS='$(VERILATOR_CXXFLAGS)' V$(TOP)
  
-.PHONY: sim-verilator
+.PHONY: sim-verilator sim-verilator-vcd sim-verilator-vcd-fast
 sim-verilator: $(VERILATOR_BUILD_DIR)/Vkws_soc
 	./$(VERILATOR_BUILD_DIR)/Vkws_soc --port 9824
  
+# Full-resolution waveform dump (every cycle)
 sim-verilator-vcd: $(VERILATOR_BUILD_DIR)/Vkws_soc
 	./$(VERILATOR_BUILD_DIR)/Vkws_soc --port 9824 --vcd waves.vcd --mic sim/debug_audio.hex
  
+# Down-sampled waveform dump — records one snapshot every 10 clock cycles.
+# Reduces VCD file size and disk I/O by ~10x with negligible loss for
+# functional debugging.  Increase --vcd-sample-rate further if even less
+# resolution is acceptable.
+sim-verilator-vcd-fast: $(VERILATOR_BUILD_DIR)/Vkws_soc
+	./$(VERILATOR_BUILD_DIR)/Vkws_soc --port 9824 --vcd waves.vcd \
+		--mic sim/debug_audio.hex --vcd-sample-rate 10
+ 
 clean_verilator:
 	rm -rf $(VERILATOR_BUILD_DIR) waves.vcd
-
 
 ##### QUARTUS Targets #####
 
