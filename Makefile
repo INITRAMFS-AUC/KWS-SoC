@@ -34,10 +34,11 @@ else
 endif
 SRC_LIST_IP     		:= $(abspath $(PLL_SRC))
 
+BUILD_DIR						:= build
 ## YOSYS VARS
 YOSYS_CONFIG    		:= default
-TBEXEC    					:= kws_soc_tb
-YOSYS_BUILD_DIR 		:= yosys_build
+YOSYS_BUILD_DIR 		:= $(BUILD_DIR)/yosys
+TBEXEC    					:= $(YOSYS_BUILD_DIR)/yosys/kws_soc_tb
 CLANGXX   					:= clang++
 
 ## QUARTUS VARS
@@ -105,9 +106,7 @@ STA := quartus_sta
 PGM := quartus_pgm
 SH  := quartus_sh
 
-.PHONY: clean all lint sim map fit asm sta program test check_timing config sim-verilator
-
-all: $(TBEXEC) test
+.PHONY: clean lint map fit asm sta program test check_timing config sim_verilator sim_yosys
 
 # Yosys synthesis command to generate CXXRTL C++ code
 YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(FILE_LIST);
@@ -125,29 +124,18 @@ $(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp sim/i2s_mic_sim.cpp
 		-I$(YOSYS_BUILD_DIR) \
 		sim/i2s_mic_sim.cpp kws_soc_tb.cpp -o $(TBEXEC)
 
-lint:
-	verilator --lint-only --top-module $(TOP) -I$(HDL) $(FILE_LIST)
 
 # Helper target to run the cxxrtl testbench with default port
-sim: $(TBEXEC)
-	./$(TBEXEC) --port 9824
-
-# Helper target to run cxxrtl testbench with VCD dumping
-sim-vcd: $(TBEXEC)
-	./$(TBEXEC) --port 9824 --vcd waves.vcd --mic sim/debug_audio.hex
-
+sim_yosys: $(TBEXEC)
+	@echo "run $(TBEXEC) --help"
+	@echo "When running run preferably over port 9824, else modify openocd/sim.cfg"
 
 ##### VERILATOR SIMULATION (fast) #####
  
 # Verilator binary + default flags
 VERILATOR ?= verilator
 VERILATOR_FLAGS ?= -Wall -Wno-fatal --cc --trace
-VERILATOR_BUILD_DIR ?= build_verilator
- 
-##### VERILATOR SIMULATION (fast) #####
- 
-VERILATOR         ?= verilator
-VERILATOR_BUILD_DIR ?= build_verilator
+VERILATOR_BUILD_DIR ?= $(BUILD_DIR)/verilator
  
 # ---------------------------------------------------------------------------
 # VERILATOR_FLAGS — what each flag does and why it is here
@@ -226,25 +214,16 @@ $(VERILATOR_BUILD_DIR)/Vkws_soc: $(FILE_LIST) kws_soc_vpi.cpp sim/i2s_mic_sim.cp
 		CXXFLAGS='$(VERILATOR_CXXFLAGS)' V$(TOP)
  
 .PHONY: sim-verilator sim-verilator-vcd sim-verilator-vcd-fast
-sim-verilator: $(VERILATOR_BUILD_DIR)/Vkws_soc
-	./$(VERILATOR_BUILD_DIR)/Vkws_soc --port 9824
- 
-# Full-resolution waveform dump (every cycle)
-sim-verilator-vcd: $(VERILATOR_BUILD_DIR)/Vkws_soc
-	./$(VERILATOR_BUILD_DIR)/Vkws_soc --port 9824 --vcd waves.vcd --mic sim/debug_audio.hex
- 
-# Down-sampled waveform dump — records one snapshot every 10 clock cycles.
-# Reduces VCD file size and disk I/O by ~10x with negligible loss for
-# functional debugging.  Increase --vcd-sample-rate further if even less
-# resolution is acceptable.
-sim-verilator-vcd-fast: $(VERILATOR_BUILD_DIR)/Vkws_soc
-	./$(VERILATOR_BUILD_DIR)/Vkws_soc --port 9824 --vcd waves.vcd \
-		--mic sim/debug_audio.hex --vcd-sample-rate 10
- 
-clean_verilator:
-	rm -rf $(VERILATOR_BUILD_DIR) waves.vcd
+sim_verilator: $(VERILATOR_BUILD_DIR)/Vkws_soc
+	@echo "run ./$(VERILATOR_BUILD_DIR)/Vkws_soc --help"
+	@echo "When running run preferably over port 9824, else modify openocd/sim.cfg"
 
+lint:
+	verilator --lint-only --top-module $(TOP) -I$(HDL) $(FILE_LIST)
+
+###########################
 ##### QUARTUS Targets #####
+###########################
 
 # 0. Project Generation
 $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile
@@ -296,7 +275,6 @@ endif
 test:
 	$(MAKE) -C soc_test/c
 
-
 # These just point to the real files above
 .PHONY: config map fit asm
 config: 	$(QSF_FILE)
@@ -314,22 +292,19 @@ check_timing: sta
 	# This is a simple check; for robust CI, parse the report files in output_files/
 	$(SH) --tcl_eval "project_open $(QUARTUS_PROJECT); set x [get_timing_analysis_summary_results -model slow]; puts \$$x; project_close"
 
-clean_all::
-	rm -rf $(YOSYS_BUILD_DIR) $(TBEXEC) *.vcd \
-				 $(QUARTUS_DIR)/db/ $(QUARTUS_DIR)/incremental_db/ $(QUARTUS_DIR)/output_files/ \
-				 $(QUARTUS_DIR)/*.qws $(QUARTUS_DIR)/*.sof $(QUARTUS_DIR)/*.pof $(QUARTUS_DIR)/*.rpt $(QUARTUS_DIR)/*.cdf \
-				 $(QUARTUS_DIR)/*.q*
-	$(MAKE) -C soc_test/c clean
+clean:: clean_sim clean_verilator clean_test clean_quartus
+clean_sim:: clean_yosys clean_verilator
 
 clean_test::
 	$(MAKE) -C soc_test/c clean
 
-
-clean_sim::
+clean_yosys::
 	rm -rf $(YOSYS_BUILD_DIR) $(TBEXEC) *.vcd
-
 
 clean_quartus::
 	rm -rf $(QUARTUS_DIR)/db/ $(QUARTUS_DIR)/incremental_db/ $(QUARTUS_DIR)/output_files/ \
 		$(QUARTUS_DIR)/*.qws $(QUARTUS_DIR)/*.sof $(QUARTUS_DIR)/*.pof $(QUARTUS_DIR)/*.rpt $(QUARTUS_DIR)/*.cdf \
 		$(QUARTUS_DIR)/*.q*
+
+clean_verilator::
+	rm -rf $(VERILATOR_BUILD_DIR) *.vcd

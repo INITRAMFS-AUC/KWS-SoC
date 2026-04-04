@@ -114,13 +114,22 @@ sudo pacman -S verilator
 
 To build the simulation executable run:
 ```bash
-make
+make sim_yosys
 ```
 
 >[!NOTE] 
-> This will result in compiling RTL into C++ code and compiling `kws_soc_tb.cpp`, the output of which is the executable `kws_soc_tb` this acts as your testbench and as a jtag server for `risv-openocd` to connect to.
+> This will result in compiling RTL into C++ code and compiling `kws_soc_tb.cpp`, the output of which is the executable `./build/yosys/kws_soc_tb` this acts as your testbench and as a jtag server for `risv-openocd` to connect to.
 > More on `cxxrtl` [here](https://yosyshq.readthedocs.io/projects/yosys/en/0.38/cmd/write_cxxrtl.html).
 
+run `./build/yosys/kws_soc_tb --help` for options
+
+### Building the `verilator` VPI-based simulation
+
+```
+make sim_verilator
+```
+The target will result in the executable `./build/verilator/Vkws_soc`
+run `./build/verilator/Vkws_soc --help` for options
 
 ## Running the SoC
 
@@ -128,25 +137,26 @@ You will need three terminals open.
 
 1. To run the jtag server by default in project root, in terminal 1, run:
 ```
-make run
+<tb> --port <port>
 ```
 
 >[!NOTE]
 > To run the SoC with VCD dumping run:
+>
 > ```bash
-> make run-vcd
+> <tb> --port <port> --vcd <file>.vcd
 > ```
+
 
 You should see this output:
 ```
-./kws_soc_tb --port 9824
-Waiting for connection on port 9824
+Waiting for connection on port <port>
 ```
 
 2. Now run `riscv-openocd` in project root, in terminal 2:
 
 ```
-riscv-openocd -f openocd.cfg
+riscv-openocd -f openocd/sim.cfg
 ```
 
 You should see this output in terminal 2 (`riscv-openocd` terminal):
@@ -176,11 +186,7 @@ Info : Listening on port 4444 for telnet connections
 
 You should see `Connected` in terminal 1 (`kws_soc_tb` terminal).
 
-3. Now run `riscv32-unknown-elf-gdb` in the third terminal and run the following command:
-
-```
-target extended-remote localhost:3333
-```
+3. Now run `riscv32-unknown-elf-gdb +x gdbinit` in the third terminal and run the following command:
 
 In terminal 2 (`riscv-openocd`) you should see this output:
 
@@ -214,18 +220,14 @@ file soc_test/asm/inf_loop.elf
 load
 ```
 
-
 ## Running Example C Code
-
 
 ### Infinite Loop
 
 1. First compile the C code using the provided Makefile:
 
 ```
-cd soc_test/c
-make
-cd ../..
+make test
 ```
 
 2. Run the remote debugging session as mentioned in the "Running the SoC" section, except when running gdb run:

@@ -110,12 +110,20 @@ static const char *help_str =
     "    --vcd x.vcd          : Dump VCD waveforms to file\n"
     "    --vcd-sample-rate n  : Dump VCD every n cycles (default 1).\n"
     "                           n=10 or 100 dramatically cuts waveform I/O.\n"
+    "                           Down-sampled waveform dump — records one snapshot every 10 clock cycles.\n "
+    "                           Reduces VCD file size and disk I/O by ~10x with negligible loss for\n "
+    "                           functional debugging.  Increase --vcd-sample-rate further if even less\n "
+    "                           resolution is acceptable.\n "
     "    --cycles n           : Exit after n simulated clock cycles (0 = unlimited)\n"
     "    --mic x.hex          : Audio hex file for the I2S microphone model\n"
     "    --jtagdump x         : Record raw remote_bitbang byte stream to file\n"
     "    --jtagreplay x       : Replay a recorded bitbang byte stream\n"
     "\n"
-    "Exactly one of --port or --jtagreplay must be supplied.\n";
+
+    "Exactly one of --port or --jtagreplay must be supplied.\n"
+    " ________________________________________________________\n\n "
+    "Example\n "
+    " kws_soc_vpi --port 9824 --vcd waves.vcd\n ";
 
 static void exit_help(const std::string &err = "") {
     std::cerr << err << help_str;
@@ -128,7 +136,8 @@ static void exit_help(const std::string &err = "") {
 static void set_nonblocking(int fd) {
     int fl = fcntl(fd, F_GETFL, 0);
     if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) < 0) {
-        perror("fcntl O_NONBLOCK"); exit(-1);
+        perror("fcntl O_NONBLOCK");
+        exit(-1);
     }
 }
 
@@ -140,11 +149,17 @@ static void set_tcp_nodelay(int fd) {
 }
 
 static int wait_for_connection(int server_fd, uint16_t port,
-                                struct sockaddr_in *addr, socklen_t *addrlen) {
+                               struct sockaddr_in *addr, socklen_t *addrlen) {
     printf("Waiting for connection on port %u\n", port);
-    if (listen(server_fd, 3) < 0) { perror("listen"); exit(-1); }
+    if (listen(server_fd, 3) < 0) {
+        perror("listen");
+        exit(-1);
+    }
     int fd = accept(server_fd, reinterpret_cast<struct sockaddr *>(addr), addrlen);
-    if (fd < 0) { perror("accept"); exit(-1); }
+    if (fd < 0) {
+        perror("accept");
+        exit(-1);
+    }
     set_nonblocking(fd);    // never sleep in recv() — the key speed change
     set_tcp_nodelay(fd);    // send TDO replies immediately
     printf("Connected\n");
@@ -217,7 +232,7 @@ static bool drain_jtag(JtagCtx &jc, Vkws_soc *top) {
                 // TCP peer closed — wait for OpenOCD to reconnect
                 close(jc.sock_fd);
                 jc.sock_fd = wait_for_connection(
-                    jc.server_fd, jc.port, &jc.addr, &jc.addrlen);
+                                 jc.server_fd, jc.port, &jc.addr, &jc.addrlen);
                 return false;
             } else if (n < 0) {
                 // EAGAIN / EWOULDBLOCK — nothing ready this cycle
@@ -310,7 +325,8 @@ int main(int argc, char **argv) {
         }
         else if (s == "--vcd") {
             if (argc - i < 2) exit_help("--vcd requires an argument\n");
-            dump_waves = true;  waves_path = argv[++i];
+            dump_waves = true;
+            waves_path = argv[++i];
         }
         else if (s == "--vcd-sample-rate") {
             if (argc - i < 2) exit_help("--vcd-sample-rate requires an argument\n");
@@ -334,7 +350,8 @@ int main(int argc, char **argv) {
             jc.dump_jtag = true;
             jc.dump_fd.open(argv[++i]);
             if (!jc.dump_fd.is_open()) {
-                std::cerr << "Failed to open JTAG dump file\n"; return -1;
+                std::cerr << "Failed to open JTAG dump file\n";
+                return -1;
             }
         }
         else if (s == "--jtagreplay") {
@@ -342,7 +359,8 @@ int main(int argc, char **argv) {
             jc.replay_jtag = true;
             jc.replay_fd.open(argv[++i]);
             if (!jc.replay_fd.is_open()) {
-                std::cerr << "Failed to open JTAG replay file\n"; return -1;
+                std::cerr << "Failed to open JTAG replay file\n";
+                return -1;
             }
         }
         else {
@@ -364,7 +382,10 @@ int main(int argc, char **argv) {
     if (jc.port != 0) {
         int opt = 1;
         jc.server_fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (jc.server_fd < 0) { perror("socket"); exit(-1); }
+        if (jc.server_fd < 0) {
+            perror("socket");
+            exit(-1);
+        }
         setsockopt(jc.server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT,
                    &opt, sizeof(opt));
 
@@ -375,10 +396,11 @@ int main(int argc, char **argv) {
         if (bind(jc.server_fd,
                  reinterpret_cast<struct sockaddr *>(&jc.addr),
                  sizeof(jc.addr)) < 0) {
-            perror("bind"); exit(-1);
+            perror("bind");
+            exit(-1);
         }
         jc.sock_fd = wait_for_connection(
-            jc.server_fd, jc.port, &jc.addr, &jc.addrlen);
+                         jc.server_fd, jc.port, &jc.addr, &jc.addrlen);
     }
 
     // -----------------------------------------------------------------------
@@ -427,8 +449,11 @@ int main(int argc, char **argv) {
     top->sd      = 0;
     top->eval();
 
-    top->clk = 1;  top->tck = 1;  top->eval();
-    top->clk = 0;  top->tck = 0;
+    top->clk = 1;
+    top->tck = 1;
+    top->eval();
+    top->clk = 0;
+    top->tck = 0;
     top->trst_n = 1;
     top->rst_n  = 1;
     top->eval();
@@ -455,8 +480,8 @@ int main(int argc, char **argv) {
     bool quit = false;
 
     for (int64_t cycle = 0;
-         !quit && (max_cycles == 0 || cycle < max_cycles);
-         ++cycle) {
+            !quit && (max_cycles == 0 || cycle < max_cycles);
+            ++cycle) {
 
         // ---- Falling edge --------------------------------------------------
         top->clk = 0;
@@ -477,7 +502,7 @@ int main(int argc, char **argv) {
                 if (!uart_tx) {
                     uart_state     = UART_START;
                     uart_bit_timer = uart_cycles_per_bit
-                                   + uart_cycles_per_bit / 2;
+                                     + uart_cycles_per_bit / 2;
                 }
             } else if (--uart_bit_timer == 0) {
                 if (uart_state >= UART_START && uart_state < UART_STOP) {
@@ -497,8 +522,8 @@ int main(int argc, char **argv) {
 
         // ---- I2S microphone ------------------------------------------------
         top->sd = static_cast<CData>(
-            i2s_mic.step(static_cast<bool>(top->sck_out),
-                         static_cast<bool>(top->ws_out)));
+                      i2s_mic.step(static_cast<bool>(top->sck_out),
+                                   static_cast<bool>(top->ws_out)));
 
         // ---- JTAG (non-blocking, CDC-safe) ---------------------------------
         if (jc.port != 0 || jc.replay_jtag)
@@ -516,7 +541,10 @@ int main(int argc, char **argv) {
     fflush(stdout);
     top->final();
 
-    if (tfp) { tfp->close(); tfp.reset(); }
+    if (tfp) {
+        tfp->close();
+        tfp.reset();
+    }
     top.reset();
     contextp.reset();
 
