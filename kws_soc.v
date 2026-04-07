@@ -445,7 +445,6 @@ module kws_soc #(
   wire        timer_pready;
   wire        timer_pslverr;
 
-  // i2s_apb
   wire        i2s_psel;
   wire        i2s_penable;
   wire        i2s_pwrite;
@@ -453,8 +452,7 @@ module kws_soc #(
   wire [31:0] i2s_pwdata;
   wire [31:0] i2s_prdata;
   wire        i2s_pready;
-  wire        i2s_pslverr;  // unconnected
-  assign i2s_pslverr = 1'b0;
+  wire        i2s_pslverr;  
 
   ahbl_to_apb apb_bridge_u (
       .clk  (clk),
@@ -486,8 +484,8 @@ module kws_soc #(
   apb_splitter #(
       .N_SLAVES (3),
       .W_ADDR   (16),
-      .ADDR_MAP (48'h4000_5000_0000),
-      .ADDR_MASK(48'hc000_5000_c000)
+      .ADDR_MAP (48'h4000_8000_0000),
+      .ADDR_MASK(48'hc000_c000_c000)
   ) inst_apb_splitter (
       .apbs_paddr   (bridge_paddr),
       .apbs_psel    (bridge_psel),
@@ -559,19 +557,20 @@ module kws_soc #(
   apb_i2s_receiver #(
       .FIFO_DEPTH(8)
   ) apb_i2s_receiver_inst (
-      .clk         (clk),
-      .rst_n       (rst_n),
-      .sd          (sd),
-      .apbs_psel   (i2s_psel),
-      .apbs_penable(i2s_penable),
-      .apbs_pwrite (i2s_pwrite),
-      .apbs_paddr  (i2s_paddr),
-      .apbs_pwdata (i2s_pwdata),
-      .apbs_prdata (i2s_prdata),
-      .apbs_pready (i2s_pready),
-      .sck_out     (sck_out),
-      .ws_out      (ws_out),
-      .i2s_irq     (i2s_irq)
+      .clk          (clk),
+      .rst_n        (rst_n),
+      .sd           (sd),
+      .apbs_psel    (i2s_psel),
+      .apbs_penable (i2s_penable),
+      .apbs_pwrite  (i2s_pwrite),
+      .apbs_paddr   (i2s_paddr),
+      .apbs_pwdata  (i2s_pwdata),
+      .apbs_prdata  (i2s_prdata),
+      .apbs_pready  (i2s_pready),
+      .apbs_pslverr (i2s_pslverr),
+      .sck_out      (sck_out),
+      .ws_out       (ws_out),
+      .i2s_irq      (i2s_irq)
   );
 
 

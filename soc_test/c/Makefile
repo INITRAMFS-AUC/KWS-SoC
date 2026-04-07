@@ -4,6 +4,7 @@ ifndef GLOBAL_UART_CONFIG
 $(error GLOBAL_UART_CONFIG is missing. Please build by running 'make test' from the project root)
 endif
 
+I2S_REGS_DIR = ../../peris/i2s/i2s_apb/i2s_itr2
 ROOT_MAKEFILE = ../../Makefile
 CROSS_COMPILE = riscv32-unknown-elf-
 CC = $(CROSS_COMPILE)gcc
@@ -14,6 +15,7 @@ OBJDUMP = $(CROSS_COMPILE)objdump
 # -march=rv32i -mabi=ilp32 ensures standard 32-bit RISC-V integer instructions
 CFLAGS = -march=rv32i -mabi=ilp32 -g -c
 CFLAGS += $(GLOBAL_UART_CONFIG)
+CFLAGS += -I$(I2S_REGS_DIR)
 
 # It's generally better to let GCC drive the linker rather than using LD directly.
 # -nostartfiles prevents the compiler from linking standard system startup files.
