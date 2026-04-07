@@ -27,10 +27,10 @@ module kws_soc #(
 
     // IO
     output wire uart_tx  /*verilator public_flat_rd*/,
-    input  wire uart_rx  /*verilator public_flat_rw*/,
-    input  wire sd  /*verilator public_flat_rw*/,
-    output wire sck_out /*verilator public_flat_rd*/,
-    output wire ws_out /*verilator public_flat_rd*/
+    input wire uart_rx  /*verilator public_flat_rw*/,
+    input wire sd  /*verilator public_flat_rw*/,
+    output wire sck_out  /*verilator public_flat_rd*/,
+    output wire ws_out  /*verilator public_flat_rd*/
 );
   // ----------------------------------------------------------------------------
   // Processor debug
@@ -485,26 +485,27 @@ module kws_soc #(
 
   apb_splitter #(
       .N_SLAVES (3),
-      .ADDR_MAP (48'h4000_0000_8000),
-      .ADDR_MASK(48'hc000_c000_c000)
+      .W_ADDR   (16),
+      .ADDR_MAP (48'h4000_5000_0000),
+      .ADDR_MASK(48'hc000_5000_c000)
   ) inst_apb_splitter (
-      .apbs_paddr  (bridge_paddr),
-      .apbs_psel   (bridge_psel),
-      .apbs_penable(bridge_penable),
-      .apbs_pwrite (bridge_pwrite),
-      .apbs_pwdata (bridge_pwdata),
-      .apbs_pready (bridge_pready),
-      .apbs_prdata (bridge_prdata),
-      .apbs_pslverr(bridge_pslverr),
+      .apbs_paddr   (bridge_paddr),
+      .apbs_psel    (bridge_psel),
+      .apbs_penable (bridge_penable),
+      .apbs_pwrite  (bridge_pwrite),
+      .apbs_pwdata  (bridge_pwdata),
+      .apbs_pready  (bridge_pready),
+      .apbs_prdata  (bridge_prdata),
+      .apbs_pslverr (bridge_pslverr),
 
-      .apbm_paddr  ({uart_paddr, timer_paddr, i2s_paddr}),
-      .apbm_psel   ({uart_psel, timer_psel, i2s_psel}),
-      .apbm_penable({uart_penable, timer_penable, i2s_penable}),
-      .apbm_pwrite ({uart_pwrite, timer_pwrite, i2s_pwrite}),
-      .apbm_pwdata ({uart_pwdata, timer_pwdata, i2s_pwdata}),
-      .apbm_pready ({uart_pready, timer_pready, i2s_pready}),
-      .apbm_prdata ({uart_prdata, timer_prdata, i2s_prdata}),
-      .apbm_pslverr({uart_pslverr, timer_pslverr, i2s_pslverr})
+      .apbm_paddr   ({uart_paddr,   i2s_paddr,   timer_paddr}),
+      .apbm_psel    ({uart_psel,    i2s_psel,    timer_psel}),
+      .apbm_penable ({uart_penable, i2s_penable, timer_penable}),
+      .apbm_pwrite  ({uart_pwrite,  i2s_pwrite,  timer_pwrite}),
+      .apbm_pwdata  ({uart_pwdata,  i2s_pwdata,  timer_pwdata}),
+      .apbm_pready  ({uart_pready,  i2s_pready,  timer_pready}),
+      .apbm_prdata  ({uart_prdata,  i2s_prdata,  timer_prdata}),
+      .apbm_pslverr ({uart_pslverr, i2s_pslverr, timer_pslverr})
   );
 
   // ----------------------------------------------------------------------------

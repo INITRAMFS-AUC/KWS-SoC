@@ -15,6 +15,7 @@ verilator_sources.f
 *.o
 *.dis
 *.vcd
+*.fst
 *.qsf
 *.qpf
 

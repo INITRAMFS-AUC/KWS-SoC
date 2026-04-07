@@ -5,7 +5,7 @@
 // and I2S microphone stimulus model.
 //
 // Build (see Makefile target `sim-verilator`):
-//   verilator -Wall -Wno-fatal --cc --trace --x-initial 0 \
+//   verilator -Wall -Wno-fatal --cc --trace-fst --x-initial 0 \
 //             --top-module kws_soc \
 //             --Mdir build_verilator \
 //             --exe kws_soc_vpi.cpp sim/i2s_mic_sim.cpp \
@@ -14,6 +14,8 @@
 //   make -C build_verilator -j -f Vkws_soc.mk \
 //        CXXFLAGS='$(UART_CFLAGS) -std=c++14 -O3 -march=native -I$(ROOT_DIR)' \
 //        Vkws_soc
+//
+//   For VCD instead of FST: TRACE_FORMAT=VCD make sim_verilator
 //
 // OpenOCD remote_bitbang protocol (ASCII over TCP):
 //   '0'-'7'  write {tck[2], tms[1], tdi[0]}
@@ -65,7 +67,27 @@
 
 #include "Vkws_soc.h"
 #include "verilated.h"
-#include "verilated_vcd_c.h"    // requires --trace in Verilator flags
+
+// ---------------------------------------------------------------------------
+// Trace format selection
+//
+// Default: FST (Fast Signal Trace) — ~10-50x smaller files than VCD, faster
+// disk I/O.  Override by defining TRACE_VCD at compile time (e.g.
+// -DTRACE_VCD via CXXFLAGS) to fall back to classic VCD.
+//
+// The Makefile controls this via the TRACE_FORMAT env variable:
+//   TRACE_FORMAT=VCD  make sim_verilator   → uses VCD
+//   make sim_verilator                     → uses FST (default)
+// ---------------------------------------------------------------------------
+#ifdef TRACE_VCD
+#  include "verilated_vcd_c.h"
+   typedef VerilatedVcdC TraceFile;
+#  define TRACE_EXT "vcd"
+#else
+#  include "verilated_fst_c.h"
+   typedef VerilatedFstC TraceFile;
+#  define TRACE_EXT "fst"
+#endif
 
 // ---------------------------------------------------------------------------
 // Build-time guards
@@ -102,16 +124,18 @@ static constexpr int JTAG_TX_BUF = 4096;
 // Help
 // ---------------------------------------------------------------------------
 static const char *help_str =
-    "Usage: kws_soc_vpi [--port n] [--vcd x.vcd] [--cycles n]\n"
+    "Usage: kws_soc_vpi [--port n] [--waves x] [--vcd x.vcd] [--cycles n]\n"
     "                   [--mic x.hex] [--jtagdump x] [--jtagreplay x]\n"
     "                   [--vcd-sample-rate n]\n"
     "\n"
     "    --port n             : TCP port for OpenOCD remote_bitbang server\n"
-    "    --vcd x.vcd          : Dump VCD waveforms to file\n"
-    "    --vcd-sample-rate n  : Dump VCD every n cycles (default 1).\n"
+    "    --waves x            : Dump waveforms to file (format depends on build:\n"
+    "                           FST by default, VCD if compiled with -DTRACE_VCD)\n"
+    "    --vcd x.vcd          : Alias for --waves (kept for backward compat)\n"
+    "    --vcd-sample-rate n  : Dump waveform every n cycles (default 1).\n"
     "                           n=10 or 100 dramatically cuts waveform I/O.\n"
     "                           Down-sampled waveform dump — records one snapshot every 10 clock cycles.\n "
-    "                           Reduces VCD file size and disk I/O by ~10x with negligible loss for\n "
+    "                           Reduces file size and disk I/O by ~10x with negligible loss for\n "
     "                           functional debugging.  Increase --vcd-sample-rate further if even less\n "
     "                           resolution is acceptable.\n "
     "    --cycles n           : Exit after n simulated clock cycles (0 = unlimited)\n"
@@ -119,11 +143,13 @@ static const char *help_str =
     "    --jtagdump x         : Record raw remote_bitbang byte stream to file\n"
     "    --jtagreplay x       : Replay a recorded bitbang byte stream\n"
     "\n"
+    "Trace format: " TRACE_EXT " (compile with -DTRACE_VCD to use VCD instead)\n"
+    "\n"
 
     "Exactly one of --port or --jtagreplay must be supplied.\n"
     " ________________________________________________________\n\n "
     "Example\n "
-    " kws_soc_vpi --port 9824 --vcd waves.vcd\n ";
+    " kws_soc_vpi --port 9824 --waves waves." TRACE_EXT "\n ";
 
 static void exit_help(const std::string &err = "") {
     std::cerr << err << help_str;
@@ -323,8 +349,8 @@ int main(int argc, char **argv) {
             std::cerr << "Unexpected positional argument: " << s << "\n";
             exit_help();
         }
-        else if (s == "--vcd") {
-            if (argc - i < 2) exit_help("--vcd requires an argument\n");
+        else if (s == "--vcd" || s == "--waves") {
+            if (argc - i < 2) exit_help(s + " requires an argument\n");
             dump_waves = true;
             waves_path = argv[++i];
         }
@@ -425,14 +451,14 @@ int main(int argc, char **argv) {
     std::unique_ptr<Vkws_soc> top(new Vkws_soc(contextp.get()));
 
     // -----------------------------------------------------------------------
-    // VCD
+    // Waveform trace (FST default, VCD if compiled with -DTRACE_VCD)
     // -----------------------------------------------------------------------
-    std::unique_ptr<VerilatedVcdC> tfp;
+    std::unique_ptr<TraceFile> tfp;
     if (dump_waves) {
-        tfp.reset(new VerilatedVcdC);
+        tfp.reset(new TraceFile);
         top->trace(tfp.get(), /*depth=*/99);
         tfp->open(waves_path.c_str());
-        printf("VCD: %s  (sample every %d cycle(s))\n",
+        printf("Trace [" TRACE_EXT "]: %s  (sample every %d cycle(s))\n",
                waves_path.c_str(), vcd_sample_rate);
     }
 

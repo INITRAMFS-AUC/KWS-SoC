@@ -134,8 +134,23 @@ sim_yosys: $(TBEXEC)
  
 # Verilator binary + default flags
 VERILATOR ?= verilator
-VERILATOR_FLAGS ?= -Wall -Wno-fatal --cc --trace
 VERILATOR_BUILD_DIR ?= $(BUILD_DIR)/verilator
+
+# ---------------------------------------------------------------------------
+# Trace format: FST (default) or VCD
+#
+#   make sim_verilator                     → FST (smaller, faster)
+#   TRACE_FORMAT=VCD make sim_verilator    → VCD (classic, wider tool support)
+# ---------------------------------------------------------------------------
+TRACE_FORMAT ?= FST
+
+ifeq ($(TRACE_FORMAT),VCD)
+  VERILATOR_TRACE_FLAG := --trace
+  TRACE_CFLAGS         := -DTRACE_VCD
+else
+  VERILATOR_TRACE_FLAG := --trace-fst
+  TRACE_CFLAGS         :=
+endif
  
 # ---------------------------------------------------------------------------
 # VERILATOR_FLAGS — what each flag does and why it is here
@@ -143,16 +158,11 @@ VERILATOR_BUILD_DIR ?= $(BUILD_DIR)/verilator
 #
 # --cc              : C++ output mode (not SystemC).
 #
-# --trace           : Emit VCD tracing support.  Required by kws_soc_vpi.cpp
-#                     (VerilatedVcdC).  Remove if you never use --vcd to save
-#                     a small amount of per-cycle overhead.
-#
-#                     FASTER ALTERNATIVE: replace --trace with --trace-fst to
-#                     emit FST (Fast Signal Trace) support instead.  FST files
-#                     are ~10-50x smaller than VCD and write proportionally
-#                     faster.  Requires changing kws_soc_vpi.cpp to include
-#                     verilated_fst_c.h and use VerilatedFstC instead of
-#                     VerilatedVcdC.
+# $(VERILATOR_TRACE_FLAG) : Controlled by TRACE_FORMAT (default FST).
+#                     --trace-fst emits FST support (VerilatedFstC).
+#                     --trace     emits VCD support (VerilatedVcdC).
+#                     kws_soc_vpi.cpp selects the matching class via
+#                     the TRACE_VCD preprocessor define.
 #
 # --x-initial 0     : Initialise all X (uninitialised) bits to 0 instead of
 #                     random.  Removes X-propagation tracking machinery from
@@ -167,7 +177,7 @@ VERILATOR_BUILD_DIR ?= $(BUILD_DIR)/verilator
 #   --no-timing     : Disable timing-aware evaluation (default in --cc mode,
 #                     listed here for clarity).
  
-VERILATOR_FLAGS ?= -Wall -Wno-fatal --cc --trace --x-initial 0
+VERILATOR_FLAGS := -Wall -Wno-fatal --cc $(VERILATOR_TRACE_FLAG) --x-initial 0
  
 # ---------------------------------------------------------------------------
 # VERILATOR_CXXFLAGS — what each flag does and why it is here
@@ -192,7 +202,7 @@ VERILATOR_FLAGS ?= -Wall -Wno-fatal --cc --trace --x-initial 0
 # $(UART_CFLAGS)    : -DCLK_MHZ, -DUART_BAUD_RATE, etc. — required by the
 #                     #error guards in kws_soc_vpi.cpp.
  
-VERILATOR_CXXFLAGS := $(UART_CFLAGS) -std=c++14 -O3 -march=native -I$(ROOT_DIR)
+VERILATOR_CXXFLAGS := $(UART_CFLAGS) $(TRACE_CFLAGS) -std=c++14 -O3 -march=native -I$(ROOT_DIR)
  
 # ---------------------------------------------------------------------------
 # Build rule
@@ -307,4 +317,4 @@ clean_quartus::
 		$(QUARTUS_DIR)/*.q*
 
 clean_verilator::
-	rm -rf $(VERILATOR_BUILD_DIR) *.vcd
+	rm -rf $(VERILATOR_BUILD_DIR) *.vcd *.fst
