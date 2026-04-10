@@ -1,17 +1,16 @@
 #include "uart.h"
+#include "uart_regs.h"
+
+#define UART_REG(off) (*(volatile uint32_t *)(UART_BASE + (off)))
 
 void uart_init() {
-    // Set the fractional divisor
-    UART_DIV = UART_DIV_VAL;
-
-    // Enable UART (Loopback, Interrupts etc. handled here if needed)
-    UART_CSR |= UART_CSR_EN;
+    UART_REG(UART_DIV_OFFS)  = UART_DIV_VAL;
+    UART_REG(UART_CSR_OFFS) |= UART_CSR_EN_MASK;
 }
 
 void uart_putc(char c) {
-    // Wait for TX FIFO to be not full
-    while (UART_FSTAT & UART_FSTAT_TXFULL);
-    UART_TX = c;
+    while (UART_REG(UART_FSTAT_OFFS) & UART_FSTAT_TXFULL_MASK);
+    UART_REG(UART_TX_OFFS) = c;
 }
 
 void uart_puts(const char *s) {
@@ -24,20 +23,16 @@ void uart_puthex(uint32_t val) {
         uart_putc('0');
         return;
     }
-    
+
     int started = 0;
     // Iterate through nibbles from highest to lowest
     for (int i = 28; i >= 0; i -= 4) {
         uint8_t nibble = (val >> i) & 0xF;
-        
+
         // Skip leading zeros
         if (nibble != 0 || started) {
             started = 1;
-            if (nibble < 10) {
-                uart_putc('0' + nibble);
-            } else {
-                uart_putc('a' + (nibble - 10)); // Use 'A' instead of 'a' for uppercase hex
-            }
+            uart_putc(nibble < 10 ? '0' + nibble : 'a' + (nibble - 10));
         }
     }
 }
@@ -51,22 +46,11 @@ void uart_printf(const char *format, ...) {
         if (*format == '%') {
             format++;
             switch (*format) {
-                case 's':
-                    uart_puts(va_arg(args, const char *));
-                    break;
-                case 'c':
-                    uart_putc((char)va_arg(args, int)); 
-                    break;
-                case 'x':
-                    uart_puthex(va_arg(args, uint32_t));
-                    break;
-                case '%':
-                    uart_putc('%');
-                    break;
-                default:
-                    // If format specifier isn't recognized, print the raw char
-                    uart_putc(*format); 
-                    break;
+                case 's': uart_puts(va_arg(args, const char *)); break;
+                case 'c': uart_putc((char)va_arg(args, int));    break;
+                case 'x': uart_puthex(va_arg(args, uint32_t));  break;
+                case '%': uart_putc('%');                        break;
+                default:  uart_putc(*format);                   break;
             }
         } else {
             uart_putc(*format);
