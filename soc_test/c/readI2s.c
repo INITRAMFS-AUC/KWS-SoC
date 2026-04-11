@@ -20,7 +20,7 @@ void i2s_configure(uint32_t clk_div, uint8_t int_en) {
 void __attribute__((interrupt("machine"))) i2s_isr(void) {
     for (int i = 0; i < I2S_FIFO_DEPTH; i++) {
         uint32_t sample = I2S->fifo;
-        uart_printf("%x\n", sample);
+        uart_printf("%x\r\n", sample);
     }
 }
 
@@ -43,7 +43,7 @@ static inline void wfi(void) {
 int main(void) {
     uart_init();
     uint32_t id = i2s_get_id();
-    uart_printf("[Smoke test] ID: 0x%x\n\n", id);
+    uart_printf("[Smoke test] ID: 0x%x\r\n\r\n", id);
     csr_set_mtvec(i2s_isr);
     csr_enable_meie();
     i2s_configure(4, 1);
