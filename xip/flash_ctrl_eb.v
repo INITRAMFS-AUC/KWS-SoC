@@ -18,7 +18,7 @@ module flash_ctrl_eb #(parameter LW = 256) (
     input  wire [3:0]       di
 );
 
-    localparam integer TRST_CYCLES = 20 * `CLK_MHZ;
+    localparam integer TRST_CYCLES = 30 * `CLK_MHZ;
     // --- FSM States ---
     localparam IDLE      = 4'd0,
                CMD_66    = 4'd1,
@@ -33,7 +33,7 @@ module flash_ctrl_eb #(parameter LW = 256) (
                DONE_WAIT = 4'd10; // Clean SPI Mode 0 termination
 
     reg [3:0] state, next_state;
-    reg [11:0] phase_tick;
+    reg [15:0] phase_tick;
     reg is_first;
 
     always @(posedge clk or negedge rst_n) begin
