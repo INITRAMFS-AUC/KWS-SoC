@@ -64,7 +64,7 @@ module flash_ctrl_eb #(parameter LW = 256) (
             CMD_EB:    if (phase_tick == 15) next_state = ADDR;
             ADDR:      if (phase_tick == 11) next_state = MODE;
             MODE:      if (phase_tick == 3)  next_state = DUMMY;
-            // TODO: CRM assumes we can shorten to 2 cycles and so does flashsim.cpp but GD25 does not support this
+            // TODO: CRM assumes we can shorten to 2 cycles but GD25 does not support this
             // DUMMY:     if (phase_tick == (is_first ? 7 : 3)) next_state = DATA;
             DUMMY:     if (phase_tick == 7 ) next_state = DATA;
 
