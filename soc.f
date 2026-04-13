@@ -22,9 +22,7 @@ list Hazard3/example_soc/libfpga/peris/spi_03h_xip/spi_03h_xip.f
 list Hazard3/example_soc/libfpga/mem/ahb_cache.f
 list Hazard3/example_soc/libfpga/mem/ahb_sync_sram.f
 
-list Hazard3/example_soc/libfpga/busfabric/ahbl_crossbar.f
-file Hazard3/example_soc/libfpga/busfabric/ahbl_to_apb.v
-file Hazard3/example_soc/libfpga/busfabric/apb_splitter.v
+list busfabric/busfabric.f
 
 # IO and XIP peripherals
 

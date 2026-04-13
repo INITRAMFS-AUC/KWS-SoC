@@ -357,15 +357,23 @@ module kws_soc #(
 
   // ----------------------------------------------------------------------------
   // Bus fabric
-
+  //
   // Memory map:
   // - 128 kB SRAM at... 0x0000_0000
   // - System timer at.. 0x4000_0000
   // - UART at.......... 0x4000_4000
   // - I2S at........... 0x4000_8000
   // - XIP Flash at..... 0x8000_0000
+  //
+  // Masters (N_MASTERS=1 for now; will become 2 when switching to cpu_2port):
+  //   Master 0 — cpu (proc_*)
+  //
+  // Slaves (N_SLAVES=3):
+  //   Slave 0 — SRAM        (0x0000_0000, mask 0xe000_0000)
+  //   Slave 1 — APB bridge  (0x4000_0000, mask 0xe000_0000)
+  //   Slave 2 — XIP flash   (0x8000_0000, mask 0xe000_0000)
 
-  // AHBL layer
+  // --- Slave-side wires ---
 
   wire              sram0_hready_resp;
   wire              sram0_hready;
@@ -393,30 +401,32 @@ module kws_soc #(
   wire [W_DATA-1:0] bridge_hwdata;
   wire [W_DATA-1:0] bridge_hrdata;
 
-  // Starting from 0x8000_0000 + 2 GB is all dedicated to XIP Flash
-  wire               xip_hready_resp;
-  wire               xip_hready;
-  wire               xip_hresp;
-  wire [W_ADDR-1:0]  xip_haddr;
-  wire               xip_hwrite;
-  wire [1:0]         xip_htrans;
-  wire [2:0]         xip_hsize;
-  wire [2:0]         xip_hburst;
-  wire [3:0]         xip_hprot;
-  wire               xip_hmastlock;
-  wire [W_DATA-1:0]  xip_hwdata;
-  wire [W_DATA-1:0]  xip_hrdata;
+  wire              xip_hready_resp;
+  wire              xip_hready;
+  wire              xip_hresp;
+  wire [W_ADDR-1:0] xip_haddr;
+  wire              xip_hwrite;
+  wire [       1:0] xip_htrans;
+  wire [       2:0] xip_hsize;
+  wire [       2:0] xip_hburst;
+  wire [       3:0] xip_hprot;
+  wire              xip_hmastlock;
+  wire [W_DATA-1:0] xip_hwdata;
+  wire [W_DATA-1:0] xip_hrdata;
 
-  ahbl_splitter #(
-      .N_PORTS  (3),
+  ahbl_crossbar #(
+      .N_MASTERS(1),
+      .N_SLAVES (3),
+      .W_ADDR   (W_ADDR),
+      .W_DATA   (W_DATA),
       .ADDR_MAP (96'h80000000_40000000_00000000),
       .ADDR_MASK(96'he0000000_e0000000_e0000000)
-  ) splitter_u (
+  ) xbar_u (
       .clk  (clk),
       .rst_n(rst_n),
 
+      // Masters
       .src_hready_resp(proc_hready),
-      .src_hready     (proc_hready),
       .src_hresp      (proc_hresp),
       .src_haddr      (proc_haddr),
       .src_hwrite     (proc_hwrite),
@@ -428,6 +438,7 @@ module kws_soc #(
       .src_hwdata     (proc_hwdata),
       .src_hrdata     (proc_hrdata),
 
+      // Slaves
       .dst_hready_resp({xip_hready_resp,  bridge_hready_resp, sram0_hready_resp}),
       .dst_hready     ({xip_hready,       bridge_hready,      sram0_hready     }),
       .dst_hresp      ({xip_hresp,        bridge_hresp,       sram0_hresp      }),
