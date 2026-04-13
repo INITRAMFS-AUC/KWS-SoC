@@ -18,6 +18,11 @@ module fpga_top (
     output wire         uart_tx,
     input  wire         uart_rx,
 
+    // I2S
+    input  wire         i2s_sd,
+    output wire         i2s_ws,
+    output wire         i2s_sck,
+
 	// XIP
 	output wire         xip_csn,
     output wire         xip_sck,
@@ -66,8 +71,8 @@ module fpga_top (
         .CLK_MHZ    (`CLK_MHZ),      	// Matches clock_pll_36 output // TODO: Make this linked to a global clk def instead of being a magic num
         `include "hazard3_instantiation_params.vh"
     ) soc_inst (
-        .clk            (sys_clk),   	// Connect PLL output to core input
-        .rst_n          (rst_n ),	// Safe Reset: Wait for PLL lock // Use & pll_locked for pll lock
+        .clk            (sys_clk),      // Connect PLL output to core input
+        .rst_n          (rst_n),        // Safe Reset: Wait for PLL lock // Use & pll_locked for pll lock
 
         .tck            (tck),
         .trst_n         (trst_n),
@@ -77,6 +82,10 @@ module fpga_top (
 
         .uart_tx        (uart_tx),
         .uart_rx        (uart_rx),
+        
+        .i2s_sd             (i2s_sd),
+        .i2s_ws_out         (i2s_ws),
+        .i2s_sck_out        (i2s_sck),
 
         .xip_csn        (xip_csn),
         .xip_sck        (xip_sck),

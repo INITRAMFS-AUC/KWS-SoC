@@ -15,6 +15,11 @@ set_location_assignment PIN_AJ1  -to trst_n -comment "GPIO 4"
 set_location_assignment PIN_AJ2  -to uart_rx -comment "GPIO 5"
 set_location_assignment PIN_AH2  -to uart_tx -comment "GPIO 6"
 
+# I2S
+set_location_assignment PIN_AE7 -to i2s_ws  -comment "GPIO Connection [23]"
+set_location_assignment PIN_AF9 -to i2s_sd  -comment "GPIO Connection [21]"
+set_location_assignment PIN_AF6 -to i2s_sck -comment "GPIO Connection [19]"
+
 # QSPI Flash Pin Assignments
 set_location_assignment PIN_AH3  -to xip_csn      -comment "GPIO 7"
 set_location_assignment PIN_AH4  -to xip_sck      -comment "GPIO 8"

@@ -16,7 +16,7 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
     output wire                 csn,
     output wire                 sck,
     output wire [3:0]           doe,
-    output wire [3:0]           do,
+    output wire [3:0]           spi_do,
     input  wire [3:0]           di
 );
 
@@ -128,12 +128,14 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
         // Send the latched miss address to the flash controller, aligned to 32 bytes
         .A({m_addr[23:5], 5'b00000}),
         .D(flash_data_bus),
-        .csn(csn), .sck(sck), .doe(doe), .do(do), .di(di)
+        .csn(csn), .sck(sck), .doe(doe), .spi_do(spi_do), .di(di)
     );
 
     always @(posedge HCLK) begin
         if (address_phase_req) begin
+`ifdef XIP_DEBUG
             $display("[AHB PROBE] XIP Wrapper received read request for Address: %h", HADDR);
+`endif
         end
     end
 

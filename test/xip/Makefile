@@ -2,7 +2,7 @@ IVERILOG ?= iverilog
 VVP ?= vvp
 BUILD_DIR ?= build
 TESTBENCH_DIR ?= testbench
-XIP_HDL_DIR ?= ../../xip
+XIP_HDL_DIR ?= ../../peris/xip
 
 # Testbenches
 TB_CACHE      = ahbl_flash_ctrl_eb_cache_tb

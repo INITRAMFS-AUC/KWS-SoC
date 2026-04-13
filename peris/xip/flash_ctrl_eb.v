@@ -14,7 +14,7 @@ module flash_ctrl_eb #(parameter LW = 256) (
     output wire             csn,
     output wire             sck,
     output wire [3:0]       doe,
-    output wire [3:0]       do,
+    output wire [3:0]       spi_do,
     input  wire [3:0]       di
 );
 
@@ -102,7 +102,7 @@ module flash_ctrl_eb #(parameter LW = 256) (
             default: do_reg = 4'b0000;
         endcase
     end
-    assign do = do_reg;
+    assign spi_do = do_reg;
 
     assign doe = (state == CMD_66 || state == CMD_99 || state == CMD_EB) ? 4'b1101 :
                  (state == ADDR || state == MODE) ? 4'b1111 : 4'b0000;

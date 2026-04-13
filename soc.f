@@ -26,4 +26,6 @@ list Hazard3/example_soc/libfpga/busfabric/ahbl_crossbar.f
 file Hazard3/example_soc/libfpga/busfabric/ahbl_to_apb.v
 file Hazard3/example_soc/libfpga/busfabric/apb_splitter.v
 
-list xip/xip.f
+# IO and XIP peripherals
+
+list peris/peris.f
