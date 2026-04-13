@@ -1,4 +1,8 @@
+#ifndef UART_H
+#define UART_H
+
 #include <stdint.h>
+#include <stdarg.h>
 
 // --- UART REGISTER DEFINITIONS ---
 #define UART_BASE  0x40004000
@@ -29,28 +33,13 @@
 // We apply rounding logic: ((2*CLK) + (Baud/2)) / Baud
 #define UART_DIV_VAL  (((2 * SYS_CLK_HZ) + (UART_BAUD_RATE / 2)) / UART_BAUD_RATE)
 
-void uart_init() {
-    // Set the fractional divisor
-    UART_DIV = UART_DIV_VAL;
+void uart_init(void);
+void uart_putc(char c);
+// Print a null-terminated string
+void uart_puts(const char *s);
 
-    // Enable UART (Loopback, Interrupts etc. handled here if needed)
-    UART_CSR |= UART_CSR_EN;
-}
+void uart_puthex(uint32_t val);
+// Tiny formatted print (supports %s, %c, %x, %%)
+void uart_printf(const char *format, ...);
 
-void uart_putc(char c) {
-    // Wait for TX FIFO to be not full
-    while (UART_FSTAT & UART_FSTAT_TXFULL);
-    UART_TX = c;
-}
-
-void uart_puts(const char *s) {
-    while (*s) uart_putc(*s++);
-}
-
-int main() {
-    uart_init();
-    while (1) {
-        uart_puts("Hello World!\r\n");
-    }
-    return 0;
-}
+#endif

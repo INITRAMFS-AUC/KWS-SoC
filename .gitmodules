@@ -7,3 +7,6 @@
 [submodule "example_soc/libfpga"]
 	path = Hazard3/example_soc/libfpga
 	url = git@github.com:Wren6991/libfpga.git
+[submodule "peris/i2s"]
+	path = peris/i2s
+	url = git@github.com:INITRAMFS-AUC/i2s.git

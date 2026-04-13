@@ -14,13 +14,16 @@ shell config template can be found at `soc_conf.sh`, which is just a bunch of ex
 
 | Target | desc | depends on |
 | --- | --- | --- |
-| `make config` | Quartus Project Generation | - |
-| `make map` | Synthesis | `config` |
-| `make fit` | Fitting | `map` | 
-| `make asm` | Bit Stream generation| `fit` |
-| `make sta` | Static Timing Analysis | `fit` |
-| `make check_timing` | Timing Violations | `sta` |
-| `make program` | Programing FPGA | `asm` |
+| `make config`      | Quartus Project Generation         | -        |
+| `make map`         | Synthesis                         | `config` |
+| `make fit`         | Fitting                           | `map`    |
+| `make asm`         | Bit Stream generation             | `fit`    |
+| `make sta`         | Static Timing Analysis            | `fit`    |
+| `make check_timing`| Timing Violations                 | `sta`    |
+| `make program`     | Programming FPGA                  | `asm`    |
+| `make test`        | Build all C/ASM firmware (see test/Makefile) | - |
+| `make test-xip`    | Build and run XIP Verilog simulations         | - |
+| `make clean`       | Clean all build artifacts                     | - |
 
 >[!NOTE]
 > **For GUI development:**
@@ -114,39 +117,248 @@ sudo pacman -S verilator
 
 To build the simulation executable run:
 ```bash
-make
+make sim_yosys
 ```
 
 >[!NOTE] 
-> This will result in compiling RTL into C++ code and compiling `kws_soc_tb.cpp`, the output of which is the executable `kws_soc_tb` this acts as your testbench and as a jtag server for `risv-openocd` to connect to.
+> This will result in compiling RTL into C++ code and compiling `kws_soc_tb.cpp`, the output of which is the executable `./build/yosys/kws_soc_tb` this acts as your testbench and as a jtag server for `risv-openocd` to connect to.
 > More on `cxxrtl` [here](https://yosyshq.readthedocs.io/projects/yosys/en/0.38/cmd/write_cxxrtl.html).
 
 
-## Running the SoC
+## Running C/ASM Tests
+
+All C tests are organized under `test/`. Each test is compiled in **two variants**:
+
+| Binary suffix | Linked for | How to run |
+| --- | --- | --- |
+| `_sram` | SRAM — all code+data at `0x00000000` | GDB `load` into a running simulation |
+| `_xip`  | XIP flash — code+rodata at `0x80000000`, data in SRAM | `--no-jtag --flash` standalone mode |
+
+The distinction matters because string literals and function pointers are linked at their **VMA**.
+Loading a `_sram` binary into flash and booting the CPU from `0x80000000` would point all `.rodata`
+accesses at the wrong addresses and produce no output.
+
+| Source directory | Test | `_sram` (GDB) | `_xip` (standalone) |
+| --- | --- | --- | --- |
+| `test/sanity_checks/c/` | `inf_loop.c` | `build/inf_loop_sram.elf` | — |
+| `test/uart/c/` | `hello_world.c` | `build/hello_world_sram.elf` | `build/hello_world_xip.bin` |
+| `test/i2s/c/` | `readI2s.c` | `build/readI2s_sram.elf` | `build/readI2s_xip.bin` |
+| `test/xip/c/` | `flash_read_test.c` | — | `build/flash_read_test_xip.bin` |
+
+To build all tests:
+
+```bash
+make test
+```
+
+Or build individual categories:
+
+```bash
+cd test
+make sanity   # inf_loop (SRAM only)
+make uart     # hello_world SRAM + XIP
+make i2s      # readI2s SRAM + XIP
+make flash    # flash_read_test XIP only
+make sram     # all SRAM variants
+make xip      # all XIP variants
+```
+
+Build artifacts are placed in `test/build/`.
+
+### Standalone (no-GDB) mode
+
+XIP binaries can be run without OpenOCD or GDB using `--no-jtag`.
+The CPU boots from `RESET_VECTOR = 0x80000000` immediately:
+
+```bash
+# UART hello world — standalone
+NO_JTAG=1 make sim-verilator FLASH=test/build/hello_world_xip.bin
+
+# I2S smoke test — standalone with mic data
+NO_JTAG=1 make sim-verilator FLASH=test/build/readI2s_xip.bin MIC=sim/debug_audio.hex
+
+# Flash/XIP smoke test — standalone
+NO_JTAG=1 make sim-verilator FLASH=test/build/flash_read_test_xip.bin
+```
+
+Add `EXTRA_ARGS="--cycles N"` to limit simulation length.
+
+### I2S Microphone Test
+
+The `readI2s.c` test exercises the APB I2S receiver peripheral at `0x40008000`.
+It configures the I2S clock divider, enables the IRQ, waits for the FIFO to
+fill, and prints received samples over UART.
+
+> **Note — cxxrtl limitation:** The I2S interrupt test does **not** work with
+> the cxxrtl (`make sim`) testbench. `i2s_rx_core` uses `always @(negedge sck)`
+> where `sck` is an internally-generated fabric register. cxxrtl caches
+> edge-detection variables at the start of `eval()` before register `.next`
+> values are updated, so the negedge of `sck_reg` is never detected — the FIFO
+> never fills and the IRQ never fires. Use the **Verilator** simulation
+> (`make sim_verilator`) for I2S interrupt testing; Verilator handles
+> internally-generated clocks correctly.
+
+**Standalone (XIP) — no GDB required:**
+```bash
+NO_JTAG=1 make sim-verilator FLASH=test/build/readI2s_xip.bin MIC=sim/debug_audio.hex
+```
+
+**GDB workflow (SRAM binary):**
+
+1. Build:
+```bash
+make test
+```
+
+2. Run the **Verilator** simulation with an optional audio hex file:
+```bash
+make sim-verilator MIC=<audio.hex>
+```
+If `--mic` is omitted the mic outputs zeros.
+
+3. Connect OpenOCD and GDB as usual, then:
+```gdb
+file test/build/readI2s_sram.elf
+load
+continue
+```
+
+### XIP Flash Smoke Test
+
+`flash_read_test.c` is a minimal XIP smoke test: crt0 copies the `.data` section
+from flash to SRAM, then `main()` reads and writes an initialised variable in SRAM.
+It verifies that the CPU can boot from flash and that the data copy works, but
+produces no UART output.  Attach GDB to inspect variables if needed.
+
+**Standalone:**
+```bash
+NO_JTAG=1 make sim-verilator FLASH=test/build/flash_read_test_xip.bin
+```
+
+**With GDB (symbols only — flash is read-only):**
+```bash
+make sim-verilator FLASH=test/build/flash_read_test_xip.bin
+# then in GDB:
+file test/build/flash_read_test_xip.elf
+continue
+```
+
+See `test/xip/README.md` for the Verilog-only XIP component testbenches.
+
+## Running XIP (Execute-In-Place) Verilog Simulations
+
+You can build and run the XIP Verilog testbenches (adapted from the shalan/SoC-Lab repo) using:
+
+From the project root:
+```bash
+make test-xip
+```
+This will:
+- Build the XIP Verilog testbench and all required HDL files
+- Copy the required `init.hex` to the simulation directory for memory initialization.
+- Run the simulation using `vvp`
+
+Simulation output and temporary files are placed in `test/xip/build/`.
+
+You can also run from the test directory:
+```bash
+cd test
+make xip
+```
+Or from the XIP test directory for more control:
+```bash
+cd test/xip
+make run         # Build and run the default cache testbench
+make run-cache   # Build and run the cache testbench
+make run-flash-ctrl # Build and run the flash controller testbench
+make run-ro-dmc  # Build and run the ro_dmc testbench
+```
+
+run `./build/yosys/kws_soc_tb --help` for options
+
+### Building the `verilator` VPI-based simulation
+
+```bash
+make sim_verilator
+```
+Produces `./build/verilator/Vkws_soc`. Run `./build/verilator/Vkws_soc --help`
+for all options.
+
+**Run targets** (mirror the cxxrtl `sim` / `sim-vcd` targets):
+
+| Target | What it does |
+| --- | --- |
+| `make sim-verilator` | Run Verilator sim on port `$(SIM_PORT)` (or standalone with `NO_JTAG=1`) |
+| `make sim-verilator-vcd` | Run + dump waveforms to `waves.fst` (or `.vcd` with `TRACE_FORMAT=VCD`) |
+| `make sim` | Run cxxrtl sim |
+| `make sim-vcd` | Run cxxrtl sim + dump `waves.vcd` |
+
+All four run targets honour these Make variables:
+
+| Variable | Example | Description |
+| --- | --- | --- |
+| `FLASH` | `FLASH=test/build/flash_read_test_xip.bin` | Pre-load a binary into QSPI flash |
+| `MIC` | `MIC=sim/debug_audio.hex` | Feed audio samples to the I2S mic model |
+| `NO_JTAG` | `NO_JTAG=1` | Standalone mode — no OpenOCD/GDB needed; CPU boots from flash immediately |
+| `EXTRA_ARGS` | `EXTRA_ARGS="--cycles 50000000"` | Pass extra flags directly to the testbench binary |
+| `TRACE_FORMAT` | `TRACE_FORMAT=VCD` | Verilator only: choose `VCD` instead of `FST` |
+
+Examples:
+```bash
+# UART hello world — standalone XIP
+NO_JTAG=1 make sim-verilator FLASH=test/build/hello_world_xip.bin
+
+# I2S interrupt test with waveform capture in Verilator
+make sim-verilator-vcd MIC=sim/debug_audio.hex
+
+# XIP flash smoke test — standalone
+NO_JTAG=1 make sim-verilator FLASH=test/build/flash_read_test_xip.bin
+
+# Verilator, VCD format, flash + mic
+make sim-verilator-vcd FLASH=test/build/flash_read_test_xip.bin MIC=audio.hex TRACE_FORMAT=VCD
+```
+
+## Running the SoC (GDB workflow)
 
 You will need three terminals open.
 
-1. To run the jtag server by default in project root, in terminal 1, run:
-```
-make run
+1. To run the JTAG server in terminal 1, from the project root use one of the
+   Make run targets (recommended) or invoke the binary directly:
+
+```bash
+# SRAM-based tests (cxxrtl or Verilator)
+make sim                              # cxxrtl
+make sim-verilator                    # Verilator
+
+# XIP/flash test
+make sim-verilator FLASH=test/build/flash_read_test_xip.bin
+
+# I2S smoke test (ID read only) — cxxrtl is fine for this
+make sim MIC=sim/debug_audio.hex
+
+# I2S interrupt test — Verilator required (see I2S section above)
+make sim-verilator MIC=sim/debug_audio.hex
+
+# Capture waveforms (FST by default; TRACE_FORMAT=VCD for classic VCD)
+make sim-vcd MIC=sim/debug_audio.hex
+make sim-verilator-vcd MIC=sim/debug_audio.hex
 ```
 
 >[!NOTE]
-> To run the SoC with VCD dumping run:
-> ```bash
-> make run-vcd
-> ```
+> `SIM_PORT` defaults to `9000 + (UID % 1000)` so multiple users on the same
+> host don't collide.  Override with `make sim SIM_PORT=9824`.
+> The testbench also accepts `--cycles <n>` to limit simulation length.
+
 
 You should see this output:
 ```
-./kws_soc_tb --port 9824
-Waiting for connection on port 9824
+Waiting for connection on port <port>
 ```
 
 2. Now run `riscv-openocd` in project root, in terminal 2:
 
 ```
-riscv-openocd -f openocd.cfg
+riscv-openocd -f openocd/sim.cfg
 ```
 
 You should see this output in terminal 2 (`riscv-openocd` terminal):
@@ -176,11 +388,7 @@ Info : Listening on port 4444 for telnet connections
 
 You should see `Connected` in terminal 1 (`kws_soc_tb` terminal).
 
-3. Now run `riscv32-unknown-elf-gdb` in the third terminal and run the following command:
-
-```
-target extended-remote localhost:3333
-```
+3. Now run `riscv32-unknown-elf-gdb -x gdbinit` in the third terminal and run the following command:
 
 In terminal 2 (`riscv-openocd`) you should see this output:
 
@@ -191,52 +399,41 @@ hazard3.cpu halted due to debug-request.
 
 ## Running Example Assembly Code
 
+
 1. First compile the assembly code:
-
+```bash
+riscv32-unknown-elf-as -march=rv32i -g -o test/common/inf_loop.o test/common/inf_loop.s
 ```
-riscv32-unknown-elf-as -march=rv32i -g -o soc_test/asm/inf_loop.o soc_test/asm/inf_loop.s
-```
-
 2. Now Link the object file with the linker script, to generate an ELF file:
+```bash
+riscv32-unknown-elf-ld -T test/common/inf_loop.ld -o test/build/inf_loop_sram.elf test/common/inf_loop.o
 ```
-riscv32-unknown-elf-ld -T soc_test/asm/inf_loop.ld -o soc_test/asm/inf_loop.elf soc_test/asm/inf_loop.o
-```
-
 3. Run the remote debugging session as mentioned in the previous section expect when running gdb run:
-```
+```bash
 riscv32-unknown-elf-gdb -x gdbinit
 ```
-
 4. Load your ELF in GDB:
-
-```
-file soc_test/asm/inf_loop.elf
+```gdb
+file test/build/inf_loop_sram.elf
 load
 ```
 
-
 ## Running Example C Code
-
 
 ### Infinite Loop
 
 1. First compile the C code using the provided Makefile:
 
 ```
-cd soc_test/c
-make
-cd ../..
+make test
 ```
-
 2. Run the remote debugging session as mentioned in the "Running the SoC" section, except when running gdb run:
-```
+```bash
 riscv32-unknown-elf-gdb -x gdbinit
 ```
-
 3. Load your ELF in GDB:
-
-```
-file soc_test/c/inf_loop.elf
+```gdb
+file test/build/inf_loop_sram.elf
 load
 ```
 
@@ -244,29 +441,37 @@ Now your C code is loaded and you can start debugging.
 
 ### Hello World
 
+**Standalone (no GDB):**
+```bash
+NO_JTAG=1 make sim-verilator FLASH=test/build/hello_world_xip.bin
+```
+Expected output on the testbench terminal:
+```
+Hello World!
+Hello World!
+...
+```
+
+**GDB workflow:**
+
 1. First compile the C code using the provided Makefile:
-
+```bash
+make test
 ```
-cd soc_test/c
-make
-```
-
 2. Run the remote debugging session as mentioned in the "Running the SoC" section, except when running gdb run:
-```
+```bash
 riscv32-unknown-elf-gdb -x gdbinit
 ```
-
-3. Load your ELF in GDB:
-
-```
-file soc_test/c/hello_world.elf
+3. Load the SRAM-linked ELF in GDB:
+```gdb
+file test/build/hello_world_sram.elf
 load
+continue
 ```
 
-4. You can put breakpoints, or just run the program to find the uart output on the testbench `kws_soc_tb` terminal:
+4. You can put breakpoints, or just run the program to find the uart output on the testbench terminal:
 
 ```
-./kws_soc_tb --port 9824
 Waiting for connection on port 9824
 Connected
 Hello World!
