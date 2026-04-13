@@ -1,3 +1,5 @@
+set_global_assignment -name STRATIX_DEVICE_IO_STANDARD "3.3-V LVTTL"
+
 # Clock and Reset
 set_location_assignment PIN_AF14 -to clk_50 -comment Clock50
 set_location_assignment PIN_AB30 -to rst_n  -comment "Switch 0"
@@ -13,7 +15,30 @@ set_location_assignment PIN_AJ1  -to trst_n -comment "GPIO 4"
 set_location_assignment PIN_AJ2  -to uart_rx -comment "GPIO 5"
 set_location_assignment PIN_AH2  -to uart_tx -comment "GPIO 6"
 
-# i2s
-set_location_assignment PIN_AE7 -to ws -comment "GPIO Connection [23]"
-set_location_assignment PIN_AF9 -to sd -comment "GPIO Connection [21]"
-set_location_assignment PIN_AF6 -to sck -comment "GPIO Connection [19]"
+# I2S
+set_location_assignment PIN_AE7 -to i2s_ws  -comment "GPIO Connection [23]"
+set_location_assignment PIN_AF9 -to i2s_sd  -comment "GPIO Connection [21]"
+set_location_assignment PIN_AF6 -to i2s_sck -comment "GPIO Connection [19]"
+
+# QSPI Flash Pin Assignments
+set_location_assignment PIN_AH3  -to xip_csn      -comment "GPIO 7"
+set_location_assignment PIN_AH4  -to xip_sck      -comment "GPIO 8"
+set_location_assignment PIN_AH5  -to flash_io[0]  -comment "GPIO 9"
+set_location_assignment PIN_AG1  -to flash_io[1]  -comment "GPIO 10"
+set_location_assignment PIN_AG2  -to flash_io[2]  -comment "GPIO 11"
+set_location_assignment PIN_AG3  -to flash_io[3]  -comment "GPIO 12"
+
+
+# XIP
+
+# Pull-up on Chip Select to ensure the flash stays deselected during boot/idle
+set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to xip_csn
+
+# Pull-up on IO2 (WP#) and IO3 (HOLD#) to prevent suspended states or
+# accidental write protection while operating in Standard 1-bit SPI mode
+set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to flash_io[2]
+set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to flash_io[3]
+
+# (Optional but recommended) Pull-ups on IO0 and IO1 for bus stability
+set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to flash_io[0]
+set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to flash_io[1]

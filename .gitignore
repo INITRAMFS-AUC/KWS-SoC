@@ -14,8 +14,6 @@ verilator_sources.f
 *.elf
 *.o
 *.dis
-*.vcd
-*.fst
 *.qsf
 *.qpf
 
@@ -27,3 +25,13 @@ quartus/c5_pin_model_dump.txt
 soc_conf.sh
 # TODO: Add real template sh
 soc_conf_temp.sh
+
+# Simulation waveforms
+*.vcd
+*.fst
+*.gtkw
+
+# Personal notes
+notes.md
+images
+hazard3_instantiation_params.vh

@@ -64,6 +64,7 @@
 #include <netinet/tcp.h>        // TCP_NODELAY
 
 #include "sim/i2s_mic_sim.h"
+#include "sim/flashsim.h"
 
 #include "Vkws_soc.h"
 #include "verilated.h"
@@ -139,14 +140,20 @@ static const char *help_str =
     "                           functional debugging.  Increase --vcd-sample-rate further if even less\n "
     "                           resolution is acceptable.\n "
     "    --cycles n           : Exit after n simulated clock cycles (0 = unlimited)\n"
+    "    --flash x.bin        : Binary image to load into simulated QSPI flash\n"
     "    --mic x.hex          : Audio hex file for the I2S microphone model\n"
+    "    --i2s-debug          : Print I2S diagnostic messages (SCK edges, WS transitions)\n"
+    "    --xip-debug          : Print XIP/flash diagnostic messages (CSN transitions, flash protocol)\n"
+    "    --uart-debug         : Print UART TX signal transitions (HIGH/LOW) to diagnose baud issues\n"
+    "    --no-jtag            : Run standalone without OpenOCD/GDB — CPU boots from flash immediately.\n"
+    "                           Requires --flash. Useful for smoke-testing without a debug session.\n"
     "    --jtagdump x         : Record raw remote_bitbang byte stream to file\n"
     "    --jtagreplay x       : Replay a recorded bitbang byte stream\n"
     "\n"
     "Trace format: " TRACE_EXT " (compile with -DTRACE_VCD to use VCD instead)\n"
     "\n"
 
-    "Exactly one of --port or --jtagreplay must be supplied.\n"
+    "One of --port, --jtagreplay, or --no-jtag must be supplied.\n"
     " ________________________________________________________\n\n "
     "Example\n "
     " kws_soc_vpi --port 9824 --waves waves." TRACE_EXT "\n ";
@@ -335,11 +342,16 @@ int main(int argc, char **argv) {
     // -----------------------------------------------------------------------
     // Argument parsing
     // -----------------------------------------------------------------------
+    std::string flash_bin_path;
     std::string mic_hex_path;
     bool        dump_waves      = false;
     std::string waves_path;
     int64_t     max_cycles      = 0;
     int         vcd_sample_rate = 1;
+    bool        i2s_debug       = false;
+    bool        xip_debug       = false;
+    bool        uart_debug      = false;
+    bool        no_jtag         = false;
 
     JtagCtx jc;
 
@@ -367,9 +379,25 @@ int main(int argc, char **argv) {
             if (argc - i < 2) exit_help("--port requires an argument\n");
             jc.port = static_cast<uint16_t>(std::stol(argv[++i], nullptr, 0));
         }
+        else if (s == "--flash") {
+            if (argc - i < 2) exit_help("--flash requires an argument\n");
+            flash_bin_path = argv[++i];
+        }
         else if (s == "--mic") {
             if (argc - i < 2) exit_help("--mic requires an argument\n");
             mic_hex_path = argv[++i];
+        }
+        else if (s == "--i2s-debug") {
+            i2s_debug = true;
+        }
+        else if (s == "--xip-debug") {
+            xip_debug = true;
+        }
+        else if (s == "--uart-debug") {
+            uart_debug = true;
+        }
+        else if (s == "--no-jtag") {
+            no_jtag = true;
         }
         else if (s == "--jtagdump") {
             if (argc - i < 2) exit_help("--jtagdump requires an argument\n");
@@ -395,17 +423,30 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (jc.port == 0 && !jc.replay_jtag)
-        exit_help("At least one of --port or --jtagreplay must be specified.\n");
+    if (jc.port == 0 && !jc.replay_jtag && !no_jtag)
+        exit_help("One of --port, --jtagreplay, or --no-jtag must be specified.\n");
+    if (no_jtag && (jc.port != 0 || jc.replay_jtag))
+        exit_help("--no-jtag cannot be combined with --port or --jtagreplay.\n");
     if (jc.dump_jtag && jc.port == 0)
         exit_help("--jtagdump requires --port.\n");
     if (jc.replay_jtag && jc.port != 0)
         exit_help("Cannot specify both --port and --jtagreplay.\n");
 
     // -----------------------------------------------------------------------
-    // TCP server
+    // QSPI flash model (same params as cxxrtl tb: 16 MiB, rddelay=1, ndummy=4)
     // -----------------------------------------------------------------------
-    if (jc.port != 0) {
+    FLASHSIM qspi_flash(24, /*debug=*/xip_debug, /*rddelay=*/1, /*ndummy=*/4);
+    if (!flash_bin_path.empty()) {
+        printf("Loading flash binary from %s\n", flash_bin_path.c_str());
+        qspi_flash.load(flash_bin_path.c_str());
+    } else {
+        printf("Warning: No --flash binary provided. Flash memory is empty (0xFF).\n");
+    }
+
+    // -----------------------------------------------------------------------
+    // TCP server (skipped in --no-jtag mode)
+    // -----------------------------------------------------------------------
+    if (!no_jtag && jc.port != 0) {
         int opt = 1;
         jc.server_fd = socket(AF_INET, SOCK_STREAM, 0);
         if (jc.server_fd < 0) {
@@ -471,8 +512,9 @@ int main(int argc, char **argv) {
     top->trst_n  = 0;
     top->tms     = 0;
     top->tdi     = 0;
-    top->uart_rx = 1;   // UART idle-high
-    top->sd      = 0;
+    top->uart_rx  = 1;   // UART idle-high
+    top->i2s_sd   = 0;
+    top->flash_di = 0;
     top->eval();
 
     top->clk = 1;
@@ -514,16 +556,41 @@ int main(int argc, char **argv) {
         top->eval();
         if (tfp && (cycle % vcd_sample_rate == 0))
             tfp->dump(static_cast<uint64_t>(cycle * 2));
+        {
+            bool csn = static_cast<bool>(top->xip_csn);
+            if (xip_debug) {
+                static bool last_csn = true;
+                if (csn != last_csn) {
+                    printf("\n[Cycle " I64_FMT "] XIP: CSN went %s\n",
+                           cycle, csn ? "HIGH" : "LOW");
+                    fflush(stdout);
+                }
+                last_csn = csn;
+            }
+            top->flash_di = qspi_flash(top->xip_csn, top->xip_sck, top->xip_do) & 0xF;
+        }
 
         // ---- Rising edge ---------------------------------------------------
         top->clk = 1;
         top->eval();
         if (tfp && (cycle % vcd_sample_rate == 0))
             tfp->dump(static_cast<uint64_t>(cycle * 2 + 1));
+        top->flash_di = qspi_flash(top->xip_csn, top->xip_sck, top->xip_do) & 0xF;
 
         // ---- UART TX decode ------------------------------------------------
         {
             const bool uart_tx = static_cast<bool>(top->uart_tx);
+
+            if (uart_debug) {
+                static bool last_uart_tx = true;
+                if (uart_tx != last_uart_tx) {
+                    printf("[Cycle " I64_FMT "] UART TX: %s\n",
+                           cycle, uart_tx ? "HIGH" : "LOW");
+                    fflush(stdout);
+                }
+                last_uart_tx = uart_tx;
+            }
+
             if (uart_state == UART_IDLE) {
                 if (!uart_tx) {
                     uart_state     = UART_START;
@@ -538,8 +605,7 @@ int main(int argc, char **argv) {
                 } else if (uart_state == UART_STOP) {
                     const char ch = static_cast<char>(uart_shifter);
                     putchar(ch);
-                    // Flush on newline — avoids a syscall per character
-                    if (ch == '\n') fflush(stdout);
+                    fflush(stdout);
                     uart_shifter = 0;
                     uart_state   = UART_IDLE;
                 }
@@ -547,12 +613,41 @@ int main(int argc, char **argv) {
         }
 
         // ---- I2S microphone ------------------------------------------------
-        top->sd = static_cast<CData>(
-                      i2s_mic.step(static_cast<bool>(top->sck_out),
-                                   static_cast<bool>(top->ws_out)));
+        {
+            bool i2s_sck = static_cast<bool>(top->i2s_sck_out);
+            bool i2s_ws  = static_cast<bool>(top->i2s_ws_out);
+            top->i2s_sd  = static_cast<CData>(i2s_mic.step(i2s_sck, i2s_ws));
+
+            if (i2s_debug) {
+                static bool last_i2s_sck = false, last_i2s_ws = false;
+                static bool i2s_sck_seen = false;
+                static int  i2s_ws_count = 0;
+                if (!i2s_sck_seen && !i2s_sck && last_i2s_sck) {
+                    printf("[I2S] First SCK negedge at cycle " I64_FMT "\n", cycle);
+                    fflush(stdout);
+                    i2s_sck_seen = true;
+                }
+                if (i2s_ws != last_i2s_ws) {
+                    if (i2s_ws_count < 16)
+                        printf("[I2S] WS[%d]->%d at cycle " I64_FMT "\n", i2s_ws_count, i2s_ws, cycle);
+                    i2s_ws_count++;
+                    fflush(stdout);
+                }
+                if (cycle % 10000 == 0 && cycle > 0)
+                    printf("[SIM] cycle " I64_FMT " sck=%d ws=%d\n", cycle, (int)i2s_sck, (int)i2s_ws);
+                last_i2s_sck = i2s_sck;
+                last_i2s_ws  = i2s_ws;
+            }
+        }
+
+        // ---- Heartbeat (every 10M cycles so the user knows the sim is alive) --
+        if (cycle > 0 && cycle % 10000000 == 0) {
+            printf("[Sim] Cycle " I64_FMT "  uart_tx=%d\n", cycle, (int)(top->uart_tx));
+            fflush(stdout);
+        }
 
         // ---- JTAG (non-blocking, CDC-safe) ---------------------------------
-        if (jc.port != 0 || jc.replay_jtag)
+        if (!no_jtag && (jc.port != 0 || jc.replay_jtag))
             quit = drain_jtag(jc, top.get());
 
         if (!quit && max_cycles != 0 && cycle + 1 == max_cycles) {

@@ -5,12 +5,12 @@
 
 // Example file integrating a Hazard3 processor, processor JTAG + debug
 // components, some memory and a UART.
-
+`include "kws_soc_config.vh"
 
 module kws_soc #(
-    parameter DTM_TYPE   = "JTAG",     // Can be "JTAG" or "ECP5"
-    parameter SRAM_DEPTH = (1 << 15),
-    parameter CLK_MHZ    = 12,         // For timer timebase
+    parameter DTM_TYPE   = `DTM_TYPE,
+    parameter SRAM_DEPTH = `SRAM_DEPTH,
+    parameter CLK_MHZ    = `CLK_MHZ, // For timer timebase
 
     `include "hazard3_config.vh"
 ) (
@@ -25,12 +25,21 @@ module kws_soc #(
     input  wire tdi  /*verilator public_flat_rw*/,
     output wire tdo  /*verilator public_flat_rd*/,
 
-    // IO
-    output wire uart_tx  /*verilator public_flat_rd*/,
-    input wire uart_rx  /*verilator public_flat_rw*/,
-    input wire sd  /*verilator public_flat_rw*/,
-    output wire sck_out  /*verilator public_flat_rd*/,
-    output wire ws_out  /*verilator public_flat_rd*/
+    // UART
+    output wire              uart_tx  /*verilator public_flat_rd*/,
+    input  wire              uart_rx  /*verilator public_flat_rw*/,
+
+    // I2S
+    input  wire              i2s_sd      /*verilator public_flat_rw*/,
+    output wire              i2s_sck_out /*verilator public_flat_rd*/,
+    output wire              i2s_ws_out  /*verilator public_flat_rd*/,
+
+    // XIP QSPI Flash
+    output wire              xip_csn,
+    output wire              xip_sck,
+    output wire [3:0]        xip_doe,
+    output wire [3:0]        xip_do,
+    input  wire [3:0]        flash_di
 );
   // ----------------------------------------------------------------------------
   // Processor debug
@@ -243,13 +252,13 @@ module kws_soc #(
 
   hazard3_cpu_1port #(
       // These must have the values given here for you to end up with a useful SoC:
-      .RESET_VECTOR       (32'h0000_0040),
-      .MTVEC_INIT         (32'h0000_0000),
+      .RESET_VECTOR       (RESET_VECTOR),
+      .MTVEC_INIT         (MTVEC_INIT),
       .CSR_M_MANDATORY    (1),
       .CSR_M_TRAP         (1),
       .DEBUG_SUPPORT      (1),
       // interrupts
-      // uart 
+      // uart
       // i2s
       // timer is not an external interrupt, gets handled differently
       .NUM_IRQS           (2),
@@ -349,9 +358,12 @@ module kws_soc #(
   // ----------------------------------------------------------------------------
   // Bus fabric
 
+  // Memory map:
   // - 128 kB SRAM at... 0x0000_0000
   // - System timer at.. 0x4000_0000
   // - UART at.......... 0x4000_4000
+  // - I2S at........... 0x4000_8000
+  // - XIP Flash at..... 0x8000_0000
 
   // AHBL layer
 
@@ -381,10 +393,24 @@ module kws_soc #(
   wire [W_DATA-1:0] bridge_hwdata;
   wire [W_DATA-1:0] bridge_hrdata;
 
+  // Starting from 0x8000_0000 + 2 GB is all dedicated to XIP Flash
+  wire               xip_hready_resp;
+  wire               xip_hready;
+  wire               xip_hresp;
+  wire [W_ADDR-1:0]  xip_haddr;
+  wire               xip_hwrite;
+  wire [1:0]         xip_htrans;
+  wire [2:0]         xip_hsize;
+  wire [2:0]         xip_hburst;
+  wire [3:0]         xip_hprot;
+  wire               xip_hmastlock;
+  wire [W_DATA-1:0]  xip_hwdata;
+  wire [W_DATA-1:0]  xip_hrdata;
+
   ahbl_splitter #(
-      .N_PORTS  (2),
-      .ADDR_MAP (64'h40000000_00000000),
-      .ADDR_MASK(64'he0000000_e0000000)
+      .N_PORTS  (3),
+      .ADDR_MAP (96'h80000000_40000000_00000000),
+      .ADDR_MASK(96'he0000000_e0000000_e0000000)
   ) splitter_u (
       .clk  (clk),
       .rst_n(rst_n),
@@ -402,18 +428,18 @@ module kws_soc #(
       .src_hwdata     (proc_hwdata),
       .src_hrdata     (proc_hrdata),
 
-      .dst_hready_resp({bridge_hready_resp, sram0_hready_resp}),
-      .dst_hready     ({bridge_hready, sram0_hready}),
-      .dst_hresp      ({bridge_hresp, sram0_hresp}),
-      .dst_haddr      ({bridge_haddr, sram0_haddr}),
-      .dst_hwrite     ({bridge_hwrite, sram0_hwrite}),
-      .dst_htrans     ({bridge_htrans, sram0_htrans}),
-      .dst_hsize      ({bridge_hsize, sram0_hsize}),
-      .dst_hburst     ({bridge_hburst, sram0_hburst}),
-      .dst_hprot      ({bridge_hprot, sram0_hprot}),
-      .dst_hmastlock  ({bridge_hmastlock, sram0_hmastlock}),
-      .dst_hwdata     ({bridge_hwdata, sram0_hwdata}),
-      .dst_hrdata     ({bridge_hrdata, sram0_hrdata})
+      .dst_hready_resp({xip_hready_resp,  bridge_hready_resp, sram0_hready_resp}),
+      .dst_hready     ({xip_hready,       bridge_hready,      sram0_hready     }),
+      .dst_hresp      ({xip_hresp,        bridge_hresp,       sram0_hresp      }),
+      .dst_haddr      ({xip_haddr,        bridge_haddr,       sram0_haddr      }),
+      .dst_hwrite     ({xip_hwrite,       bridge_hwrite,      sram0_hwrite     }),
+      .dst_htrans     ({xip_htrans,       bridge_htrans,      sram0_htrans     }),
+      .dst_hsize      ({xip_hsize,        bridge_hsize,       sram0_hsize      }),
+      .dst_hburst     ({xip_hburst,       bridge_hburst,      sram0_hburst     }),
+      .dst_hprot      ({xip_hprot,        bridge_hprot,       sram0_hprot      }),
+      .dst_hmastlock  ({xip_hmastlock,    bridge_hmastlock,   sram0_hmastlock  }),
+      .dst_hwdata     ({xip_hwdata,       bridge_hwdata,      sram0_hwdata     }),
+      .dst_hrdata     ({xip_hrdata,       bridge_hrdata,      sram0_hrdata     })
   );
 
   // APB layer
@@ -452,7 +478,7 @@ module kws_soc #(
   wire [31:0] i2s_pwdata;
   wire [31:0] i2s_prdata;
   wire        i2s_pready;
-  wire        i2s_pslverr;  
+  wire        i2s_pslverr;
 
   ahbl_to_apb apb_bridge_u (
       .clk  (clk),
@@ -496,13 +522,13 @@ module kws_soc #(
       .apbs_prdata  (bridge_prdata),
       .apbs_pslverr (bridge_pslverr),
 
-      .apbm_paddr   ({uart_paddr,   i2s_paddr,   timer_paddr}),
-      .apbm_psel    ({uart_psel,    i2s_psel,    timer_psel}),
+      .apbm_paddr   ({uart_paddr,   i2s_paddr,   timer_paddr  }),
+      .apbm_psel    ({uart_psel,    i2s_psel,    timer_psel   }),
       .apbm_penable ({uart_penable, i2s_penable, timer_penable}),
-      .apbm_pwrite  ({uart_pwrite,  i2s_pwrite,  timer_pwrite}),
-      .apbm_pwdata  ({uart_pwdata,  i2s_pwdata,  timer_pwdata}),
-      .apbm_pready  ({uart_pready,  i2s_pready,  timer_pready}),
-      .apbm_prdata  ({uart_prdata,  i2s_prdata,  timer_prdata}),
+      .apbm_pwrite  ({uart_pwrite,  i2s_pwrite,  timer_pwrite }),
+      .apbm_pwdata  ({uart_pwdata,  i2s_pwdata,  timer_pwdata }),
+      .apbm_pready  ({uart_pready,  i2s_pready,  timer_pready }),
+      .apbm_prdata  ({uart_prdata,  i2s_prdata,  timer_prdata }),
       .apbm_pslverr ({uart_pslverr, i2s_pslverr, timer_pslverr})
   );
 
@@ -533,6 +559,32 @@ module kws_soc #(
       .ahbls_hrdata     (sram0_hrdata)
   );
 
+  wire xip_hsel_internal = (xip_haddr[31:28] == 4'h8);
+  // TODO: Make the following parameters config dependent
+  ahbl_flash_ctrl_eb_cache #(
+      .LW(32*8),
+      .NL(32)
+  ) xip (
+      .HCLK                (clk),
+      .HRESETn             (rst_n_cpu),
+
+      .HSEL                (xip_hsel_internal), // TODO: change splitter to avoid need for this
+      .HADDR               (xip_haddr),
+      .HTRANS              (xip_htrans),
+      .HWRITE              (xip_hwrite),
+      .HREADY              (xip_hready),
+      .HREADYOUT           (xip_hready_resp),
+      .HRDATA              (xip_hrdata),
+      .HRESP               (xip_hresp),
+
+      // External Interface to Quad I/O
+      .csn                  (xip_csn),
+      .sck                  (xip_sck),
+      .doe                  (xip_doe),
+      .spi_do               (xip_do),
+      .di                   (flash_di)
+  );
+
   uart_mini uart_u (
       .clk  (clk),
       .rst_n(rst_n),
@@ -559,7 +611,7 @@ module kws_soc #(
   ) apb_i2s_receiver_inst (
       .clk          (clk),
       .rst_n        (rst_n),
-      .sd           (sd),
+      .sd           (i2s_sd),
       .apbs_psel    (i2s_psel),
       .apbs_penable (i2s_penable),
       .apbs_pwrite  (i2s_pwrite),
@@ -568,8 +620,8 @@ module kws_soc #(
       .apbs_prdata  (i2s_prdata),
       .apbs_pready  (i2s_pready),
       .apbs_pslverr (i2s_pslverr),
-      .sck_out      (sck_out),
-      .ws_out       (ws_out),
+      .sck_out      (i2s_sck_out),
+      .ws_out       (i2s_ws_out),
       .i2s_irq      (i2s_irq)
   );
 
