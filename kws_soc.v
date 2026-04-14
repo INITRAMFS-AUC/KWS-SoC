@@ -229,19 +229,35 @@ module kws_soc #(
   // ----------------------------------------------------------------------------
   // Processor
 
-  wire [W_ADDR-1:0] proc_haddr;
-  wire              proc_hwrite;
-  wire [       1:0] proc_htrans;
-  wire [       2:0] proc_hsize;
-  wire [       2:0] proc_hburst;
-  wire [       3:0] proc_hprot;
-  wire              proc_hmastlock;
-  wire              proc_hexcl;
-  wire              proc_hready;
-  wire              proc_hresp;
-  wire              proc_hexokay = 1'b1;  // No global monitor
-  wire [W_DATA-1:0] proc_hwdata;
-  wire [W_DATA-1:0] proc_hrdata;
+  // Instruction-fetch port (i_*)
+  wire [W_ADDR-1:0] i_haddr;
+  wire              i_hwrite;
+  wire [       1:0] i_htrans;
+  wire [       2:0] i_hsize;
+  wire [       2:0] i_hburst;
+  wire [       3:0] i_hprot;
+  wire              i_hmastlock;
+  wire [       7:0] i_hmaster;   // unused by fabric
+  wire              i_hready;
+  wire              i_hresp;
+  wire [W_DATA-1:0] i_hwdata;
+  wire [W_DATA-1:0] i_hrdata;
+
+  // Load/store port (d_*)
+  wire [W_ADDR-1:0] d_haddr;
+  wire              d_hwrite;
+  wire [       1:0] d_htrans;
+  wire [       2:0] d_hsize;
+  wire [       2:0] d_hburst;
+  wire [       3:0] d_hprot;
+  wire              d_hmastlock;
+  wire [       7:0] d_hmaster;   // unused by fabric
+  wire              d_hexcl;     // exclusive access — crossbar doesn't support; tied off below
+  wire              d_hready;
+  wire              d_hresp;
+  wire              d_hexokay = 1'b1;  // No global exclusive monitor
+  wire [W_DATA-1:0] d_hwdata;
+  wire [W_DATA-1:0] d_hrdata;
 
   wire              pwrup_req;
   wire              unblock_out;
@@ -250,7 +266,7 @@ module kws_soc #(
   wire              timer_irq;
   wire              i2s_irq;
 
-  hazard3_cpu_1port #(
+  hazard3_cpu_2port #(
       // These must have the values given here for you to end up with a useful SoC:
       .RESET_VECTOR       (RESET_VECTOR),
       .MTVEC_INIT         (MTVEC_INIT),
@@ -264,7 +280,7 @@ module kws_soc #(
       .NUM_IRQS           (2),
       .RESET_REGFILE      (0),
       // Can be overridden from the defaults in hazard3_config.vh during
-      // instantiation of example_soc():
+      // instantiation of kws_soc():
       .EXTENSION_A        (EXTENSION_A),
       .EXTENSION_C        (EXTENSION_C),
       .EXTENSION_M        (EXTENSION_M),
@@ -304,24 +320,40 @@ module kws_soc #(
       .rst_n        (rst_n_cpu),
 
       .pwrup_req  (pwrup_req),
-      .pwrup_ack  (pwrup_req),       // Tied back
+      .pwrup_ack  (pwrup_req),   // Tied back
       .clk_en     (  /* unused */),
       .unblock_out(unblock_out),
-      .unblock_in (unblock_out),     // Tied back
+      .unblock_in (unblock_out), // Tied back
 
-      .haddr    (proc_haddr),
-      .hwrite   (proc_hwrite),
-      .htrans   (proc_htrans),
-      .hsize    (proc_hsize),
-      .hburst   (proc_hburst),
-      .hprot    (proc_hprot),
-      .hmastlock(proc_hmastlock),
-      .hexcl    (proc_hexcl),
-      .hready   (proc_hready),
-      .hresp    (proc_hresp),
-      .hexokay  (proc_hexokay),
-      .hwdata   (proc_hwdata),
-      .hrdata   (proc_hrdata),
+      // Instruction-fetch port
+      .i_haddr    (i_haddr),
+      .i_hwrite   (i_hwrite),
+      .i_htrans   (i_htrans),
+      .i_hsize    (i_hsize),
+      .i_hburst   (i_hburst),
+      .i_hprot    (i_hprot),
+      .i_hmastlock(i_hmastlock),
+      .i_hmaster  (i_hmaster),
+      .i_hready   (i_hready),
+      .i_hresp    (i_hresp),
+      .i_hwdata   (i_hwdata),
+      .i_hrdata   (i_hrdata),
+
+      // Load/store port
+      .d_haddr    (d_haddr),
+      .d_hwrite   (d_hwrite),
+      .d_htrans   (d_htrans),
+      .d_hsize    (d_hsize),
+      .d_hburst   (d_hburst),
+      .d_hprot    (d_hprot),
+      .d_hmastlock(d_hmastlock),
+      .d_hmaster  (d_hmaster),
+      .d_hexcl    (d_hexcl),
+      .d_hready   (d_hready),
+      .d_hresp    (d_hresp),
+      .d_hexokay  (d_hexokay),
+      .d_hwdata   (d_hwdata),
+      .d_hrdata   (d_hrdata),
 
       .dbg_req_halt         (hart_req_halt),
       .dbg_req_halt_on_reset(hart_req_halt_on_reset),
@@ -357,15 +389,24 @@ module kws_soc #(
 
   // ----------------------------------------------------------------------------
   // Bus fabric
-
+  //
   // Memory map:
   // - 128 kB SRAM at... 0x0000_0000
   // - System timer at.. 0x4000_0000
   // - UART at.......... 0x4000_4000
   // - I2S at........... 0x4000_8000
   // - XIP Flash at..... 0x8000_0000
+  //
+  // Masters (N_MASTERS=2):
+  //   Master 0 — i-port (instruction fetch)  — LSB slice
+  //   Master 1 — d-port (load/store + SBA)   — MSB slice
+  //
+  // Slaves (N_SLAVES=3):
+  //   Slave 0 — SRAM        (0x0000_0000, mask 0xe000_0000)
+  //   Slave 1 — APB bridge  (0x4000_0000, mask 0xe000_0000)
+  //   Slave 2 — XIP flash   (0x8000_0000, mask 0xe000_0000)
 
-  // AHBL layer
+  // --- Slave-side wires ---
 
   wire              sram0_hready_resp;
   wire              sram0_hready;
@@ -393,41 +434,44 @@ module kws_soc #(
   wire [W_DATA-1:0] bridge_hwdata;
   wire [W_DATA-1:0] bridge_hrdata;
 
-  // Starting from 0x8000_0000 + 2 GB is all dedicated to XIP Flash
-  wire               xip_hready_resp;
-  wire               xip_hready;
-  wire               xip_hresp;
-  wire [W_ADDR-1:0]  xip_haddr;
-  wire               xip_hwrite;
-  wire [1:0]         xip_htrans;
-  wire [2:0]         xip_hsize;
-  wire [2:0]         xip_hburst;
-  wire [3:0]         xip_hprot;
-  wire               xip_hmastlock;
-  wire [W_DATA-1:0]  xip_hwdata;
-  wire [W_DATA-1:0]  xip_hrdata;
+  wire              xip_hready_resp;
+  wire              xip_hready;
+  wire              xip_hresp;
+  wire [W_ADDR-1:0] xip_haddr;
+  wire              xip_hwrite;
+  wire [       1:0] xip_htrans;
+  wire [       2:0] xip_hsize;
+  wire [       2:0] xip_hburst;
+  wire [       3:0] xip_hprot;
+  wire              xip_hmastlock;
+  wire [W_DATA-1:0] xip_hwdata;
+  wire [W_DATA-1:0] xip_hrdata;
 
-  ahbl_splitter #(
-      .N_PORTS  (3),
+  ahbl_crossbar #(
+      .N_MASTERS(2),
+      .N_SLAVES (3),
+      .W_ADDR   (W_ADDR),
+      .W_DATA   (W_DATA),
       .ADDR_MAP (96'h80000000_40000000_00000000),
       .ADDR_MASK(96'he0000000_e0000000_e0000000)
-  ) splitter_u (
+  ) xbar_u (
       .clk  (clk),
       .rst_n(rst_n),
 
-      .src_hready_resp(proc_hready),
-      .src_hready     (proc_hready),
-      .src_hresp      (proc_hresp),
-      .src_haddr      (proc_haddr),
-      .src_hwrite     (proc_hwrite),
-      .src_htrans     (proc_htrans),
-      .src_hsize      (proc_hsize),
-      .src_hburst     (proc_hburst),
-      .src_hprot      (proc_hprot),
-      .src_hmastlock  (proc_hmastlock),
-      .src_hwdata     (proc_hwdata),
-      .src_hrdata     (proc_hrdata),
+      // Masters: {d-port [MSB], i-port [LSB]}
+      .src_hready_resp({d_hready,    i_hready   }),
+      .src_hresp      ({d_hresp,     i_hresp    }),
+      .src_haddr      ({d_haddr,     i_haddr    }),
+      .src_hwrite     ({d_hwrite,    i_hwrite   }),
+      .src_htrans     ({d_htrans,    i_htrans   }),
+      .src_hsize      ({d_hsize,     i_hsize    }),
+      .src_hburst     ({d_hburst,    i_hburst   }),
+      .src_hprot      ({d_hprot,     i_hprot    }),
+      .src_hmastlock  ({d_hmastlock, i_hmastlock}),
+      .src_hwdata     ({d_hwdata,    i_hwdata   }),
+      .src_hrdata     ({d_hrdata,    i_hrdata   }),
 
+      // Slaves
       .dst_hready_resp({xip_hready_resp,  bridge_hready_resp, sram0_hready_resp}),
       .dst_hready     ({xip_hready,       bridge_hready,      sram0_hready     }),
       .dst_hresp      ({xip_hresp,        bridge_hresp,       sram0_hresp      }),
