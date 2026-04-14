@@ -163,11 +163,11 @@ sim_yosys: $(TBEXEC)
 SIM_PORT_ARG = $(if $(filter 1,$(NO_JTAG)),,--port $(SIM_PORT))
 
 sim: $(TBEXEC) test
-	./$(TBEXEC) $(SIM_PORT_ARG) $(NO_JTAG_ARG) $(FLASH_ARG) $(MIC_ARG) $(XIP_DEBUG_ARG) $(I2S_DEBUG_ARG) $(UART_DEBUG_ARG) $(EXTRA_ARGS)
+	./$(TBEXEC) $(SIM_PORT_ARG) $(NO_JTAG_ARG) $(FLASH_ARG) $(MIC_ARG) $(XIP_DEBUG_ARG) $(I2S_DEBUG_ARG) $(UART_DEBUG_ARG) $(CYCLES_ARG) $(EXTRA_ARGS)
 
 # Helper target to run cxxrtl testbench with VCD dumping
 sim-vcd: $(TBEXEC) test
-	./$(TBEXEC) $(SIM_PORT_ARG) $(NO_JTAG_ARG) --vcd waves.vcd $(FLASH_ARG) $(MIC_ARG) $(XIP_DEBUG_ARG) $(I2S_DEBUG_ARG) $(UART_DEBUG_ARG) $(EXTRA_ARGS)
+	./$(TBEXEC) $(SIM_PORT_ARG) $(NO_JTAG_ARG) --vcd waves.vcd $(FLASH_ARG) $(MIC_ARG) $(XIP_DEBUG_ARG) $(I2S_DEBUG_ARG) $(UART_DEBUG_ARG) $(CYCLES_ARG) $(EXTRA_ARGS)
 
 ##### VERILATOR SIMULATION (fast) #####
 
@@ -270,10 +270,10 @@ sim_verilator: $(VERILATOR_BUILD_DIR)/Vkws_soc
 	@echo "When running run preferably over port $(SIM_PORT), else modify openocd/sim.cfg"
 
 sim-verilator: $(VERILATOR_BUILD_DIR)/Vkws_soc test
-	./$(VERILATOR_BUILD_DIR)/Vkws_soc $(SIM_PORT_ARG) $(NO_JTAG_ARG) $(FLASH_ARG) $(MIC_ARG) $(XIP_DEBUG_ARG) $(I2S_DEBUG_ARG) $(UART_DEBUG_ARG) $(EXTRA_ARGS)
+	./$(VERILATOR_BUILD_DIR)/Vkws_soc $(SIM_PORT_ARG) $(NO_JTAG_ARG) $(FLASH_ARG) $(MIC_ARG) $(XIP_DEBUG_ARG) $(I2S_DEBUG_ARG) $(UART_DEBUG_ARG) $(CYCLES_ARG) $(EXTRA_ARGS)
 
 sim-verilator-vcd: $(VERILATOR_BUILD_DIR)/Vkws_soc test
-	./$(VERILATOR_BUILD_DIR)/Vkws_soc $(SIM_PORT_ARG) $(NO_JTAG_ARG) --waves waves.$(TRACE_EXT) $(FLASH_ARG) $(MIC_ARG) $(XIP_DEBUG_ARG) $(I2S_DEBUG_ARG) $(UART_DEBUG_ARG) $(EXTRA_ARGS)
+	./$(VERILATOR_BUILD_DIR)/Vkws_soc $(SIM_PORT_ARG) $(NO_JTAG_ARG) --waves waves.$(TRACE_EXT) $(FLASH_ARG) $(MIC_ARG) $(XIP_DEBUG_ARG) $(I2S_DEBUG_ARG) $(UART_DEBUG_ARG) $(CYCLES_ARG) $(EXTRA_ARGS)
 
 lint:
 	verilator --lint-only --top-module $(TOP) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) $(FILE_LIST)
@@ -328,6 +328,9 @@ ifeq ($(NO_JTAG),1)
 else
   NO_JTAG_ARG :=
 endif
+
+CYCLES ?=
+CYCLES_ARG = $(if $(CYCLES),--cycles $(CYCLES),)
 
 ###########################
 ##### QUARTUS Targets #####
