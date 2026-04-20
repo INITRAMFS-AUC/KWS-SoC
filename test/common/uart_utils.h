@@ -6,6 +6,6 @@ void uart_putc(char c);
 void uart_puts(const char *s);
 int puts(const char *s);
 int putchar(int c);
-int printf(const char *s);
+int printf(const char *fmt, ...);
 
 #endif // UART_UTILS_H
