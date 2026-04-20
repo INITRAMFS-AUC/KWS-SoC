@@ -12,7 +12,7 @@ module ahbl_flash_ctrl_eb_cache_tb;
     wire [31:0] HRDATA;
 
     wire csn, sck;
-    wire [3:0] doe, do, di;
+    wire [3:0] doe, spi_do, di;
 
     // Clock Generation
     always #5 HCLK = ~HCLK;
@@ -28,15 +28,15 @@ module ahbl_flash_ctrl_eb_cache_tb;
         .HREADY(HREADY_IN & HREADYOUT), // Global Bus HREADY
         .HREADYOUT(HREADYOUT),
         .HRDATA(HRDATA),
-        .csn(csn), .sck(sck), .doe(doe), .do(do), .di(di)
+        .csn(csn), .sck(sck), .doe(doe), .spi_do(spi_do), .di(di)
     );
 
     // Correctly handle tri-state bidirectional logic per pin based on doe mask
     wire [3:0] SIO;
-    assign SIO[0] = doe[0] ? do[0] : 1'bz;
-    assign SIO[1] = doe[1] ? do[1] : 1'bz;
-    assign SIO[2] = doe[2] ? do[2] : 1'bz;
-    assign SIO[3] = doe[3] ? do[3] : 1'bz;
+    assign SIO[0] = doe[0] ? spi_do[0] : 1'bz;
+    assign SIO[1] = doe[1] ? spi_do[1] : 1'bz;
+    assign SIO[2] = doe[2] ? spi_do[2] : 1'bz;
+    assign SIO[3] = doe[3] ? spi_do[3] : 1'bz;
 
     assign di = SIO;
     sst26wf080b FLASH (.SCK(sck), .SIO(SIO), .CEb(csn));
