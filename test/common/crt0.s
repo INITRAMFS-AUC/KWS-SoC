@@ -98,8 +98,89 @@ call_main:
 inf_loop:
     j inf_loop
 
-/* Trap handler — safe landing zone for exceptions and GDB breakpoints */
+/* Trap handler — saves all registers, returns from trap.
+ * For exceptions (mcause[31]=0): advances mepc by 4 to skip the faulting
+ * instruction so execution can continue.
+ * For interrupts (mcause[31]=1): returns to the interrupted PC unchanged. */
 .global trap_handler
 .align 4
 trap_handler:
-    j trap_handler
+    addi sp, sp, -(32*4)
+
+    sw   x1,   1*4(sp)
+    /* x2 (sp) saved below after we know the pre-trap value */
+    sw   x3,   3*4(sp)
+    sw   x4,   4*4(sp)
+    sw   x5,   5*4(sp)
+    sw   x6,   6*4(sp)
+    sw   x7,   7*4(sp)
+    sw   x8,   8*4(sp)
+    sw   x9,   9*4(sp)
+    sw   x10, 10*4(sp)
+    sw   x11, 11*4(sp)
+    sw   x12, 12*4(sp)
+    sw   x13, 13*4(sp)
+    sw   x14, 14*4(sp)
+    sw   x15, 15*4(sp)
+    sw   x16, 16*4(sp)
+    sw   x17, 17*4(sp)
+    sw   x18, 18*4(sp)
+    sw   x19, 19*4(sp)
+    sw   x20, 20*4(sp)
+    sw   x21, 21*4(sp)
+    sw   x22, 22*4(sp)
+    sw   x23, 23*4(sp)
+    sw   x24, 24*4(sp)
+    sw   x25, 25*4(sp)
+    sw   x26, 26*4(sp)
+    sw   x27, 27*4(sp)
+    sw   x28, 28*4(sp)
+    sw   x29, 29*4(sp)
+    sw   x30, 30*4(sp)
+    sw   x31, 31*4(sp)
+
+    /* Save pre-trap sp */
+    addi t0, sp, (32*4)
+    sw   t0,  2*4(sp)
+
+    /* Advance mepc by 4 only for synchronous exceptions (mcause[31] == 0) */
+    csrr t0, mcause
+    csrr t1, mepc
+    bltz t0, .Lno_advance     /* negative → bit 31 set → interrupt, don't advance */
+    addi t1, t1, 4
+.Lno_advance:
+    csrw mepc, t1
+
+    lw   x1,   1*4(sp)
+    lw   x3,   3*4(sp)
+    lw   x4,   4*4(sp)
+    lw   x5,   5*4(sp)
+    lw   x6,   6*4(sp)
+    lw   x7,   7*4(sp)
+    lw   x8,   8*4(sp)
+    lw   x9,   9*4(sp)
+    lw   x10, 10*4(sp)
+    lw   x11, 11*4(sp)
+    lw   x12, 12*4(sp)
+    lw   x13, 13*4(sp)
+    lw   x14, 14*4(sp)
+    lw   x15, 15*4(sp)
+    lw   x16, 16*4(sp)
+    lw   x17, 17*4(sp)
+    lw   x18, 18*4(sp)
+    lw   x19, 19*4(sp)
+    lw   x20, 20*4(sp)
+    lw   x21, 21*4(sp)
+    lw   x22, 22*4(sp)
+    lw   x23, 23*4(sp)
+    lw   x24, 24*4(sp)
+    lw   x25, 25*4(sp)
+    lw   x26, 26*4(sp)
+    lw   x27, 27*4(sp)
+    lw   x28, 28*4(sp)
+    lw   x29, 29*4(sp)
+    lw   x30, 30*4(sp)
+    lw   x31, 31*4(sp)
+
+    addi sp, sp, (32*4)
+    mret
