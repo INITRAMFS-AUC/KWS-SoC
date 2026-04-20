@@ -33,6 +33,17 @@ void uart_puts(const char *s) {
     while (*s) uart_putc(*s++);
 }
 
+int puts(const char *s) {
+    uart_puts(s);
+    uart_putc('\n');
+    return 0;
+}
+
+int putchar(int c) {
+    uart_putc((char)c);
+    return (unsigned char)c;
+}
+
 int printf(const char *s) {
     uart_puts(s);
     return 0;
