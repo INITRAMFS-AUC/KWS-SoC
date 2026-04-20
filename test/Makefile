@@ -13,10 +13,12 @@ UART_C_DIR   = uart/c
 I2S_C_DIR    = i2s/c
 XIP_C_DIR    = xip/c
 XIP_DIR      = xip
+DMA_C_DIR    = dma/c
 
 # Header include paths (relative to this Makefile's directory)
 I2S_REGS_DIR  = ../peris/i2s/i2s_apb/i2s_itr2
 UART_REGS_DIR = ../Hazard3/example_soc/libfpga/peris/uart
+DMAC_FW_DIR   = ../peris/MS_DMAC_AHBL/fw
 
 # Memory config
 SRAM_DEPTH ?= 32768
@@ -27,6 +29,8 @@ CFLAGS  = -march=rv32i_zicsr -mabi=ilp32 -g -c -MMD -MP
 CFLAGS += $(GLOBAL_UART_CONFIG)
 CFLAGS += -I$(I2S_REGS_DIR)
 CFLAGS += -I$(UART_REGS_DIR)
+CFLAGS += -I$(DMAC_FW_DIR)
+CFLAGS += -I$(I2S_C_DIR)
 
 # Linker flags:
 #   SRAM_LDFLAGS – all sections (text/rodata/data/bss) in SRAM at 0x00000000.
@@ -41,14 +45,16 @@ XIP_LDFLAGS  = -T $(COMMON_DIR)/link.ld      --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTE
 SRAM_TARGETS = \
 	$(BUILD_DIR)/inf_loop_sram.elf    $(BUILD_DIR)/inf_loop_sram.dis    $(BUILD_DIR)/inf_loop_sram.bin \
 	$(BUILD_DIR)/hello_world_sram.elf $(BUILD_DIR)/hello_world_sram.dis $(BUILD_DIR)/hello_world_sram.bin \
-	$(BUILD_DIR)/readI2s_sram.elf     $(BUILD_DIR)/readI2s_sram.dis     $(BUILD_DIR)/readI2s_sram.bin
+	$(BUILD_DIR)/readI2s_sram.elf     $(BUILD_DIR)/readI2s_sram.dis     $(BUILD_DIR)/readI2s_sram.bin \
+	$(BUILD_DIR)/dma_test_sram.elf    $(BUILD_DIR)/dma_test_sram.dis    $(BUILD_DIR)/dma_test_sram.bin
 
 # *_xip: standalone workflow — `NO_JTAG=1 make sim FLASH=test/build/<test>_xip.bin`
 XIP_TARGETS = \
 	$(BUILD_DIR)/hello_world_xip.elf     $(BUILD_DIR)/hello_world_xip.dis     $(BUILD_DIR)/hello_world_xip.bin \
 	$(BUILD_DIR)/readI2s_xip.elf         $(BUILD_DIR)/readI2s_xip.dis         $(BUILD_DIR)/readI2s_xip.bin \
 	$(BUILD_DIR)/flash_read_test_xip.elf $(BUILD_DIR)/flash_read_test_xip.dis $(BUILD_DIR)/flash_read_test_xip.bin \
-	$(BUILD_DIR)/tests_xip.elf           $(BUILD_DIR)/tests_xip.dis           $(BUILD_DIR)/tests_xip.bin
+	$(BUILD_DIR)/tests_xip.elf           $(BUILD_DIR)/tests_xip.dis           $(BUILD_DIR)/tests_xip.bin \
+	$(BUILD_DIR)/dma_test_xip.elf        $(BUILD_DIR)/dma_test_xip.dis        $(BUILD_DIR)/dma_test_xip.bin
 
 ALL_TARGETS = $(SRAM_TARGETS) $(XIP_TARGETS)
 
@@ -66,6 +72,8 @@ uart:   $(BUILD_DIR)/hello_world_sram.elf $(BUILD_DIR)/hello_world_sram.dis $(BU
 i2s:    $(BUILD_DIR)/readI2s_sram.elf     $(BUILD_DIR)/readI2s_sram.dis     $(BUILD_DIR)/readI2s_sram.bin \
         $(BUILD_DIR)/readI2s_xip.elf      $(BUILD_DIR)/readI2s_xip.dis      $(BUILD_DIR)/readI2s_xip.bin
 flash:  $(BUILD_DIR)/flash_read_test_xip.elf $(BUILD_DIR)/flash_read_test_xip.dis $(BUILD_DIR)/flash_read_test_xip.bin
+dma:    $(BUILD_DIR)/dma_test_sram.elf    $(BUILD_DIR)/dma_test_sram.dis    $(BUILD_DIR)/dma_test_sram.bin \
+        $(BUILD_DIR)/dma_test_xip.elf     $(BUILD_DIR)/dma_test_xip.dis     $(BUILD_DIR)/dma_test_xip.bin
 xip-testbench:
 	$(MAKE) -C $(XIP_DIR) run-testbench
 
@@ -79,6 +87,9 @@ $(BUILD_DIR)/hello_world_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/hello_world.
 $(BUILD_DIR)/readI2s_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/readI2s.o $(BUILD_DIR)/uart.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
+$(BUILD_DIR)/dma_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dma_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
+	$(LD) $(SRAM_LDFLAGS) -o $@ $^
+
 # --- XIP LINK RULES ---
 $(BUILD_DIR)/hello_world_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/hello_world.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
@@ -90,6 +101,9 @@ $(BUILD_DIR)/flash_read_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/flash_rea
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/tests_xip.elf: $(BUILD_DIR)/tests.o
+	$(LD) $(XIP_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/dma_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dma_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 # --- COMPILATION RULES ---
@@ -114,6 +128,12 @@ $(BUILD_DIR)/flash_read_test.o: $(XIP_C_DIR)/flash_read_test.c $(ROOT_MAKEFILE)
 $(BUILD_DIR)/tests.o: $(XIP_C_DIR)/tests.S $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
 
+$(BUILD_DIR)/dma_test.o: $(DMA_C_DIR)/dma_test.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<
+
+$(BUILD_DIR)/MS_DMAC_AHBL.o: $(DMAC_FW_DIR)/MS_DMAC_AHBL.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<
+
 # --- BINARY & DISASSEMBLY RULES ---
 $(BUILD_DIR)/%.dis: $(BUILD_DIR)/%.elf
 	$(OBJDUMP) -d $< > $@
@@ -125,7 +145,7 @@ clean:
 	rm -rf $(BUILD_DIR) *.o *.elf *.dis
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s flash xip-testbench
+.PHONY: all clean sram xip sanity uart i2s flash dma xip-testbench
 
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)

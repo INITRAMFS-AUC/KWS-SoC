@@ -78,6 +78,12 @@ SRAM_DEPTH ?= 32768
 
 export SRAM_DEPTH := $(SRAM_DEPTH)
 
+# DMA Controller base address (slave registers at 0x6000_0000)
+DMAC_BASE_ADDR ?= 0x60000000
+
+# Include path for MS_DMAC_AHBL's ahbl_util.vh header
+DMAC_RTL_DIR := $(ROOT_DIR)/peris/MS_DMAC_AHBL/hdl/rtl
+
 # UART config
 UART_BAUD_RATE ?= 115200
 # The remaining are hardcoded in uart_mini and thus useless
@@ -126,7 +132,7 @@ SH  := quartus_sh
 all: $(TBEXEC) test
 
 # Yosys synthesis command to generate CXXRTL C++ code
-YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) -DSIMULATION=1 -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(XIP_DEBUG_VFLAG) $(FILE_LIST);
+YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) -DSIMULATION=1 -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(XIP_DEBUG_VFLAG) $(FILE_LIST);
 YOSYS_SYNTH_CMD += hierarchy -top $(TOP);
 YOSYS_SYNTH_CMD += write_cxxrtl $(YOSYS_BUILD_DIR)/dut.cpp
 
@@ -260,7 +266,7 @@ $(VERILATOR_BUILD_DIR)/Vkws_soc: $(FILE_LIST) kws_soc_vpi.cpp sim/flashsim.cpp s
 		--Mdir $(VERILATOR_BUILD_DIR) \
 		-CFLAGS "-I$(ROOT_DIR) -march=native" \
 		--exe $(ROOT_DIR)/kws_soc_vpi.cpp $(ROOT_DIR)/sim/flashsim.cpp $(ROOT_DIR)/sim/i2s_mic_sim.cpp \
-		$(FILE_LIST) -I$(ROOT_DIR) -I$(HDL) $(XIP_DEBUG_VFLAG)
+		$(FILE_LIST) -I$(ROOT_DIR) -I$(HDL) -I$(DMAC_RTL_DIR) $(XIP_DEBUG_VFLAG)
 	$(MAKE) -C $(VERILATOR_BUILD_DIR) -j -f V$(TOP).mk \
 		CXXFLAGS='$(VERILATOR_CXXFLAGS)' V$(TOP)
 
@@ -276,10 +282,10 @@ sim-verilator-vcd: $(VERILATOR_BUILD_DIR)/Vkws_soc test
 	./$(VERILATOR_BUILD_DIR)/Vkws_soc $(SIM_PORT_ARG) $(NO_JTAG_ARG) --waves waves.$(TRACE_EXT) $(FLASH_ARG) $(MIC_ARG) $(XIP_DEBUG_ARG) $(I2S_DEBUG_ARG) $(UART_DEBUG_ARG) $(CYCLES_ARG) $(EXTRA_ARGS)
 
 lint:
-	verilator --lint-only --top-module $(TOP) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) $(FILE_LIST)
+	verilator --lint-only --top-module $(TOP) -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) $(FILE_LIST)
 
 lint_fpga:
-	verilator --lint-only --top-module $(TOP_FPGA) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) $(FILE_LIST)
+	verilator --lint-only --top-module $(TOP_FPGA) -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) $(FILE_LIST)
 
 # Allow passing a flash binary via `make sim FLASH=path/to/fw.bin`
 FLASH ?=
@@ -386,6 +392,9 @@ endif
 
 test:
 	$(MAKE) -C test
+
+test-dma:
+	$(MAKE) -C test dma
 
 testbench:
 	# TODO: Make a python script that runs all testbenches using vvp and checks their output and gives a report
