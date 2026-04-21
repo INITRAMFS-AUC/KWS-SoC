@@ -35,3 +35,17 @@ soc_conf_temp.sh
 notes.md
 images
 hazard3_instantiation_params.vh
+
+# Nix
+.direnv/
+result
+result-*
+.envrc
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# GCC dependency files (may appear outside build/ during out-of-tree invocations)
+*.d
