@@ -43,6 +43,22 @@ static volatile uint32_t t3_src[8] = {
 };
 static volatile uint32_t t3_dst[8];
 
+/* ---- RISC-V CSR helpers (used by test 4) ---- */
+static inline void      csr_set_mtvec(void (*h)(void)) { asm volatile ("csrw mtvec, %0" :: "r"((uintptr_t)h)); }
+static inline uintptr_t csr_get_mtvec(void)            { uintptr_t v; asm volatile ("csrr %0, mtvec" : "=r"(v)); return v; }
+static inline void      csr_meie_en(void)              { asm volatile ("csrs mie, %0"    :: "r"(1u << 11)); }
+static inline void      csr_meie_dis(void)             { asm volatile ("csrc mie, %0"    :: "r"(1u << 11)); }
+static inline void      csr_mie_en(void)               { asm volatile ("csrsi mstatus, 8"); }
+static inline void      csr_mie_dis(void)              { asm volatile ("csrci mstatus, 8"); }
+static inline void      wfi(void)                      { asm volatile ("wfi"); }
+/*
+ * Hazard3 MEIEA CSR (0xbe0): per-IRQ enable array (requires EXTENSION_XH3IRQ=1).
+ * IRQs grouped 16 per write: wdata_raw[4:0]=group index, wdata[16+(irq%16)]=enable.
+ * irq={uart_irq[2], i2s_irq[1], dmac_irq[0]} → i2s_irq is IRQ 1, bit 17 of group 0.
+ */
+static inline void csr_meiea_i2s_en(void)  { asm volatile ("csrw 0xbe0, %0" :: "r"(1u << 17)); }
+static inline void csr_meiea_i2s_dis(void) { asm volatile ("csrw 0xbe0, %0" :: "r"(0u)); }
+
 /* ---- helpers ---- */
 
 static int all_pass = 1;
@@ -157,6 +173,24 @@ static void test3_large_copy(void)
 
 static volatile uint32_t t4_capture[8];  /* reused for every batch */
 
+/*
+ * ISR for i2s_irq (IRQ 1, enabled via meiea[1]).
+ * With EXTENSION_XH3IRQ=1, only i2s_irq reaches this handler — uart_irq and
+ * dmac_irq are masked out by meiea.  i2s_irq fires when the FIFO fills and
+ * the DMA burst starts simultaneously (HW PIRQ trigger).  The ISR may be
+ * entered a few cycles before the last AHB write lands, so it waits on the
+ * final capture word before signalling the main loop.
+ */
+static volatile int t4_batch_done;
+
+static void __attribute__((interrupt("machine"))) dma_batch_isr(void)
+{
+    while (t4_capture[7] == 0x5A5A5A5Au)
+        ;
+    MS_DMAC_enable(DMAC_BASE, 0); /* prevent re-trigger while printing */
+    t4_batch_done = 1;
+}
+
 static void test4_pirq_i2s_dma(void)
 {
     uart_puts("[Test 4] PIRQ-triggered DMA: I2S FIFO \xe2\x86\x92 SRAM (repeated)\r\n");
@@ -184,35 +218,43 @@ static void test4_pirq_i2s_dma(void)
     volatile i2s_hw_t *i2s = (volatile i2s_hw_t *)I2S_BASE;
     i2s->conf = (4u << I2S_CONF_DIV_LSB) | (1u << I2S_CONF_IRQ_EN_LSB);
 
+    /* Route i2s_irq exclusively to our ISR via MEIEA; MIE enabled per-batch below */
+    uintptr_t saved_mtvec = csr_get_mtvec();
+    csr_set_mtvec(dma_batch_isr);
+    csr_meiea_i2s_en();
+    csr_meie_en();
+    /* mstatus.MIE stays 0 here — enabled only after DMA is armed each iteration */
+
     int pass = 1;
 
     for (int batch = 0; batch < T4_N_BATCHES; batch++) {
 
-        /* Re-arm with sentinel and fresh destination address each iteration.
-         * EN is cleared first so a stale PIRQ cannot fire during the update.
-         * Sentinel must not appear in debug_audio.hex — 0x5A5A5A5A is not. */
+        /* mstatus.MIE=0 during re-arm: prevents ISR firing on a stale i2s_irq
+         * while sentinels are written but the DMA is not yet armed. */
         for (int i = 0; i < 8; i++) t4_capture[i] = 0x5A5A5A5Au;
+        t4_batch_done = 0;
 
         MS_DMAC_setControlReg(DMAC_BASE, (int)(ctrl_pirq & ~1u)); /* EN=0 */
         MS_DMAC_setSourceAddr(DMAC_BASE, (int)I2S_FIFO_REG);
         MS_DMAC_setDestinationAddr(DMAC_BASE, (int)t4_capture);
         MS_DMAC_setCount(DMAC_BASE, 7);                           /* COUNT=7 → 8 transfers */
-        MS_DMAC_setControlReg(DMAC_BASE, (int)ctrl_pirq);         /* EN=1 — now armed */
+        MS_DMAC_setControlReg(DMAC_BASE, (int)ctrl_pirq);         /* EN=1 — DMA armed */
 
-        /*
-         * Poll the last word for a sentinel change.
-         * DMA writes words 0..7 in order; t4_capture[7] changes last,
-         * confirming the full 8-word burst is done.
-         */
-        uint32_t timeout = 50000000u;
-        while (t4_capture[7] == 0x5A5A5A5Au && --timeout)
-            ;
+        /* Enable MIE now that DMA is armed — ISR spin is safe from this point.
+         * If i2s_irq fired+deasserted before this line (DMA already ran), the
+         * sentinel check below will be false and wfi is skipped entirely. */
+        csr_mie_en();
 
-        /* Disable EN immediately to prevent re-triggering while we print */
+        while (!t4_batch_done && t4_capture[7] == 0x5A5A5A5Au)
+            wfi();
+
+        /* Ensure EN=0 whether completion came via ISR or the fast-path above */
         MS_DMAC_enable(DMAC_BASE, 0);
+        csr_mie_dis(); /* keep MIE=0 during re-arm of next iteration */
 
-        if (!timeout) {
-            uart_printf("  Batch 0x%x: TIMEOUT (no I2S data)\r\n", (uint32_t)batch);
+        if (t4_capture[7] == 0x5A5A5A5Au) {
+            uart_printf("  Batch 0x%x: INCOMPLETE (DMA did not fill capture buffer)\r\n",
+                        (uint32_t)batch);
             pass = 0;
             break;
         }
@@ -229,6 +271,10 @@ static void test4_pirq_i2s_dma(void)
             if (t4_capture[i] == 0x5A5A5A5Au) pass = 0; /* sentinel unchanged = fail */
         }
     }
+
+    csr_meie_dis();
+    csr_meiea_i2s_dis();
+    csr_set_mtvec((void (*)(void))saved_mtvec);
 
     /* Stop I2S */
     i2s->conf = 0;
