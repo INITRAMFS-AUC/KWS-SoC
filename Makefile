@@ -416,13 +416,13 @@ openocd-sim:
 	@echo " -> Sim Port:    $(SIM_PORT)"
 	@echo " -> GDB Port:    $(GDB_PORT)"
 	@echo " -> Telnet Port: $(TELNET_PORT)"
-	riscv-openocd -c "gdb port $(GDB_PORT)" -c "telnet port $(TELNET_PORT)" -c "tcl port disabled" -f openocd/sim.cfg
+	riscv-openocd -c "gdb_port $(GDB_PORT)" -c "telnet_port $(TELNET_PORT)" -c "tcl_port disabled" -f openocd/sim.cfg
 
 openocd-hw:
 	@echo "Starting OpenOCD (Hardware)..."
 	@echo " -> GDB Port:    $(GDB_PORT)"
 	@echo " -> Telnet Port: $(TELNET_PORT)"
-	riscv-openocd -c "gdb port $(GDB_PORT)" -c "telnet port $(TELNET_PORT)" -c "tcl port disabled" -f openocd/picodriver.cfg
+	riscv-openocd -c "gdb_port $(GDB_PORT)" -c "telnet_port $(TELNET_PORT)" -c "tcl_port disabled" -f openocd/picodriver.cfg
 
 gdb:
 	riscv32-unknown-elf-gdb -x gdbinit
