@@ -144,7 +144,7 @@ parameter DEBUG_SUPPORT       = 0, // TODO: Disable when debug is not needed
 
 // BREAKPOINT_TRIGGERS: Number of triggers which support type=2 execute=1
 // (but not store/load=1, i.e. not a watchpoint). Requires: DEBUG_SUPPORT
-parameter BREAKPOINT_TRIGGERS = 0,
+parameter BREAKPOINT_TRIGGERS = 2,
 
 // ----------------------------------------------------------------------------
 // External interrupt support
