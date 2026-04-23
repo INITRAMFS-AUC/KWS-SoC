@@ -72,7 +72,7 @@ module fpga_top (
         `include "hazard3_instantiation_params.vh"
     ) soc_inst (
         .clk            (sys_clk),      // Connect PLL output to core input
-        .rst_n          (rst_n),        // Safe Reset: Wait for PLL lock // Use & pll_locked for pll lock
+        .rst_n          (rst_n & pll_locked), // Hold reset until PLL locks and sys_clk is stable
 
         .tck            (tck),
         .trst_n         (trst_n),
