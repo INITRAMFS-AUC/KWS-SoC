@@ -166,29 +166,29 @@ module kws_soc #(
       .clk  (clk),
       .rst_n(rst_n),
 
-      .dmi_psel   (dmi_psel),
-      .dmi_penable(dmi_penable),
-      .dmi_pwrite (dmi_pwrite),
-      .dmi_paddr  (dmi_paddr),
-      .dmi_pwdata (dmi_pwdata),
-      .dmi_prdata (dmi_prdata),
-      .dmi_pready (dmi_pready),
-      .dmi_pslverr(dmi_pslverr),
+      .dmi_psel                   (dmi_psel),
+      .dmi_penable                (dmi_penable),
+      .dmi_pwrite                 (dmi_pwrite),
+      .dmi_paddr                  (dmi_paddr),
+      .dmi_pwdata                 (dmi_pwdata),
+      .dmi_prdata                 (dmi_prdata),
+      .dmi_pready                 (dmi_pready),
+      .dmi_pslverr                (dmi_pslverr),
 
-      .sys_reset_req  (sys_reset_req),
-      .sys_reset_done (sys_reset_done),
-      .hart_reset_req (hart_reset_req),
-      .hart_reset_done(hart_reset_done),
+      .sys_reset_req              (sys_reset_req),
+      .sys_reset_done             (sys_reset_done),
+      .hart_reset_req             (hart_reset_req),
+      .hart_reset_done            (hart_reset_done),
 
-      .hart_req_halt         (hart_req_halt),
-      .hart_req_halt_on_reset(hart_req_halt_on_reset),
-      .hart_req_resume       (hart_req_resume),
-      .hart_halted           (hart_halted),
-      .hart_running          (hart_running),
+      .hart_req_halt              (hart_req_halt),
+      .hart_req_halt_on_reset     (hart_req_halt_on_reset),
+      .hart_req_resume            (hart_req_resume),
+      .hart_halted                (hart_halted),
+      .hart_running               (hart_running),
 
-      .hart_data0_rdata(hart_data0_rdata),
-      .hart_data0_wdata(hart_data0_wdata),
-      .hart_data0_wen  (hart_data0_wen),
+      .hart_data0_rdata           (hart_data0_rdata),
+      .hart_data0_wdata           (hart_data0_wdata),
+      .hart_data0_wen             (hart_data0_wen),
 
       .hart_instr_data            (hart_instr_data),
       .hart_instr_data_vld        (hart_instr_data_vld),
@@ -196,14 +196,14 @@ module kws_soc #(
       .hart_instr_caught_exception(hart_instr_caught_exception),
       .hart_instr_caught_ebreak   (hart_instr_caught_ebreak),
 
-      .sbus_addr (sbus_addr),
-      .sbus_write(sbus_write),
-      .sbus_size (sbus_size),
-      .sbus_vld  (sbus_vld),
-      .sbus_rdy  (sbus_rdy),
-      .sbus_err  (sbus_err),
-      .sbus_wdata(sbus_wdata),
-      .sbus_rdata(sbus_rdata)
+      .sbus_addr                  (sbus_addr),
+      .sbus_write                 (sbus_write),
+      .sbus_size                  (sbus_size),
+      .sbus_vld                   (sbus_vld),
+      .sbus_rdy                   (sbus_rdy),
+      .sbus_err                   (sbus_err),
+      .sbus_wdata                 (sbus_wdata),
+      .sbus_rdata                 (sbus_rdata)
   );
 
 
@@ -265,6 +265,7 @@ module kws_soc #(
   wire              uart_irq;
   wire              timer_irq;
   wire              i2s_irq;
+  wire              dmac_irq;
 
   hazard3_cpu_2port #(
       // These must have the values given here for you to end up with a useful SoC:
@@ -277,7 +278,7 @@ module kws_soc #(
       // uart
       // i2s
       // timer is not an external interrupt, gets handled differently
-      .NUM_IRQS           (2),
+      .NUM_IRQS           (3),
       .RESET_REGFILE      (0),
       // Can be overridden from the defaults in hazard3_config.vh during
       // instantiation of kws_soc():
@@ -291,7 +292,7 @@ module kws_soc #(
       .EXTENSION_ZBKB     (EXTENSION_ZBKB),
       .EXTENSION_ZIFENCEI (EXTENSION_ZIFENCEI),
       .EXTENSION_XH3BEXTM (EXTENSION_XH3BEXTM),
-      .EXTENSION_XH3IRQ   (EXTENSION_XH3IRQ),
+      .EXTENSION_XH3IRQ   (1),
       .EXTENSION_XH3PMPM  (EXTENSION_XH3PMPM),
       .EXTENSION_XH3POWER (EXTENSION_XH3POWER),
       .CSR_COUNTER        (CSR_COUNTER),
@@ -355,15 +356,15 @@ module kws_soc #(
       .d_hwdata   (d_hwdata),
       .d_hrdata   (d_hrdata),
 
-      .dbg_req_halt         (hart_req_halt),
-      .dbg_req_halt_on_reset(hart_req_halt_on_reset),
-      .dbg_req_resume       (hart_req_resume),
-      .dbg_halted           (hart_halted),
-      .dbg_running          (hart_running),
+      .dbg_req_halt              (hart_req_halt),
+      .dbg_req_halt_on_reset     (hart_req_halt_on_reset),
+      .dbg_req_resume            (hart_req_resume),
+      .dbg_halted                (hart_halted),
+      .dbg_running               (hart_running),
 
-      .dbg_data0_rdata(hart_data0_rdata),
-      .dbg_data0_wdata(hart_data0_wdata),
-      .dbg_data0_wen  (hart_data0_wen),
+      .dbg_data0_rdata           (hart_data0_rdata),
+      .dbg_data0_wdata           (hart_data0_wdata),
+      .dbg_data0_wen             (hart_data0_wen),
 
       .dbg_instr_data            (hart_instr_data),
       .dbg_instr_data_vld        (hart_instr_data_vld),
@@ -371,16 +372,16 @@ module kws_soc #(
       .dbg_instr_caught_exception(hart_instr_caught_exception),
       .dbg_instr_caught_ebreak   (hart_instr_caught_ebreak),
 
-      .dbg_sbus_addr (sbus_addr),
-      .dbg_sbus_write(sbus_write),
-      .dbg_sbus_size (sbus_size),
-      .dbg_sbus_vld  (sbus_vld),
-      .dbg_sbus_rdy  (sbus_rdy),
-      .dbg_sbus_err  (sbus_err),
-      .dbg_sbus_wdata(sbus_wdata),
-      .dbg_sbus_rdata(sbus_rdata),
+      .dbg_sbus_addr             (sbus_addr),
+      .dbg_sbus_write            (sbus_write),
+      .dbg_sbus_size             (sbus_size),
+      .dbg_sbus_vld              (sbus_vld),
+      .dbg_sbus_rdy              (sbus_rdy),
+      .dbg_sbus_err              (sbus_err),
+      .dbg_sbus_wdata            (sbus_wdata),
+      .dbg_sbus_rdata            (sbus_rdata),
 
-      .irq({uart_irq, i2s_irq}),
+      .irq      ({uart_irq, i2s_irq, dmac_irq}),
 
       .soft_irq (1'b0),
       .timer_irq(timer_irq)
@@ -395,16 +396,19 @@ module kws_soc #(
   // - System timer at.. 0x4000_0000
   // - UART at.......... 0x4000_4000
   // - I2S at........... 0x4000_8000
+  // - DMAC at.......... 0x6000_0000
   // - XIP Flash at..... 0x8000_0000
   //
-  // Masters (N_MASTERS=2):
+  // Masters (N_MASTERS=3):
   //   Master 0 — i-port (instruction fetch)  — LSB slice
-  //   Master 1 — d-port (load/store + SBA)   — MSB slice
+  //   Master 1 — d-port (load/store + SBA)
+  //   Master 2 — DMAC master port            — MSB slice
   //
-  // Slaves (N_SLAVES=3):
+  // Slaves (N_SLAVES=4):
   //   Slave 0 — SRAM        (0x0000_0000, mask 0xe000_0000)
   //   Slave 1 — APB bridge  (0x4000_0000, mask 0xe000_0000)
-  //   Slave 2 — XIP flash   (0x8000_0000, mask 0xe000_0000)
+  //   Slave 2 — DMAC regs   (0x6000_0000, mask 0xe000_0000)
+  //   Slave 3 — XIP flash   (0x8000_0000, mask 0xe000_0000)
 
   // --- Slave-side wires ---
 
@@ -447,43 +451,66 @@ module kws_soc #(
   wire [W_DATA-1:0] xip_hwdata;
   wire [W_DATA-1:0] xip_hrdata;
 
+  // DMAC AHB slave signals (crossbar slave port 2)
+  wire              dmac_hready_resp;
+  wire              dmac_hready;
+  wire [W_ADDR-1:0] dmac_haddr;
+  wire              dmac_hwrite;
+  wire [       1:0] dmac_htrans;
+  wire [       2:0] dmac_hsize;
+  wire [       2:0] dmac_hburst;
+  wire [       3:0] dmac_hprot;
+  wire              dmac_hmastlock;
+  wire [W_DATA-1:0] dmac_hwdata;
+  wire [W_DATA-1:0] dmac_hrdata;
+
+  // DMAC AHB master signals (crossbar master port 2)
+  wire [W_ADDR-1:0] dmac_m_haddr;
+  wire              dmac_m_hwrite;
+  wire [       1:0] dmac_m_htrans;
+  wire [       2:0] dmac_m_hsize;
+  wire [W_DATA-1:0] dmac_m_hwdata;
+  wire              dmac_m_hready;
+  wire [W_DATA-1:0] dmac_m_hrdata;
+  wire              dmac_m_hresp; // crossbar drives this; DMAC master ignores HRESP
+
   ahbl_crossbar #(
-      .N_MASTERS(2),
-      .N_SLAVES (3),
+      .N_MASTERS(3),
+      .N_SLAVES (4),
       .W_ADDR   (W_ADDR),
       .W_DATA   (W_DATA),
-      .ADDR_MAP (96'h80000000_40000000_00000000),
-      .ADDR_MASK(96'he0000000_e0000000_e0000000)
+      .ADDR_MAP (128'h80000000_60000000_40000000_00000000),
+      .ADDR_MASK(128'he0000000_e0000000_e0000000_e0000000)
   ) xbar_u (
       .clk  (clk),
       .rst_n(rst_n),
 
-      // Masters: {d-port [MSB], i-port [LSB]}
-      .src_hready_resp({d_hready,    i_hready   }),
-      .src_hresp      ({d_hresp,     i_hresp    }),
-      .src_haddr      ({d_haddr,     i_haddr    }),
-      .src_hwrite     ({d_hwrite,    i_hwrite   }),
-      .src_htrans     ({d_htrans,    i_htrans   }),
-      .src_hsize      ({d_hsize,     i_hsize    }),
-      .src_hburst     ({d_hburst,    i_hburst   }),
-      .src_hprot      ({d_hprot,     i_hprot    }),
-      .src_hmastlock  ({d_hmastlock, i_hmastlock}),
-      .src_hwdata     ({d_hwdata,    i_hwdata   }),
-      .src_hrdata     ({d_hrdata,    i_hrdata   }),
+      // Masters: {dmac [MSB], d-port, i-port [LSB]}
+      .src_hready_resp({dmac_m_hready,  d_hready,    i_hready   }),
+      .src_hresp      ({dmac_m_hresp,   d_hresp,     i_hresp    }),
+      .src_haddr      ({dmac_m_haddr,   d_haddr,     i_haddr    }),
+      .src_hwrite     ({dmac_m_hwrite,  d_hwrite,    i_hwrite   }),
+      .src_htrans     ({dmac_m_htrans,  d_htrans,    i_htrans   }),
+      .src_hsize      ({dmac_m_hsize,   d_hsize,     i_hsize    }),
+      .src_hburst     ({3'b000,         d_hburst,    i_hburst   }),
+      .src_hprot      ({4'b0011,        d_hprot,     i_hprot    }),
+      .src_hmastlock  ({1'b0,           d_hmastlock, i_hmastlock}),
+      .src_hwdata     ({dmac_m_hwdata,  d_hwdata,    i_hwdata   }),
+      .src_hrdata     ({dmac_m_hrdata,  d_hrdata,    i_hrdata   }),
 
-      // Slaves
-      .dst_hready_resp({xip_hready_resp,  bridge_hready_resp, sram0_hready_resp}),
-      .dst_hready     ({xip_hready,       bridge_hready,      sram0_hready     }),
-      .dst_hresp      ({xip_hresp,        bridge_hresp,       sram0_hresp      }),
-      .dst_haddr      ({xip_haddr,        bridge_haddr,       sram0_haddr      }),
-      .dst_hwrite     ({xip_hwrite,       bridge_hwrite,      sram0_hwrite     }),
-      .dst_htrans     ({xip_htrans,       bridge_htrans,      sram0_htrans     }),
-      .dst_hsize      ({xip_hsize,        bridge_hsize,       sram0_hsize      }),
-      .dst_hburst     ({xip_hburst,       bridge_hburst,      sram0_hburst     }),
-      .dst_hprot      ({xip_hprot,        bridge_hprot,       sram0_hprot      }),
-      .dst_hmastlock  ({xip_hmastlock,    bridge_hmastlock,   sram0_hmastlock  }),
-      .dst_hwdata     ({xip_hwdata,       bridge_hwdata,      sram0_hwdata     }),
-      .dst_hrdata     ({xip_hrdata,       bridge_hrdata,      sram0_hrdata     })
+      // Slaves: {xip [MSB], dmac regs, bridge, sram [LSB]}
+      .dst_hready_resp({xip_hready_resp,  dmac_hready_resp, bridge_hready_resp, sram0_hready_resp}),
+      .dst_hready     ({xip_hready,       dmac_hready,      bridge_hready,      sram0_hready     }),
+      .dst_hresp      ({xip_hresp,        1'b0,             bridge_hresp,       sram0_hresp      }),
+      .dst_haddr      ({xip_haddr,        dmac_haddr,       bridge_haddr,       sram0_haddr      }),
+      .dst_hwrite     ({xip_hwrite,       dmac_hwrite,      bridge_hwrite,      sram0_hwrite     }),
+      .dst_htrans     ({xip_htrans,       dmac_htrans,      bridge_htrans,      sram0_htrans     }),
+      .dst_hsize      ({xip_hsize,        dmac_hsize,       bridge_hsize,       sram0_hsize      }),
+      .dst_hburst     ({xip_hburst,       dmac_hburst,      bridge_hburst,      sram0_hburst     }),
+      .dst_hprot      ({xip_hprot,        dmac_hprot,       bridge_hprot,       sram0_hprot      }),
+      .dst_hmastlock  ({xip_hmastlock,    dmac_hmastlock,   bridge_hmastlock,   sram0_hmastlock  }),
+      .dst_hwdata     ({xip_hwdata,       dmac_hwdata,      bridge_hwdata,      sram0_hwdata     }),
+      .dst_hrdata     ({xip_hrdata,       dmac_hrdata,      bridge_hrdata,      sram0_hrdata     })
   );
 
   // APB layer
@@ -627,6 +654,38 @@ module kws_soc #(
       .doe                  (xip_doe),
       .spi_do               (xip_do),
       .di                   (flash_di)
+  );
+
+  wire dmac_hsel_internal = (dmac_haddr[31:29] == 3'b011);
+
+  MS_DMAC_AHBL dmac_u (
+      .HCLK    (clk),
+      .HRESETn (rst_n),
+
+      .IRQ     (dmac_irq),
+
+      // Slave port — configuration registers (0x6000_0000)
+      .HSEL     (dmac_hsel_internal),
+      .HADDR    (dmac_haddr),
+      .HTRANS   (dmac_htrans),
+      .HWRITE   (dmac_hwrite),
+      .HREADY   (dmac_hready),
+      .HWDATA   (dmac_hwdata),
+      .HSIZE    (dmac_hsize),
+      .HREADYOUT(dmac_hready_resp),
+      .HRDATA   (dmac_hrdata),
+
+      // Master port — DMA transfers (crossbar master 2)
+      .M_HADDR  (dmac_m_haddr),
+      .M_HTRANS (dmac_m_htrans),
+      .M_HSIZE  (dmac_m_hsize),
+      .M_HWRITE (dmac_m_hwrite),
+      .M_HWDATA (dmac_m_hwdata),
+      .M_HREADY (dmac_m_hready),
+      .M_HRDATA (dmac_m_hrdata),
+
+      // Peripheral trigger: I2S FIFO-ready fires DMA when CTRL.TRIGGER[0]=1
+      .PIRQ    (i2s_irq)
   );
 
   uart_mini uart_u (
