@@ -86,27 +86,33 @@ UART_PARITY := N
 UART_STOP_BITS := 1
 UART_FLOW_CONTROL := 0
 
-UART_CFLAGS := -DCLK_MHZ=$(CLK_MHZ) \
-               -DUART_BAUD_RATE=$(UART_BAUD_RATE) \
-               -DUART_DATA_WIDTH=$(UART_DATA_WIDTH) \
-               -DUART_STOP_BITS=$(UART_STOP_BITS)
-
+# Verilog-macro form (NAME=VALUE, no -D prefix) — used by Quartus, Yosys, Verilator
+UART_VERILOG_MACROS := CLK_MHZ=$(CLK_MHZ) \
+                       UART_BAUD_RATE=$(UART_BAUD_RATE) \
+                       UART_DATA_WIDTH=$(UART_DATA_WIDTH) \
+                       UART_STOP_BITS=$(UART_STOP_BITS)
 
 # Parity
 ifeq ($(UART_PARITY), N)
-    UART_CFLAGS += -DUART_PARITY_NONE
+    UART_VERILOG_MACROS += UART_PARITY_NONE
 else ifeq ($(UART_PARITY), E)
-    UART_CFLAGS += -DUART_PARITY_EVEN
+    UART_VERILOG_MACROS += UART_PARITY_EVEN
 else ifeq ($(UART_PARITY), O)
-    UART_CFLAGS += -DUART_PARITY_ODD
+    UART_VERILOG_MACROS += UART_PARITY_ODD
 else
     $(error Invalid UART_PARITY: $(UART_PARITY). Use N, E, or O)
 endif
 
 # Flow Control
 ifeq ($(UART_FLOW_CONTROL), 1)
-    UART_CFLAGS += -DUART_FLOW_CTRL_EN
+    UART_VERILOG_MACROS += UART_FLOW_CTRL_EN
 endif
+
+# C-preprocessor form (for firmware and kws_soc_vpi.cpp)
+UART_CFLAGS := $(addprefix -D,$(UART_VERILOG_MACROS))
+
+# Propagate to all RTL tools (Quartus, Yosys, Verilator Verilog elaboration)
+VERILOG_MACROS += $(UART_VERILOG_MACROS)
 
 export GLOBAL_UART_CONFIG := $(UART_CFLAGS)
 
@@ -126,7 +132,7 @@ SH  := quartus_sh
 all: $(TBEXEC) test
 
 # Yosys synthesis command to generate CXXRTL C++ code
-YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) -DSIMULATION=1 -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(XIP_DEBUG_VFLAG) $(FILE_LIST);
+YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) -DSIMULATION=1 -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(XIP_DEBUG_VFLAG) $(FILE_LIST);
 YOSYS_SYNTH_CMD += hierarchy -top $(TOP);
 YOSYS_SYNTH_CMD += write_cxxrtl $(YOSYS_BUILD_DIR)/dut.cpp
 
@@ -260,7 +266,7 @@ $(VERILATOR_BUILD_DIR)/Vkws_soc: $(FILE_LIST) kws_soc_vpi.cpp sim/flashsim.cpp s
 		--Mdir $(VERILATOR_BUILD_DIR) \
 		-CFLAGS "-I$(ROOT_DIR) -march=native" \
 		--exe $(ROOT_DIR)/kws_soc_vpi.cpp $(ROOT_DIR)/sim/flashsim.cpp $(ROOT_DIR)/sim/i2s_mic_sim.cpp \
-		$(FILE_LIST) -I$(ROOT_DIR) -I$(HDL) $(XIP_DEBUG_VFLAG)
+		$(FILE_LIST) -I$(ROOT_DIR) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) $(XIP_DEBUG_VFLAG)
 	$(MAKE) -C $(VERILATOR_BUILD_DIR) -j -f V$(TOP).mk \
 		CXXFLAGS='$(VERILATOR_CXXFLAGS)' V$(TOP)
 
@@ -276,10 +282,10 @@ sim-verilator-vcd: $(VERILATOR_BUILD_DIR)/Vkws_soc test
 	./$(VERILATOR_BUILD_DIR)/Vkws_soc $(SIM_PORT_ARG) $(NO_JTAG_ARG) --waves waves.$(TRACE_EXT) $(FLASH_ARG) $(MIC_ARG) $(XIP_DEBUG_ARG) $(I2S_DEBUG_ARG) $(UART_DEBUG_ARG) $(CYCLES_ARG) $(EXTRA_ARGS)
 
 lint:
-	verilator --lint-only -Wno-fatal --top-module $(TOP) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) $(FILE_LIST)
+	verilator --lint-only -Wno-fatal --top-module $(TOP) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) $(FILE_LIST)
 
 lint_fpga:
-	verilator --lint-only -Wno-fatal --top-module $(TOP_FPGA) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) $(FILE_LIST)
+	verilator --lint-only -Wno-fatal --top-module $(TOP_FPGA) -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) $(FILE_LIST)
 
 # Allow passing a flash binary via `make sim FLASH=path/to/fw.bin`
 FLASH ?=
@@ -353,7 +359,6 @@ $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile
 $(MAP_RPT): $(QSF_FILE) $(ALL_QUARTUS_SRCS) $(GEN_PARAMS_VH)
 	@echo "--- Synthesizing ---"
 	$(MAP) $(QUARTUS_PROJECT) --verilog_macro="SRAM_DEPTH=$(SRAM_DEPTH)" \
-			--verilog_macro="CLK_MHZ=$(CLK_MHZ)" \
         	$(foreach m,$(VERILOG_MACROS),--verilog_macro="$(m)")
 
 # 2. Fitting (Place & Route)
