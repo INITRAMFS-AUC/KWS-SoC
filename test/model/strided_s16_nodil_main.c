@@ -183,6 +183,7 @@ static uint8_t nnom_static_buf[NNOM_STATIC_BUF_KB * 1024];
 static volatile int8_t ring_buf[SAMPLES_PER_CLIP];
 static volatile int    ring_pos   = 0;
 static volatile int    ring_ready = 0;
+static volatile uint32_t i2s_irq_count = 0;
 
 /* ── Class names (order matches weights.h CLASSES) ───────────────────────── */
 static const char * const class_names[NUM_CLASSES] = {
@@ -222,6 +223,8 @@ void __attribute__((interrupt("machine"))) kws_trap_handler(void) {
             ring_buf[ring_pos++] = q7;
     }
 
+    i2s_irq_count++;
+
     if (ring_pos >= SAMPLES_PER_CLIP)
         ring_ready = 1;
 }
@@ -229,6 +232,9 @@ void __attribute__((interrupt("machine"))) kws_trap_handler(void) {
 /* ── main ────────────────────────────────────────────────────────────────── */
 
 int main(void) {
+    int last_fill_bucket = -1;
+    uint32_t infer_count = 0;
+
     uart_init();
     uart_puts("KWS bare-metal firmware (NNoM int8)\r\n");
 
@@ -272,8 +278,24 @@ int main(void) {
         if (!ring_ready)
             asm volatile ("wfi");
 
-        if (!ring_ready)
+        if (!ring_ready) {
+            int fill_bucket = ring_pos / 1000;
+            if (fill_bucket != last_fill_bucket) {
+                last_fill_bucket = fill_bucket;
+                uart_puts("WAIT samples=");
+                uart_putdec(ring_pos);
+                uart_puts(" irq=");
+                uart_putdec((int)i2s_irq_count);
+                uart_puts("\r\n");
+            }
             continue;
+        }
+
+        uart_puts("CLIP ready samples=");
+        uart_putdec(ring_pos);
+        uart_puts(" irq=");
+        uart_putdec((int)i2s_irq_count);
+        uart_puts("\r\n");
 
         /* Copy ring buffer to NNoM input (8000 int8 Q7 samples) */
         memcpy(nnom_input_data, (const void *)ring_buf,
@@ -282,9 +304,19 @@ int main(void) {
         /* Reset ring — ISR can start filling again immediately */
         ring_pos   = 0;
         ring_ready = 0;
+        last_fill_bucket = -1;
+
+        uart_puts("RUN model #");
+        uart_putdec((int)(infer_count + 1));
+        uart_puts("\r\n");
 
         /* Run inference */
         model_run(model);
+
+        uart_puts("RUN done #");
+        uart_putdec((int)(infer_count + 1));
+        uart_puts("\r\n");
+        infer_count++;
 
         /* Argmax over 11 output scores */
         int    pred      = 0;
