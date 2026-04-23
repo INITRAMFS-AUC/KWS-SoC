@@ -62,5 +62,14 @@ if {[file exists $constraint_fn]} {
     post_message -type warning "Constraints file NOT FOUND at: $constraint_fn"
 }
 
+# Register SDC timing constraints (lives alongside the QSF in quartus/)
+set sdc_file [file normalize [file join [file dirname $constraint_fn] "../KWS-SoC.sdc"]]
+if {[file exists $sdc_file]} {
+    post_message -type info "Adding SDC timing constraints: $sdc_file"
+    set_global_assignment -name SDC_FILE $sdc_file
+} else {
+    post_message -type warning "SDC timing constraints NOT FOUND at: $sdc_file"
+}
+
 export_assignments
 project_close
