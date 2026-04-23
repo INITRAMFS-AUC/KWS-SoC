@@ -81,7 +81,7 @@ export SRAM_DEPTH := $(SRAM_DEPTH)
 # DMA Controller base address (slave registers at 0x6000_0000)
 DMAC_BASE_ADDR ?= 0x60000000
 
-# Include path for MS_DMAC_AHBL's ahbl_util.vh header
+# MS_DMAC_AHBL.pp.v is the pre-expanded form (no ahbl_util.vh dependency)
 DMAC_RTL_DIR := $(ROOT_DIR)/peris/MS_DMAC_AHBL/hdl/rtl
 
 # UART config

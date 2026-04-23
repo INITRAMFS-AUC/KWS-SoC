@@ -9,4 +9,4 @@ file xip/flash_ctrl_eb.v
 file xip/ro_cache.v
 
 # DMA Controller
-file MS_DMAC_AHBL/hdl/rtl/MS_DMAC_AHBL.v
+file MS_DMAC_AHBL/hdl/rtl/MS_DMAC_AHBL.pp.v
