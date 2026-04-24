@@ -191,12 +191,28 @@ static void __attribute__((interrupt("machine"))) dma_batch_isr(void)
     t4_batch_done = 1;
 }
 
+/*
+ * CPU busy-work run concurrently with each DMA burst.
+ * A 32-bit LCG step is cheap but not eliminable by the compiler (output is
+ * printed), so it faithfully represents CPU cycles available during DMA.
+ * Both the iteration count and the accumulated state are printed to prove
+ * the work ran; a zero count means the DMA completed before the CPU reached
+ * the work loop (extremely fast transfer or slow re-arm path).
+ */
+static uint32_t cpu_work_step(uint32_t state)
+{
+    /* Knuth multiplicative LCG — single multiply+add, no branches */
+    return state * 1664525u + 1013904223u;
+}
+
 static void test4_pirq_i2s_dma(void)
 {
-    uart_puts("[Test 4] PIRQ-triggered DMA: I2S FIFO \xe2\x86\x92 SRAM (repeated)\r\n");
+    uart_puts("[Test 4] PIRQ-triggered DMA: I2S FIFO \xe2\x86\x92 SRAM (CPU works in parallel)\r\n");
     uart_printf("  Capturing 0x%x batches x 8 words = 0x%x samples\r\n",
                 (uint32_t)T4_N_BATCHES, (uint32_t)(T4_N_BATCHES * 8));
     uart_puts("  (Compare hex values against sim/debug_audio.hex)\r\n\r\n");
+    uart_puts("  While each DMA burst runs the CPU advances an LCG checksum.\r\n");
+    uart_puts("  'cpu_iters' = work loop iterations completed before i2s_irq.\r\n\r\n");
 
     /*
      * CTRL word for PIRQ mode:
@@ -225,7 +241,9 @@ static void test4_pirq_i2s_dma(void)
     csr_meie_en();
     /* mstatus.MIE stays 0 here — enabled only after DMA is armed each iteration */
 
-    int pass = 1;
+    int      pass            = 1;
+    uint32_t total_cpu_iters = 0;   /* LCG iterations across all batches */
+    uint32_t cpu_state       = 0xDEADBEEFu; /* LCG accumulator — printed to prevent DCE */
 
     for (int batch = 0; batch < T4_N_BATCHES; batch++) {
 
@@ -240,17 +258,32 @@ static void test4_pirq_i2s_dma(void)
         MS_DMAC_setCount(DMAC_BASE, 7);                           /* COUNT=7 → 8 transfers */
         MS_DMAC_setControlReg(DMAC_BASE, (int)ctrl_pirq);         /* EN=1 — DMA armed */
 
-        /* Enable MIE now that DMA is armed — ISR spin is safe from this point.
-         * If i2s_irq fired+deasserted before this line (DMA already ran), the
-         * sentinel check below will be false and wfi is skipped entirely. */
+        /* Enable MIE now that DMA is armed.
+         * The DMA fires via hardware PIRQ independently of MIE, so it may
+         * already have completed by the time we reach the work loop — but
+         * t4_batch_done is set only by the ISR, which cannot run until MIE=1.
+         * Using do-while on t4_batch_done guarantees the CPU executes at least
+         * one LCG step before the ISR gets a chance to set the flag. */
         csr_mie_en();
 
-        while (!t4_batch_done && t4_capture[7] == 0x5A5A5A5Au)
-            wfi();
+        /*
+         * CPU work loop — runs between MIE enable and the ISR firing.
+         * On real hardware (8 kHz I2S, 36 MHz SoC): the FIFO takes ~1 ms to
+         * fill, giving ~7 200 LCG iterations before i2s_irq asserts.
+         * In simulation the ISR fires almost immediately after mie_en, so
+         * expect a small but nonzero count (interrupt latency + ISR spin time).
+         */
+        uint32_t batch_iters = 0;
+        do {
+            cpu_state = cpu_work_step(cpu_state);
+            batch_iters++;
+        } while (!t4_batch_done);
 
         /* Ensure EN=0 whether completion came via ISR or the fast-path above */
         MS_DMAC_enable(DMAC_BASE, 0);
         csr_mie_dis(); /* keep MIE=0 during re-arm of next iteration */
+
+        total_cpu_iters += batch_iters;
 
         if (t4_capture[7] == 0x5A5A5A5Au) {
             uart_printf("  Batch 0x%x: INCOMPLETE (DMA did not fill capture buffer)\r\n",
@@ -259,18 +292,21 @@ static void test4_pirq_i2s_dma(void)
             break;
         }
 
-        /* Print batch with sample index for direct comparison with debug_audio.hex.
-         * Sample index is in hex; e.g. sample 0x10 = line 17 of the data file. */
-        uart_printf("  Batch 0x%x (samples 0x%x-0x%x):\r\n",
+        /* Print batch data with CPU parallelism evidence. */
+        uart_printf("  Batch 0x%x (samples 0x%x-0x%x)  cpu_iters=0x%x:\r\n",
                     (uint32_t)batch,
                     (uint32_t)(batch * 8),
-                    (uint32_t)(batch * 8 + 7));
+                    (uint32_t)(batch * 8 + 7),
+                    batch_iters);
         for (int i = 0; i < 8; i++) {
             uart_printf("    [0x%x] 0x%x\r\n",
                         (uint32_t)(batch * 8 + i), t4_capture[i]);
             if (t4_capture[i] == 0x5A5A5A5Au) pass = 0; /* sentinel unchanged = fail */
         }
     }
+
+    uart_printf("  Total CPU work: 0x%x LCG iters, final state=0x%x\r\n",
+                total_cpu_iters, cpu_state);
 
     csr_meie_dis();
     csr_meiea_i2s_dis();

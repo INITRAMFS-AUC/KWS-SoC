@@ -13,19 +13,21 @@
  * --------
  *  1. UART init — prints status messages
  *  2. NNoM model init — builds graph, uses 64 KB static buffer
- *  3. PLIC config — enable I2S IRQ (IRQ ID 2)
- *  4. I2S config — start receiver, enable interrupt
- *  5. Inference loop (WFI):
- *       - I2S ISR fires every 8 samples
- *       - ISR fills ring buffer (8000 samples = 1 second at 8 kHz)
- *       - When ring full: copy to NNoM input, run inference, print result
- *       - On Spike: process each audio clip, print accuracy, exit via HTIF
+ *  3. I2S config — start receiver, enable interrupt
+ *  4. DMA config — PIRQ-triggered: I2S FIFO → dma_batch staging buffer
+ *  5. Interrupt setup — mtvec, MEIE, MEIEA (XH3IRQ=1), MIE
+ *  6. Inference loop (WFI):
+ *       - i2s_irq asserts (FIFO full) → DMA hardware burst, no CPU involvement
+ *       - dmac_irq fires AFTER burst completes (FC_REG=1 mode)
+ *       - ISR: dma_batch already populated, extract int8 Q7, re-arm DMA
+ *       - When ring full: copy to NNoM input, re-arm DMA, run inference
+ *         (audio capture continues during inference via DMA+ISR)
  *
  * REGISTER MAP (KWS-SoC)
  * ----------------------
  *  UART  0x40004000   uart_mini (115200 8N1 at 36 MHz FPGA / 12 MHz sim)
  *  I2S   0x40008000   apb_i2s_receiver (INMP441 MEMS mic, 8 kHz mono)
- *  PLIC  0x0C000000   Standard RISC-V PLIC (Spike built-in; SoC equivalent)
+ *  DMAC  0x60000000   MS_DMAC_AHBL (PIRQ[0]=i2s_irq)
  *
  * BUILD
  * -----
@@ -112,13 +114,13 @@ typedef struct {
 } i2s_hw_t;
 
 #define I2S_BASE_ADDR    0x40008000UL
+#define I2S_FIFO_PA      0x40008008UL   /* physical address of I2S->fifo for DMA */
 #define I2S              ((i2s_hw_t *)I2S_BASE_ADDR)
-/* I2S_FIFO_DEPTH: number of samples read per ISR.
+/* I2S_FIFO_DEPTH: number of samples transferred per DMA burst / ISR.
  * Real SoC (INMP441): hardware FIFO depth = 8 (default).
  * Spike simulation: override to SAMPLES_PER_CLIP (8000) via Makefile
- * -DI2S_FIFO_DEPTH=8000 to reduce PLIC overhead from 1000 ISRs to 1 ISR.
- * The interrupt mechanism (PLIC enable, ISR, claim/complete) is still
- * fully exercised — only the batch size changes. */
+ * -DI2S_FIFO_DEPTH=8000 to reduce PIRQ overhead from 1000 bursts to 1 burst.
+ * The DMA+interrupt mechanism is fully exercised in both cases. */
 #ifndef I2S_FIFO_DEPTH
 #define I2S_FIFO_DEPTH   8
 #endif
@@ -139,15 +141,20 @@ static void i2s_init(uint32_t clk_div) {
 }
 
 /* ── Interrupt controller note ───────────────────────────────────────────── */
-/* KWS-SoC uses Hazard3 with EXTENSION_XH3IRQ=0 (no memory-mapped PLIC and
- * no custom preemptive IRQ CSRs). External interrupts are handled by the
- * standard RISC-V mechanism: mie.MEIE + mstatus.MIE gate the combined IRQ
- * line; the CPU traps to mtvec on any asserted external interrupt.
+/* KWS-SoC uses Hazard3 with EXTENSION_XH3IRQ=1 (kws_soc.v hardcodes this
+ * after the dma_integration merge).  With XH3IRQ enabled, each IRQ must be
+ * individually unmasked in the MEIEA CSR (0xbe0) in addition to the standard
+ * mie.MEIE + mstatus.MIE enables.  MEIEA resets to 0, so skipping it silently
+ * blocks all external interrupts even when MEIE and MIE are both set.
  *
- * With NUM_IRQS=2 and .irq({uart_irq, i2s_irq}) in kws_soc.v, the only
- * enabled external source is the I2S peripheral (its CONF IRQ_EN bit).
- * No claim/complete handshake is needed — the IRQ line deasserts
- * automatically once the FIFO is drained below the hardware threshold. */
+ * kws_soc.v wires irq = {uart_irq[2], i2s_irq[1], dmac_irq[0]}.
+ * dmac_irq is IRQ 0 → MEIEA bit 16 (= 16 + irq_index) in group 0.
+ *
+ * We use dmac_irq (not i2s_irq) as the CPU interrupt.  The DMAC asserts IRQ
+ * only after its burst fully completes (FC_REG mode: IRQ when FC_REG==1).
+ * By the time the CPU ISR runs, dma_batch is already populated — no sentinel
+ * spin needed and no AHB contention with the DMA master write port.
+ * (i2s_irq still drives PIRQ[0] to trigger the DMA hardware burst.) */
 
 /* ── RISC-V CSR helpers ──────────────────────────────────────────────────── */
 
@@ -155,14 +162,62 @@ static inline void csr_set_mtvec(void (*handler)(void)) {
     asm volatile ("csrw mtvec, %0" :: "r"((uintptr_t)handler));
 }
 static inline void csr_enable_meie(void) {
-    /* Set MEIE (machine external interrupt enable) bit in mie */
     asm volatile ("csrs mie, %0" :: "r"(1u << 11));
 }
 static inline void csr_enable_mie(void) {
-    /* Set MIE (global machine interrupt enable) bit in mstatus */
     asm volatile ("csrsi mstatus, 8");
 }
+static inline void csr_meiea_dmac_en(void) {
+    /* Unmask dmac_irq (IRQ 0) in Hazard3 MEIEA — required with XH3IRQ=1 */
+    asm volatile ("csrw 0xbe0, %0" :: "r"(1u << 16));
+}
 
+/* ── MS_DMAC_AHBL (0x6000_0000) ─────────────────────────────────────────── */
+/*
+ * Register layout from MS_DMAC_AHBL_regs.h:
+ *   control @ +0x00, status @ +0x04, saddr @ +0x08, daddr @ +0x0C,
+ *   count   @ +0x10, swtrig @ +0x14, fcount @ +0x18
+ *
+ * CTRL field encoding:
+ *   bit  0      EN       — 1 = DMA enabled / armed
+ *   bits 11:8   TRIGGER  — 0=SW, 1=PIRQ[0] (i2s_irq)
+ *   bits 17:16  STYPE    — 2=word
+ *   bits 20:18  SAI      — source auto-increment: 0=none, 4=+4B
+ *   bits 25:24  DTYPE    — 2=word
+ *   bits 28:26  DAI      — dest auto-increment: 0=none, 4=+4B
+ *
+ * IRQ (dmac_irq) in PIRQ mode fires when: done && (fcount == 1).
+ * Set fcount=1 to fire dmac_irq after exactly one burst (count+1 transfers).
+ * fcount is decremented on each burst completion; dmac_irq fires on the last.
+ */
+typedef struct {
+    volatile uint32_t control;
+    volatile uint32_t status;
+    volatile uint32_t saddr;
+    volatile uint32_t daddr;
+    volatile uint32_t count;
+    volatile uint32_t swtrig;
+    volatile uint32_t fcount;
+} dmac_hw_t;
+
+#define DMAC_BASE  0x60000000UL
+#define DMAC       ((dmac_hw_t *)DMAC_BASE)
+
+/* PIRQ[0]-triggered word transfer: fixed source (FIFO), incrementing dest */
+#define DMAC_CTRL_I2S_PIRQ \
+    ((1u <<  0) | (1u <<  8) | (2u << 16) | (0u << 18) | (2u << 24) | (4u << 26))
+
+/* Staging buffer: DMA writes raw 32-bit FIFO words here, ISR extracts int8 Q7 */
+static volatile uint32_t dma_batch[I2S_FIFO_DEPTH];
+
+static void dma_arm(void) {
+    DMAC->control = DMAC_CTRL_I2S_PIRQ & ~1u;       /* EN=0 while reconfiguring */
+    DMAC->saddr   = I2S_FIFO_PA;
+    DMAC->daddr   = (uint32_t)(uintptr_t)dma_batch;
+    DMAC->count   = (uint32_t)(I2S_FIFO_DEPTH - 1); /* COUNT = N-1 for N transfers */
+    DMAC->fcount  = 1;                               /* dmac_irq after 1 burst */
+    DMAC->control = DMAC_CTRL_I2S_PIRQ;              /* EN=1 — armed on PIRQ[0] */
+}
 
 /* ── NNoM static memory buffer ───────────────────────────────────────────── */
 /* NNOM_STATIC_BUF_KB: size of the activation scratch buffer.
@@ -191,16 +246,22 @@ static const char * const class_names[NUM_CLASSES] = {
     "right", "stop", "up", "yes", "unknown"
 };
 
-/* ── I2S / Machine External Interrupt handler ────────────────────────────── */
-
+/* ── Machine trap handler ────────────────────────────────────────────────── */
+/*
+ * Flow per dmac_irq interrupt:
+ *  1. i2s_irq asserts (FIFO full) → DMA bursts I2S_FIFO_DEPTH words to dma_batch
+ *  2. DMA burst completes → dmac_irq fires (FC_REG=1 mode)
+ *  3. CPU enters ISR — dma_batch is already fully populated, no spin needed
+ *  4. Extract int8 Q7 (upper byte of each 32-bit word) into ring_buf
+ *  5a. Ring not full → re-arm DMA for next PIRQ, return
+ *  5b. Ring full     → set ring_ready, disable DMA (main re-arms after copy)
+ */
 void __attribute__((interrupt("machine"))) kws_trap_handler(void) {
     uint32_t mcause, mepc, mtval;
     asm volatile ("csrr %0, mcause" : "=r"(mcause));
 
     if (!(mcause & 0x80000000u)) {
-        /* Exception (not interrupt) — print and halt.
-         * Without this, the CPU would MRET back to the faulting instruction
-         * and loop forever, making model_run() appear to hang. */
+        /* Exception — print diagnostics and halt */
         asm volatile ("csrr %0, mepc"  : "=r"(mepc));
         asm volatile ("csrr %0, mtval" : "=r"(mtval));
         uart_puts("EXCEPTION cause=");
@@ -213,30 +274,31 @@ void __attribute__((interrupt("machine"))) kws_trap_handler(void) {
         while (1);
     }
 
-    /* External interrupt — only source is I2S (EXTENSION_XH3IRQ=0, no PLIC).
-     * Read exactly I2S_FIFO_DEPTH samples. The IRQ line deasserts automatically
-     * once the FIFO drains; no claim/complete handshake is needed. */
+    /* dmac_irq: DMA burst complete — dma_batch is fully populated */
+
+    /* Extract int8 Q7: upper byte of each left-justified 32-bit FIFO word */
     for (int i = 0; i < I2S_FIFO_DEPTH; i++) {
-        int32_t raw = (int32_t)I2S->fifo;
-        int8_t  q7  = (int8_t)(raw >> 16);
         if (ring_pos < SAMPLES_PER_CLIP)
-            ring_buf[ring_pos++] = q7;
+            ring_buf[ring_pos++] = (int8_t)((uint32_t)dma_batch[i] >> 16);
     }
 
     i2s_irq_count++;
 
-    if (ring_pos >= SAMPLES_PER_CLIP)
+    if (ring_pos >= SAMPLES_PER_CLIP) {
         ring_ready = 1;
+        DMAC->control = DMAC_CTRL_I2S_PIRQ & ~1u; /* EN=0 — main re-arms after copy */
+    } else {
+        dma_arm();
+    }
 }
 
 /* ── main ────────────────────────────────────────────────────────────────── */
 
 int main(void) {
-    int last_fill_bucket = -1;
     uint32_t infer_count = 0;
 
     uart_init();
-    uart_puts("KWS bare-metal firmware (NNoM int8)\r\n");
+    uart_puts("KWS bare-metal firmware (NNoM int8, DMA I2S)\r\n");
 
     /* ── NNoM init ── */
 #ifdef NNOM_USING_STATIC_MEMORY
@@ -262,34 +324,28 @@ int main(void) {
     }
     uart_puts("Model loaded\r\n");
 
-    /* ── Interrupt setup ── */
+    /* ── Interrupt + DMA setup ── */
     csr_set_mtvec(kws_trap_handler);
     csr_enable_meie();
+    csr_meiea_dmac_en();  /* unmask dmac_irq (IRQ 0) in MEIEA — mandatory with XH3IRQ=1 */
+
+    /* Arm DMA before starting I2S so PIRQ is ready when the first FIFO-full fires */
+    dma_arm();
+
     i2s_init(I2S_CLK_DIV);
     uart_puts("I2S started\r\n");
+
     csr_enable_mie();
 
     /* ── Inference loop ── */
     while (1) {
-        /* Check ring_ready BEFORE wfi — all ISRs may have fired before we
-         * reach this point (they fire immediately after csr_enable_mie()).
-         * If we always wfi first, we would block forever with ring_ready=1
-         * and no pending interrupts. */
+        /* Check ring_ready before wfi — ISRs may have fired before we reach
+         * this point; wfi would block forever with ring_ready=1. */
         if (!ring_ready)
             asm volatile ("wfi");
 
-        if (!ring_ready) {
-            int fill_bucket = ring_pos / 1000;
-            if (fill_bucket != last_fill_bucket) {
-                last_fill_bucket = fill_bucket;
-                uart_puts("WAIT samples=");
-                uart_putdec(ring_pos);
-                uart_puts(" irq=");
-                uart_putdec((int)i2s_irq_count);
-                uart_puts("\r\n");
-            }
+        if (!ring_ready)
             continue;
-        }
 
         uart_puts("CLIP ready samples=");
         uart_putdec(ring_pos);
@@ -301,16 +357,15 @@ int main(void) {
         memcpy(nnom_input_data, (const void *)ring_buf,
                (size_t)SAMPLES_PER_CLIP);
 
-        /* Reset ring — ISR can start filling again immediately */
+        /* Reset ring and re-arm DMA so audio capture overlaps with inference */
         ring_pos   = 0;
         ring_ready = 0;
-        last_fill_bucket = -1;
+        dma_arm();
 
         uart_puts("RUN model #");
         uart_putdec((int)(infer_count + 1));
         uart_puts("\r\n");
 
-        /* Run inference */
         model_run(model);
 
         uart_puts("RUN done #");
@@ -336,6 +391,5 @@ int main(void) {
         uart_puts("\r\n");
     }
 
-    /* Unreachable — continuous detection loop never exits */
     return 0;
 }
