@@ -10,6 +10,9 @@ quartus_work_dir/
 quartus_src_dir/
 build-kws-soc/
 CycloneIV/
+
+# Generated PLL (produced by scripts/gen_pll.py, regenerated via `make gen_pll`)
+quartus/ip/clock_pll_gen/
 verilator_sources.f
 *.elf
 *.o

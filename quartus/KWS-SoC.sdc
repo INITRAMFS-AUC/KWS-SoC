@@ -11,12 +11,12 @@ derive_pll_clocks
 derive_clock_uncertainty
 
 # Separate async clock domains:
-#   group 1 — sys domain: 50 MHz board osc + 36 MHz PLL output (related clocks)
+#   group 1 — all clocks in the system domain (50 MHz board osc + any PLL outputs)
 #   group 2 — JTAG TCK (totally unrelated to sys domain)
-# Without sys_clk in a group the analyzer treats tck<->sys_clk as synchronous,
-# inflating clock uncertainty by ~7 ns and creating false violations.
+# Using remove_from_collection makes this portable across PLL types (altera_pll
+# vs altpll) so we don't hard-code the PLL output counter path.
 set_clock_groups -asynchronous \
-    -group [get_clocks { clk_50 my_pll|clock_pll_36_inst|altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk }] \
+    -group [remove_from_collection [get_clocks *] [get_clocks tck]] \
     -group [get_clocks { tck }]
 
 # Async reset paths — no timing check needed.
