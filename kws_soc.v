@@ -406,6 +406,12 @@ module kws_soc #(
   //   Slave 1 — APB bridge  (0x4000_0000, mask 0xe000_0000)
   //   Slave 2 — XIP flash   (0x8000_0000, mask 0xe000_0000)
 
+  // CONN_MATRIX[master*N_SLAVES + slave] — which masters can reach which slaves                                                                                  
+  // Master 0 (i-port): SRAM[0]=1, Bridge[1]=0, XIP[2]=1  → 3'b101 → bits [2:0]                                                                                   
+  // Master 1 (d-port): SRAM[0]=1, Bridge[1]=1, XIP[2]=1  → 3'b111 → bits [5:3]                                                                                   
+  // CONN_MATRIX_TRANSPOSE[slave*N_MASTERS + master]:                                                                                                             
+  // SRAM←{d,i}=2'b11 [1:0], Bridge←{d,i}=2'b10 [3:2], XIP←{d,i}=2'b11 [5:4]  
+
   // --- Slave-side wires ---
 
   wire              sram0_hready_resp;
@@ -453,7 +459,9 @@ module kws_soc #(
       .W_ADDR   (W_ADDR),
       .W_DATA   (W_DATA),
       .ADDR_MAP (96'h80000000_40000000_00000000),
-      .ADDR_MASK(96'he0000000_e0000000_e0000000)
+      .ADDR_MASK(96'he0000000_e0000000_e0000000),
+      .CONN_MATRIX           (6'b111_101),
+      .CONN_MATRIX_TRANSPOSE (6'b11_10_11) 
   ) xbar_u (
       .clk  (clk),
       .rst_n(rst_n),
