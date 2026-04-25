@@ -381,7 +381,7 @@ module kws_soc #(
       .dbg_sbus_wdata            (sbus_wdata),
       .dbg_sbus_rdata            (sbus_rdata),
 
-      .irq      ({uart_irq, i2s_irq, dmac_irq}),
+      .irq      ({uart_irq, dmac_irq}),
 
       .soft_irq (1'b0),
       .timer_irq(timer_irq)
