@@ -223,7 +223,77 @@ clean:
 	rm -f $(COMMON_DIR)/*.d
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil xip-testbench
+.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil xip-testbench mel-compact
 
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)
+
+# ── mel_compact_4blk_ch36 — 195M cycle baseline ──────────────────────────────
+#
+# Reproduces the confirmed 195,486,216 cycle inference result.
+#
+# SoC config: CSR_COUNTER=1, MULDIV_UNROLL=1, no accelerator (this branch).
+# Model: mel_compact_4blk_ch36 seed=789, 88.7% int8, 26.2 KB flash.
+#
+# Build:
+#   make mel-compact
+#
+# Run (from kws_soc/ root with Nix devshell active):
+#   NO_JTAG=1 make sim-verilator \
+#     FLASH=test/build/mel_compact_4blk_ch36_xip.bin \
+#     MIC=sim/down_0000.hex
+#
+# Toolchain: riscv32-unknown-elf-gcc (rv32imac_zicsr_zifencei, ilp32)
+# NNoM: third_party/nnom (INITRAMFS-AUC fork)
+
+MEL_DIR = mel_compact
+
+NNOM_SRCS_MEL = $(NNOM_DIR)/src/core/nnom.c \
+                $(NNOM_DIR)/src/core/nnom_layers.c \
+                $(NNOM_DIR)/src/core/nnom_tensor.c \
+                $(NNOM_DIR)/src/core/nnom_utils.c \
+                $(NNOM_DIR)/src/layers/nnom_activation.c \
+                $(NNOM_DIR)/src/layers/nnom_avgpool.c \
+                $(NNOM_DIR)/src/layers/nnom_baselayer.c \
+                $(NNOM_DIR)/src/layers/nnom_conv2d.c \
+                $(NNOM_DIR)/src/layers/nnom_dense.c \
+                $(NNOM_DIR)/src/layers/nnom_flatten.c \
+                $(NNOM_DIR)/src/layers/nnom_global_pool.c \
+                $(NNOM_DIR)/src/layers/nnom_input.c \
+                $(NNOM_DIR)/src/layers/nnom_maxpool.c \
+                $(NNOM_DIR)/src/layers/nnom_output.c \
+                $(NNOM_DIR)/src/layers/nnom_reshape.c \
+                $(NNOM_DIR)/src/layers/nnom_softmax.c \
+                $(NNOM_DIR)/src/backends/nnom_local.c \
+                $(NNOM_DIR)/src/backends/nnom_local_q15.c
+
+MEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
+             -Os -flto -std=gnu99 \
+             -ffunction-sections -fdata-sections \
+             -falign-functions=4 \
+             -DNNOM_USING_STATIC_MEMORY \
+             -DNNOM_BARE_METAL \
+             "-DNNOM_LOG(...)=" \
+             -DCLK_MHZ=36 -DUART_BAUD_RATE=115200 \
+             -DI2S_FIFO_DEPTH=8 \
+             -DNNOM_STATIC_BUF_KB=36 \
+             -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR) \
+             -I$(MEL_DIR)
+
+MEL_LDFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
+              -nostartfiles -nodefaultlibs \
+              -Wl,-T,$(COMMON_DIR)/link.ld \
+              -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES) \
+              -Wl,--gc-sections \
+              -lm -lgcc
+
+$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/sbrk.c \
+    $(MEL_DIR)/kws_bare.c \
+    $(NNOM_SRCS_MEL) | $(BUILD_DIR)
+	$(CC) $(MEL_CFLAGS) -o $@ $^ $(MEL_LDFLAGS)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin
+	$(CROSS_COMPILE)size $@
+
+mel-compact: $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf
