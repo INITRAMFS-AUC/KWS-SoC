@@ -5,13 +5,13 @@
  *   Completion is detected by polling SWTRIG — the register auto-clears when
  *   the DMA's internal `done` signal fires.
  *
- * Test 4: PIRQ-triggered DMA — I2S FIFO → SRAM (CPU runs in parallel).
+ * Test 4: PIRQ-triggered DMA — I2S FIFO → SRAM, continuous mode (CPU runs in parallel).
  *   CTRL.TRIGGER[3:0] = 0001 arms the DMA on PIRQ[0] (= i2s_irq).
- *   When the I2S FIFO fills, i2s_irq asserts, the DMA bursts 8 words from the
- *   FIFO into SRAM.  Completion is detected via the DMA IRQ output (dmac_irq,
- *   IRQ 0) which is latched in the ICR register and stays asserted until SW
- *   writes 1 to ICR.done.  The CPU runs an LCG work loop concurrently with
- *   each burst to demonstrate non-blocking operation.
+ *   DMA is armed once and EN stays 1 throughout all T4_N_BATCHES bursts.
+ *   Each burst: i2s_irq asserts → DMA transfers 4 words → dmac_irq fires.
+ *   ISR: clears ICR, advances DADDR to next slot, leaves EN=1.
+ *   DMA auto-re-arms on the next i2s_irq with zero CPU re-arm gap,
+ *   eliminating the sample-drop window present in the per-batch approach.
  *
  * COUNT register semantics: COUNT = N-1 for N transfers.
  * Auto-increment encoding: 0=none, 1=+1 byte/step, 2=+2, 4=+4 (word/step).
@@ -46,10 +46,10 @@ static volatile uint32_t t3_src[8] = {
 };
 static volatile uint32_t t3_dst[8];
 
-/* ---- Test 4: PIRQ-triggered I2S capture ---- */
+/* ---- Test 4: PIRQ-triggered I2S capture (continuous) ---- */
 #define T4_N_BATCHES 16
-static volatile uint32_t t4_capture[8];  /* reused for every batch */
-static volatile int      t4_batch_done;
+static volatile uint32_t t4_capture[T4_N_BATCHES * 4];  /* one slot per burst */
+static volatile int      t4_batch_done;  /* counts completed bursts */
 static inline void      csr_set_mtvec(void (*h)(void)) { asm volatile ("csrw mtvec, %0" :: "r"((uintptr_t)h)); }
 static inline uintptr_t csr_get_mtvec(void)            { uintptr_t v; asm volatile ("csrr %0, mtvec" : "=r"(v)); return v; }
 static inline void      csr_meie_en(void)              { asm volatile ("csrs mie, %0"    :: "r"(1u << 11)); }
@@ -161,25 +161,33 @@ static void test3_large_copy(void)
     uart_printf("  --> %s\r\n\r\n", pass ? "PASS" : "FAIL");
 }
 
-/* ---- Test 4: PIRQ-triggered DMA — I2S FIFO → SRAM ---- */
+/* ---- Test 4: PIRQ-triggered DMA — I2S FIFO → SRAM, continuous ---- */
 
 /*
- * ISR for dmac_irq (IRQ 0).
- * Clear ICR before disabling EN so the IRQ line de-asserts before mret
- * restores MIE, preventing immediate re-entry.
+ * ISR for dmac_irq (IRQ 0) — continuous mode.
+ * Clear ICR, advance DADDR to the next batch slot, leave EN=1.
+ * DMA auto-re-arms on the next i2s_irq with no CPU re-arm gap.
+ * Only disables EN after the final burst.
  */
 static void __attribute__((interrupt("machine"))) dmac_isr(void)
 {
     *(volatile uint32_t *)(DMAC_BASE + DMAC_ICR_OFFS) = 1u;
-    MS_DMAC_enable(DMAC_BASE, 0);
-    t4_batch_done = 1;
+    int n = t4_batch_done + 1;
+    t4_batch_done = n;
+    if (n < T4_N_BATCHES) {
+        /* Point DMA at next slot — safe: DMA is IDLE, next PIRQ is ~1 ms away */
+        MS_DMAC_setDestinationAddr(DMAC_BASE, (int)(t4_capture + (uint32_t)n * 4u));
+        /* EN stays 1 → DMA re-arms automatically on next i2s_irq */
+    } else {
+        MS_DMAC_enable(DMAC_BASE, 0); /* all bursts done */
+    }
 }
 
 static void test4_pirq_i2s_dma(void)
 {
-    uart_puts("[Test 4] PIRQ-triggered DMA: I2S FIFO \xe2\x86\x92 SRAM (CPU works in parallel)\r\n");
-    uart_printf("  Capturing 0x%x batches x 8 words = 0x%x samples\r\n",
-                (uint32_t)T4_N_BATCHES, (uint32_t)(T4_N_BATCHES * 8));
+    uart_puts("[Test 4] PIRQ continuous DMA: I2S FIFO \xe2\x86\x92 SRAM (EN=1 throughout)\r\n");
+    uart_printf("  Capturing 0x%x bursts x 4 words = 0x%x samples\r\n",
+                (uint32_t)T4_N_BATCHES, (uint32_t)(T4_N_BATCHES * 4));
     uart_puts("  (Compare hex values against sim/debug_audio.hex)\r\n\r\n");
 
     /*
@@ -208,60 +216,47 @@ static void test4_pirq_i2s_dma(void)
     csr_meiea_dmac_en();
     csr_meie_en();
 
-    /* One-time DMA configuration — source, dest, count stay fixed across batches */
-    MS_DMAC_setControlReg(DMAC_BASE, (int)(ctrl_pirq & ~1u)); /* EN=0 */
+    /* Fill entire capture buffer with sentinels before arming */
+    for (int i = 0; i < T4_N_BATCHES * 4; i++) t4_capture[i] = 0x5A5A5A5Au;
+    t4_batch_done = 0;
+
+    /* Arm DMA once — EN stays 1 between bursts, ISR advances DADDR */
+    MS_DMAC_setControlReg(DMAC_BASE, (int)(ctrl_pirq & ~1u)); /* EN=0 while configuring */
     MS_DMAC_setSourceAddr(DMAC_BASE, (int)I2S_FIFO_REG);
-    MS_DMAC_setDestinationAddr(DMAC_BASE, (int)t4_capture);
-    MS_DMAC_setCount(DMAC_BASE, 7); /* COUNT=7 → 8 transfers */
+    MS_DMAC_setDestinationAddr(DMAC_BASE, (int)t4_capture);   /* first slot */
+    MS_DMAC_setCount(DMAC_BASE, 3);                            /* COUNT=3 → 4 transfers (matches I2S FIFO fill per IRQ) */
+    MS_DMAC_enable(DMAC_BASE, 1);                              /* EN=1, armed */
+    csr_mie_en();
 
-    int      pass            = 1;
-    uint32_t total_cpu_iters = 0;
-    uint32_t cpu_state       = 0xDEADBEEFu;
+    /* CPU work loop — runs concurrently with all DMA bursts */
+    uint32_t cpu_state = 0xDEADBEEFu;
+    uint32_t cpu_iters = 0;
+    while (t4_batch_done < T4_N_BATCHES) {
+        cpu_state = cpu_state * 1664525u + 1013904223u;
+        cpu_iters++;
+    }
+    csr_mie_dis();
 
+    /* Verify and print results */
+    int pass = 1;
     for (int batch = 0; batch < T4_N_BATCHES; batch++) {
-
-        /*
-         * MIE=0 during re-arm: prevents the ISR firing on a stale i2s_irq
-         * while sentinels are being written but the DMA is not yet armed.
-         */
-        for (int i = 0; i < 8; i++) t4_capture[i] = 0x5A5A5A5Au;
-        t4_batch_done = 0;
-
-        MS_DMAC_enable(DMAC_BASE, 1); /* EN=1 → DMA now armed on PIRQ */
-        csr_mie_en();
-
-        /*
-         * CPU work loop — runs concurrently with the DMA burst.
-         * The ISR fires between LCG iterations once `done` latches into ICR.
-         */
-        uint32_t batch_iters = 0;
-        while (!t4_batch_done) {
-            cpu_state = cpu_state * 1664525u + 1013904223u;
-            batch_iters++;
-        }
-
-        csr_mie_dis();
-        total_cpu_iters += batch_iters;
-
-        if (t4_capture[7] == 0x5A5A5A5Au) {
-            uart_printf("  Batch 0x%x: INCOMPLETE (DMA did not fill capture buffer)\r\n",
+        if (t4_capture[batch * 4 + 3] == 0x5A5A5A5Au) {
+            uart_printf("  Burst 0x%x: INCOMPLETE (DMA did not fill slot)\r\n",
                         (uint32_t)batch);
             pass = 0;
             break;
         }
-
-        uart_printf("  Batch 0x%x (samples 0x%x-0x%x)  cpu_iters=0x%x:\r\n",
+        uart_printf("  Burst 0x%x (samples 0x%x-0x%x):\r\n",
                     (uint32_t)batch,
-                    (uint32_t)(batch * 8),
-                    (uint32_t)(batch * 8 + 7),
-                    batch_iters);
-        for (int i = 0; i < 8; i++)
+                    (uint32_t)(batch * 4),
+                    (uint32_t)(batch * 4 + 3));
+        for (int i = 0; i < 4; i++)
             uart_printf("    [0x%x] 0x%x\r\n",
-                        (uint32_t)(batch * 8 + i), t4_capture[i]);
+                        (uint32_t)(batch * 4 + i), t4_capture[batch * 4 + i]);
     }
 
     uart_printf("  Total CPU work: 0x%x LCG iters, final state=0x%x\r\n",
-                total_cpu_iters, cpu_state);
+                cpu_iters, cpu_state);
 
     csr_meiea_dmac_dis();
     csr_meie_dis();
