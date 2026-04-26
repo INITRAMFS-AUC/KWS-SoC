@@ -104,7 +104,7 @@ parameter CSR_M_MANDATORY     = 1,
 parameter CSR_M_TRAP          = 1,
 
 // CSR_COUNTER: Include performance counters and Zicntr CSRs
-parameter CSR_COUNTER         = 0,
+parameter CSR_COUNTER         = 1,
 
 // U_MODE: Support the U (user) execution mode. In U mode, the core performs
 // unprivileged bus accesses, and software's access to CSRs is restricted.
