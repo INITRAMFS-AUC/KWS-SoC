@@ -19,6 +19,7 @@ XIP_DIR      = xip
 MALLOC_C_DIR = malloc/c
 MEMCPY_C_DIR = memcpy/c
 MODEL_C_DIR  = model
+STREAMING_MODEL_C_DIR = streaming_model
 NNOM_DIR     = ../third_party/nnom
 NNOM_INC_DIR = $(NNOM_DIR)/inc
 NNOM_PORT_DIR = $(NNOM_DIR)/port
@@ -70,8 +71,10 @@ SRAM_TARGETS = \
 	$(BUILD_DIR)/malloc_simple_test_sram.elf  $(BUILD_DIR)/malloc_simple_test_sram.dis  $(BUILD_DIR)/malloc_simple_test_sram.bin \
 	$(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_torture_test_sram.dis $(BUILD_DIR)/malloc_torture_test_sram.bin \
 	$(BUILD_DIR)/memcpy_simple_test_sram.elf  $(BUILD_DIR)/memcpy_simple_test_sram.dis  $(BUILD_DIR)/memcpy_simple_test_sram.bin \
-	# $(BUILD_DIR)/strided_s16_nodil_sram.elf   $(BUILD_DIR)/strided_s16_nodil_sram.dis   $(BUILD_DIR)/strided_s16_nodil_sram.bin
 	$(BUILD_DIR)/dma_test_sram.elf    $(BUILD_DIR)/dma_test_sram.dis    $(BUILD_DIR)/dma_test_sram.bin
+# SRAM model artifacts intentionally disabled:
+# $(BUILD_DIR)/strided_s16_nodil_sram.elf $(BUILD_DIR)/strided_s16_nodil_sram.dis $(BUILD_DIR)/strided_s16_nodil_sram.bin
+# $(BUILD_DIR)/streaming_model_sram.elf $(BUILD_DIR)/streaming_model_sram.dis $(BUILD_DIR)/streaming_model_sram.bin
 
 # *_xip: standalone workflow — `NO_JTAG=1 make sim FLASH=test/build/<test>_xip.bin`
 XIP_TARGETS = \
@@ -83,6 +86,7 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/malloc_torture_test_xip.elf $(BUILD_DIR)/malloc_torture_test_xip.dis $(BUILD_DIR)/malloc_torture_test_xip.bin \
 	$(BUILD_DIR)/memcpy_simple_test_xip.elf  $(BUILD_DIR)/memcpy_simple_test_xip.dis  $(BUILD_DIR)/memcpy_simple_test_xip.bin \
 	$(BUILD_DIR)/strided_s16_nodil_xip.elf   $(BUILD_DIR)/strided_s16_nodil_xip.dis   $(BUILD_DIR)/strided_s16_nodil_xip.bin \
+	$(BUILD_DIR)/streaming_model_xip.elf $(BUILD_DIR)/streaming_model_xip.dis $(BUILD_DIR)/streaming_model_xip.bin \
 	$(BUILD_DIR)/dma_test_xip.elf        $(BUILD_DIR)/dma_test_xip.dis        $(BUILD_DIR)/dma_test_xip.bin 
 
 ALL_TARGETS = $(SRAM_TARGETS) $(XIP_TARGETS)
@@ -112,6 +116,7 @@ malloc-torture: $(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_to
 memcpy: $(BUILD_DIR)/memcpy_simple_test_sram.elf $(BUILD_DIR)/memcpy_simple_test_sram.dis $(BUILD_DIR)/memcpy_simple_test_sram.bin \
 	$(BUILD_DIR)/memcpy_simple_test_xip.elf  $(BUILD_DIR)/memcpy_simple_test_xip.dis  $(BUILD_DIR)/memcpy_simple_test_xip.bin
 model-strided-s16-nodil: $(BUILD_DIR)/strided_s16_nodil_xip.elf  $(BUILD_DIR)/strided_s16_nodil_xip.dis  $(BUILD_DIR)/strided_s16_nodil_xip.bin
+model-streaming: $(BUILD_DIR)/streaming_model_xip.elf $(BUILD_DIR)/streaming_model_xip.dis $(BUILD_DIR)/streaming_model_xip.bin
 # SRAM model artifacts intentionally disabled:
 # $(BUILD_DIR)/strided_s16_nodil_sram.elf $(BUILD_DIR)/strided_s16_nodil_sram.dis $(BUILD_DIR)/strided_s16_nodil_sram.bin
 dma:    $(BUILD_DIR)/dma_test_sram.elf    $(BUILD_DIR)/dma_test_sram.dis    $(BUILD_DIR)/dma_test_sram.bin \
@@ -141,6 +146,9 @@ $(BUILD_DIR)/memcpy_simple_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/memcp
 $(BUILD_DIR)/strided_s16_nodil_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/strided_s16_nodil_main.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/malloc.o $(BUILD_DIR)/memcpy.o $(BUILD_DIR)/memset.o $(NNOM_OBJS)
 	$(MODEL_LINK) $(MODEL_SRAM_GCC_LDFLAGS) -o $@ $^ -lgcc
 
+# $(BUILD_DIR)/streaming_model_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/kws_bare_stream.o $(BUILD_DIR)/kws_stream_b.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/malloc.o $(BUILD_DIR)/memcpy.o $(BUILD_DIR)/memset.o $(NNOM_OBJS)
+# 	$(MODEL_LINK) $(MODEL_SRAM_GCC_LDFLAGS) -o $@ $^ -lgcc
+
 $(BUILD_DIR)/dma_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dma_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
@@ -167,6 +175,9 @@ $(BUILD_DIR)/memcpy_simple_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/memcpy
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/strided_s16_nodil_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/strided_s16_nodil_main.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/malloc.o $(BUILD_DIR)/memcpy.o $(BUILD_DIR)/memset.o $(NNOM_OBJS)
+	$(MODEL_LINK) $(MODEL_XIP_GCC_LDFLAGS) -o $@ $^ -lgcc
+
+$(BUILD_DIR)/streaming_model_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/kws_bare_stream.o $(BUILD_DIR)/kws_stream_b.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/malloc.o $(BUILD_DIR)/memcpy.o $(BUILD_DIR)/memset.o $(NNOM_OBJS)
 	$(MODEL_LINK) $(MODEL_XIP_GCC_LDFLAGS) -o $@ $^ -lgcc
 
 $(BUILD_DIR)/dma_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dma_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
@@ -206,6 +217,12 @@ $(BUILD_DIR)/memcpy_simple_test.o: $(MEMCPY_C_DIR)/simple_test.c $(ROOT_MAKEFILE
 $(BUILD_DIR)/strided_s16_nodil_main.o: $(MODEL_C_DIR)/strided_s16_nodil_main.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR) -o $@ $<
 
+$(BUILD_DIR)/kws_bare_stream.o: $(STREAMING_MODEL_C_DIR)/kws_bare_stream.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR) -I$(STREAMING_MODEL_C_DIR) -o $@ $<
+
+$(BUILD_DIR)/kws_stream_b.o: $(STREAMING_MODEL_C_DIR)/kws_stream_b.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR) -I$(STREAMING_MODEL_C_DIR) -I$(MODEL_C_DIR) -o $@ $<
+
 $(BUILD_DIR)/nnom_%.o: $(NNOM_DIR)/src/%.c $(ROOT_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR) -o $@ $<
@@ -238,7 +255,7 @@ clean:
 	rm -f $(COMMON_DIR)/*.d
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil xip-testbench
+.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming xip-testbench
 
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)
