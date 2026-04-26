@@ -186,9 +186,8 @@ static inline void csr_meiea_dmac_en(void) {
  *   bits 25:24  DTYPE    — 2=word
  *   bits 28:26  DAI      — dest auto-increment: 0=none, 4=+4B
  *
- * IRQ (dmac_irq) in PIRQ mode fires when: done && (fcount == 1).
- * Set fcount=1 to fire dmac_irq after exactly one burst (count+1 transfers).
- * fcount is decremented on each burst completion; dmac_irq fires on the last.
+ * IRQ (dmac_irq) fires on every completed burst (done pulse latched in ICR).
+ * ICR (offset 0x1C) must be cleared by SW (write 1 to bit 0) to de-assert IRQ.
  */
 typedef struct {
     volatile uint32_t control;
@@ -198,6 +197,7 @@ typedef struct {
     volatile uint32_t count;
     volatile uint32_t swtrig;
     volatile uint32_t fcount;
+    volatile uint32_t icr;
 } dmac_hw_t;
 
 #define DMAC_BASE  0x60000000UL
@@ -215,7 +215,6 @@ static void dma_arm(void) {
     DMAC->saddr   = I2S_FIFO_PA;
     DMAC->daddr   = (uint32_t)(uintptr_t)dma_batch;
     DMAC->count   = (uint32_t)(I2S_FIFO_DEPTH - 1); /* COUNT = N-1 for N transfers */
-    DMAC->fcount  = 1;                               /* dmac_irq after 1 burst */
     DMAC->control = DMAC_CTRL_I2S_PIRQ;              /* EN=1 — armed on PIRQ[0] */
 }
 
@@ -275,6 +274,7 @@ void __attribute__((interrupt("machine"))) kws_trap_handler(void) {
     }
 
     /* dmac_irq: DMA burst complete — dma_batch is fully populated */
+    DMAC->icr = 1u;   /* clear ICR latch so IRQ de-asserts before mret */
 
     /* Extract int8 Q7: upper byte of each left-justified 32-bit FIFO word */
     for (int i = 0; i < I2S_FIFO_DEPTH; i++) {

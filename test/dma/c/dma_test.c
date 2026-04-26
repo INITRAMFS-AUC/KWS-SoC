@@ -19,7 +19,7 @@
  * IRQ mapping (kws_soc .irq = {uart_irq, dmac_irq}):
  *   IRQ 0 = dmac_irq  → MEIEA group 0 bit 16
  *   IRQ 1 = uart_irq  → MEIEA group 0 bit 17
- */
+*/
 
 #include <stdint.h>
 #include "uart.h"
@@ -48,11 +48,8 @@ static volatile uint32_t t3_dst[8];
 
 /* ---- Test 4: PIRQ-triggered I2S capture ---- */
 #define T4_N_BATCHES 16
-
 static volatile uint32_t t4_capture[8];  /* reused for every batch */
 static volatile int      t4_batch_done;
-
-/* ---- RISC-V CSR helpers ---- */
 static inline void      csr_set_mtvec(void (*h)(void)) { asm volatile ("csrw mtvec, %0" :: "r"((uintptr_t)h)); }
 static inline uintptr_t csr_get_mtvec(void)            { uintptr_t v; asm volatile ("csrr %0, mtvec" : "=r"(v)); return v; }
 static inline void      csr_meie_en(void)              { asm volatile ("csrs mie, %0"    :: "r"(1u << 11)); }
