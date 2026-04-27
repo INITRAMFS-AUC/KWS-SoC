@@ -281,7 +281,7 @@ MEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
              -I$(MEL_DIR)
 
 MEL_LDFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
-              -nostartfiles -nodefaultlibs \
+              -nostartfiles \
               -Wl,-T,$(COMMON_DIR)/link.ld \
               -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES) \
               -Wl,--gc-sections \
