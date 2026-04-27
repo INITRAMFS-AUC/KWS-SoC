@@ -42,6 +42,7 @@ SRAM_TARGETS = \
 	$(BUILD_DIR)/inf_loop_sram.elf        $(BUILD_DIR)/inf_loop_sram.dis        $(BUILD_DIR)/inf_loop_sram.bin \
 	$(BUILD_DIR)/hello_world_sram.elf     $(BUILD_DIR)/hello_world_sram.dis     $(BUILD_DIR)/hello_world_sram.bin \
 	$(BUILD_DIR)/bridge_bug_test_sram.elf $(BUILD_DIR)/bridge_bug_test_sram.dis $(BUILD_DIR)/bridge_bug_test_sram.bin \
+	$(BUILD_DIR)/snooper_test_sram.elf    $(BUILD_DIR)/snooper_test_sram.dis    $(BUILD_DIR)/snooper_test_sram.bin \
 	$(BUILD_DIR)/readI2s_sram.elf         $(BUILD_DIR)/readI2s_sram.dis         $(BUILD_DIR)/readI2s_sram.bin
 
 # *_xip: standalone workflow — `NO_JTAG=1 make sim FLASH=test/build/<test>_xip.bin`
@@ -80,6 +81,9 @@ $(BUILD_DIR)/hello_world_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/hello_world.
 $(BUILD_DIR)/bridge_bug_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/bridge_bug_test.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
+$(BUILD_DIR)/snooper_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/snooper_test.o
+	$(LD) $(SRAM_LDFLAGS) -o $@ $^
+
 $(BUILD_DIR)/readI2s_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/readI2s.o $(BUILD_DIR)/uart.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
@@ -107,6 +111,9 @@ $(BUILD_DIR)/hello_world.o: $(UART_C_DIR)/hello_world.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
 
 $(BUILD_DIR)/bridge_bug_test.o: $(UART_C_DIR)/bridge_bug_test.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<
+
+$(BUILD_DIR)/snooper_test.o: $(UART_C_DIR)/snooper_test.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
 
 $(BUILD_DIR)/readI2s.o: $(I2S_C_DIR)/readI2s.c $(ROOT_MAKEFILE)
