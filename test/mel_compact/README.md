@@ -1,6 +1,6 @@
 # mel_compact_4blk_ch36 — 195M Cycle Baseline
 
-Reproduces the confirmed **195,486,216 cycle** inference result on the
+Reproduces the **~195–198M cycle** inference result on the
 Hazard3 RV32IMAC SoC Verilator simulation.
 
 | Parameter | Value |
@@ -12,9 +12,18 @@ Hazard3 RV32IMAC SoC Verilator simulation.
 | MULDIV_UNROLL | 1 (iterative multiplier) |
 | CSR_COUNTER | 1 (mcycle enabled) |
 | Accelerator | none |
-| Measured cycles | ~195,486,216 (±27 across 10 clips) |
-| Wall-clock @ 36 MHz | ~5.43 s per inference |
+| Measured cycles (original) | 195,486,216 (±27) — using `/opt/nnom` majianjia@4d1d8fc |
+| Measured cycles (this branch) | ~198,321,644 — using `third_party/nnom` INITRAMFS-AUC@733d72b |
+| Wall-clock @ 36 MHz | ~5.43–5.51 s per inference |
 | Test results | 8/10 correct (left→unknown, up→unknown) |
+
+> **NNoM version note:** The original 195M measurement used `/opt/nnom` (majianjia/nnom
+> commit `4d1d8fc`). This branch uses `third_party/nnom` (INITRAMFS-AUC/nnom fork,
+> commit `733d72b`). The ~2.8M cycle difference (~1.4%) is due to minor divergence
+> between the two NNoM versions. Layer implementations (conv2d, dense, etc.) are
+> functionally equivalent; exact binary identity is not guaranteed.
+> To reproduce the exact 195M figure, replace `third_party/nnom` with a checkout of
+> majianjia/nnom at `4d1d8fc` (see NNoM version note in Prerequisites).
 
 ---
 
@@ -40,6 +49,36 @@ identity is not guaranteed.
 To use the exact upstream version instead, replace `third_party/nnom`
 with a checkout of `majianjia/nnom` at commit `4d1d8fc`.
 
+### Submodule SSH workaround
+
+The Hazard3 submodule (and its nested submodules) use SSH URLs
+(`git@github.com:...`). If you do not have an SSH key configured for
+GitHub, `git submodule update --init --recursive` will fail with a
+permission error.
+
+Override to HTTPS before running the recursive init:
+
+```bash
+# After cloning KWS-SoC (step 1 below), run these before step 1's submodule init:
+git config submodule.Hazard3.url https://github.com/Wren6991/Hazard3.git
+git config submodule.peris/i2s.url https://github.com/INITRAMFS-AUC/peris.git
+git submodule update --init Hazard3 peris/i2s
+
+# Then override Hazard3's own nested submodules:
+cd Hazard3
+git config submodule.example_soc/libfpga.url https://github.com/Wren6991/libfpga.git
+git config submodule.scripts.url https://github.com/Wren6991/picorv32-scripts.git
+git config submodule.test/formal/riscv-formal/riscv-formal.url https://github.com/YosysHQ/riscv-formal.git
+git config submodule.test/sim/embench/embench-iot.url https://github.com/embench/embench-iot.git
+git config submodule.test/sim/riscv-compliance/riscv-arch-test.url https://github.com/riscv-non-isa/riscv-arch-test.git
+git config submodule.test/sim/riscv-tests/riscv-tests.url https://github.com/riscv-software-src/riscv-tests.git
+git submodule update --init --recursive
+cd ..
+
+# Finally, init the NNoM submodule:
+git submodule update --init --force third_party/nnom
+```
+
 ---
 
 ## Steps to reproduce
@@ -52,6 +91,9 @@ cd KWS-SoC
 git checkout nnom-195m-baseline
 git submodule update --init --recursive
 ```
+
+> **No SSH key?** See the "Submodule SSH workaround" section in Prerequisites above
+> and apply the HTTPS overrides before running the recursive init.
 
 ### 2. Build the firmware
 
