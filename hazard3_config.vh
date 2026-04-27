@@ -192,21 +192,21 @@ parameter REDUCED_BYPASS      = 0,
 
 // MULDIV_UNROLL: Bits per clock for multiply/divide circuit, if present. Must
 // be a power of 2.
-parameter MULDIV_UNROLL       = 1,
+parameter MULDIV_UNROLL       = 32,
 
 // MUL_FAST: Use single-cycle multiply circuit for MUL instructions, retiring
 // to stage 3. The sequential multiply/divide circuit is still used for MULH*
-parameter MUL_FAST            = 0,
+parameter MUL_FAST            = 1,
 
 // MUL_FASTER: Retire fast multiply results to stage 2 instead of stage 3.
 // Throughput is the same, but latency is reduced from 2 cycles to 1 cycle.
 // Requires: MUL_FAST.
-parameter MUL_FASTER          = 0,
+parameter MUL_FASTER          = 1,
 
 // MULH_FAST: extend the fast multiply circuit to also cover MULH*, and remove
 // the multiply functionality from the sequential multiply/divide circuit.
 // Requires: MUL_FAST
-parameter MULH_FAST           = 0,
+parameter MULH_FAST           = 1,
 
 // FAST_BRANCHCMP: Instantiate a separate comparator (eq/lt/ltu) for branch
 // comparisons, rather than using the ALU. Improves fetch address delay,
