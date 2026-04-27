@@ -1,36 +1,39 @@
-// Snooper test: arms the bus_snooper at 0x4000_C000, runs a short
-// clean/buggy alternating pattern of UART_TX writes, halts via ebreak so
-// a host can read back the 16-entry ring buffer over JTAG SBA.
+// Snooper test + UART self-dump.
 //
-// What to expect on a working build:
-//   - bridge_hwdata == m_wdata == the actual char (0x55 / 0x42 / ...).
-//   - xm_rs2 == 5'ha4 nibble (or whichever rs2 reg gcc picks for the SW).
-//   - mw_rd == 5'ha5 nibble (or whichever rd reg gcc picks for the LBU).
+// Runs the same clean/buggy-write pattern as bridge_bug_test, with the
+// bus_snooper at 0x4000_C000 armed, then disables the snooper and streams
+// the 16 ring entries over UART as hex so the same firmware can be run in
+// Verilator AND on FPGA and the captures compared byte-for-byte.
 //
-// What to expect on the broken build (FPGA, 2-port + tight LBU→SW):
-//   - For buggy_write entries, bridge_hwdata low byte == 0xD0 (corrupted),
-//     while m_wdata low byte == the intended char.
-//   - mw_rd != xm_rs2 (bypass condition false), m_wdata == xm_result
-//     (which for a load is the load's address — leaks 0xD0 = (s0+offs)[7:0]).
+// Output format (after the run):
+//   "SNOOP\r\n"
+//   16 lines, one per entry, each: 8 hex words concatenated + "\r\n"
+//     word offsets within an entry:
+//       +0x00 cycle
+//       +0x04 addr_ctrl (bridge / dport / aphq / xm_memop / m_bus_stall)
+//       +0x08 bridge_hwdata
+//       +0x0C dbg_m_wdata
+//       +0x10 {mw_rd, xm_rs2}
+//       +0x14 dbg_xm_result
+//       +0x18 dbg_mw_result
+//       +0x1C dport_haddr
+//   "END\r\n"
 //
-// Read out from GDB after ebreak:
-//   x/8wx 0x4000C000     # entry 0 (cycle, addr_ctrl, hwdata, m_wdata, idx, xm_result, mw_result, _)
-//   x/8wx 0x4000C020     # entry 1
-//   ...
-//   x/wx  0x4000C204     # STAT  = {head[3:0]<<8 | count[4:0]}
+// All UART writes use a SAFE pattern (FSTAT-poll then asm-block SW with NOPs
+// between any LBU and the SW to UART_TX) so the dump itself cannot trigger
+// the d-port → bridge double-aphase symptom we're investigating.
 
 #include <stdint.h>
 
-#define UART_BASE  0x40004000
-#define UART_CSR   (*(volatile uint32_t *)(UART_BASE + 0x00))
-#define UART_DIV   (*(volatile uint32_t *)(UART_BASE + 0x04))
-#define UART_TX    (*(volatile uint32_t *)(UART_BASE + 0x0C))
+#define UART_BASE   0x40004000
+#define UART_CSR    (*(volatile uint32_t *)(UART_BASE + 0x00))
+#define UART_DIV    (*(volatile uint32_t *)(UART_BASE + 0x04))
+#define UART_FSTAT  (*(volatile uint32_t *)(UART_BASE + 0x08))
 #define UART_CSR_EN (1 << 0)
+#define UART_FSTAT_TXFULL (1 << 8)
 
 #define SNOOP_BASE  0x4000C000
 #define SNOOP_CTRL  (*(volatile uint32_t *)(SNOOP_BASE + 0x200))
-#define SNOOP_STAT  (*(volatile uint32_t *)(SNOOP_BASE + 0x204))
-#define SNOOP_CYCLE (*(volatile uint32_t *)(SNOOP_BASE + 0x208))
 #define SNOOP_RESET (*(volatile uint32_t *)(SNOOP_BASE + 0x20C))
 
 #ifndef CLK_MHZ
@@ -48,16 +51,16 @@ static void uart_init(void) {
     UART_CSR |= UART_CSR_EN;
 }
 
-// Same race trigger as bridge_bug_test.c: heavy d-port loop, then a tight
-// LBU of c, then SW UART_TX = c with no register ops in between.
+// ---- The trigger pattern (same as bridge_bug_test). -----------------------
+
+// Tight LBU→SW to UART_TX. Compiler emits exactly the failing instruction
+// sequence (lbu c, [stack]; sw c, 0x4000_400c) with no register ops between.
 __attribute__((noinline))
 static void buggy_write(char c) {
     for (volatile uint32_t i = 0; i < 200000; i++);
-    UART_TX = c;
+    *(volatile uint32_t *)(UART_BASE + 0x0C) = (uint32_t)(unsigned char)c;
 }
 
-// Same control as bridge_bug_test.c: forces NOPs (in asm) between the
-// load of c and the SW to UART_TX, hiding the race.
 __attribute__((noinline))
 static void clean_write(char c) {
     for (volatile uint32_t i = 0; i < 200000; i++);
@@ -72,16 +75,52 @@ static void clean_write(char c) {
     );
 }
 
+// ---- The safe TX path used by the dump. -----------------------------------
+// FSTAT-poll (load + branch only — no SW), then an asm block that places NOPs
+// before the LBU/SW pair, the address constant materialised in t1 from
+// immediates, and a SW to UART_TX. Compiler can't squeeze a tight LBU→SW
+// across this boundary.
+
+__attribute__((noinline))
+static void uart_putc_safe(unsigned char c) {
+    while (UART_FSTAT & UART_FSTAT_TXFULL);
+    asm volatile (
+        "nop\nnop\nnop\nnop\n"
+        "lui  t1, 0x40004\n"
+        "addi t1, t1, 12\n"
+        "sw   %0, 0(t1)\n"
+        :
+        : "r" ((uint32_t)c)
+        : "t1", "memory"
+    );
+}
+
+static void put_str(const char *s) {
+    while (*s) uart_putc_safe((unsigned char)*s++);
+}
+
+static void put_hex32(uint32_t v) {
+    static const char hex[] = "0123456789abcdef";
+    int i;
+    for (i = 28; i >= 0; i -= 4)
+        uart_putc_safe((unsigned char)hex[(v >> i) & 0xf]);
+}
+
+// ---------------------------------------------------------------------------
+
 int main(void) {
     uart_init();
 
-    // Arm the snooper *after* uart_init so the DIV / CSR writes don't
-    // burn ring slots. Clear any prior state, then enable.
+    // Banner before the test so the receiver can sync (also confirms UART
+    // is alive on this build).
+    put_str("BEGIN\r\n");
+
+    // Arm snooper *after* uart_init / banner so the DIV / CSR / banner UART
+    // writes don't burn ring slots.
     SNOOP_RESET = 1;
     SNOOP_CTRL  = 1;
 
-    // 8 transactions: alternating clean/buggy. Fits comfortably inside the
-    // 16-entry ring with room for whatever the compiler emits between calls.
+    // The trigger pattern. 8 transactions: alternating clean/buggy.
     clean_write(0x55);
     buggy_write(0x42);
     clean_write(0x55);
@@ -91,8 +130,21 @@ int main(void) {
     clean_write(0x55);
     buggy_write(0x42);
 
-    // Stop capturing so the ring freezes; GDB reads it out from here.
+    // Freeze the ring so the dump reads stable values.
     SNOOP_CTRL = 0;
+
+    // Dump: 16 entries, 8 words per entry, hex packed, no separators within
+    // an entry — keeps the per-entry line a constant 8*8 = 64 hex chars +
+    // CRLF, easy to parse.
+    put_str("\r\nSNOOP\r\n");
+    for (int e = 0; e < 16; e++) {
+        uint32_t base = SNOOP_BASE + (uint32_t)(e * 32);
+        for (int w = 0; w < 8; w++) {
+            put_hex32(*(volatile uint32_t *)(base + (uint32_t)(w * 4)));
+        }
+        put_str("\r\n");
+    }
+    put_str("END\r\n");
 
     asm volatile ("ebreak");
     while (1);
