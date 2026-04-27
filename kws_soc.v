@@ -272,6 +272,13 @@ module kws_soc #(
   wire              timer_irq;
   wire              i2s_irq;
 
+  // Snooper taps from CPU
+  wire [4:0]        snoop_xm_rs2;
+  wire [4:0]        snoop_mw_rd;
+  wire [W_DATA-1:0] snoop_xm_result;
+  wire [W_DATA-1:0] snoop_mw_result;
+  wire [W_DATA-1:0] snoop_m_wdata;
+
   hazard3_cpu_2port #(
       // These must have the values given here for you to end up with a useful SoC:
       .RESET_VECTOR       (RESET_VECTOR),
@@ -399,7 +406,15 @@ module kws_soc #(
 
       // Identification CSR values (formerly parameters MHARTID_VAL / MIMPID_VAL).
       .mhartid_val (32'h0),
-      .eco_version (4'h0)
+      .eco_version (4'h0),
+
+      // Bus-snooper taps (M-stage forwarding observability for the 2-port
+      // d-port → APB bridge HWDATA corruption hunt; see docs/2port_dport_bridge_bug.md).
+      .dbg_xm_rs2    (snoop_xm_rs2),
+      .dbg_mw_rd     (snoop_mw_rd),
+      .dbg_xm_result (snoop_xm_result),
+      .dbg_mw_result (snoop_mw_result),
+      .dbg_m_wdata   (snoop_m_wdata)
   );
 
 
@@ -411,6 +426,7 @@ module kws_soc #(
   // - System timer at.. 0x4000_0000
   // - UART at.......... 0x4000_4000
   // - I2S at........... 0x4000_8000
+  // - Bus snooper at... 0x4000_C000
   // - XIP Flash at..... 0x8000_0000
   //
   // Masters (N_MASTERS=2):
@@ -555,6 +571,15 @@ module kws_soc #(
   wire        i2s_pready;
   wire        i2s_pslverr;
 
+  wire        snooper_psel;
+  wire        snooper_penable;
+  wire        snooper_pwrite;
+  wire [15:0] snooper_paddr;
+  wire [31:0] snooper_pwdata;
+  wire [31:0] snooper_prdata;
+  wire        snooper_pready;
+  wire        snooper_pslverr;
+
   ahbl_to_apb apb_bridge_u (
       .clk  (clk),
       .rst_n(rst_n),
@@ -583,10 +608,12 @@ module kws_soc #(
   );
 
   apb_splitter #(
-      .N_SLAVES (3),
+      .N_SLAVES (4),
       .W_ADDR   (16),
-      .ADDR_MAP (48'h4000_8000_0000),
-      .ADDR_MASK(48'hc000_c000_c000)
+      // Slot order (LSB-first in concat): timer, i2s, uart, snooper.
+      // Timer @ 0x0000, I2S @ 0x8000, UART @ 0x4000, Snooper @ 0xC000.
+      .ADDR_MAP (64'hC000_4000_8000_0000),
+      .ADDR_MASK(64'hc000_c000_c000_c000)
   ) inst_apb_splitter (
       .apbs_paddr   (bridge_paddr),
       .apbs_psel    (bridge_psel),
@@ -597,14 +624,14 @@ module kws_soc #(
       .apbs_prdata  (bridge_prdata),
       .apbs_pslverr (bridge_pslverr),
 
-      .apbm_paddr   ({uart_paddr,   i2s_paddr,   timer_paddr  }),
-      .apbm_psel    ({uart_psel,    i2s_psel,    timer_psel   }),
-      .apbm_penable ({uart_penable, i2s_penable, timer_penable}),
-      .apbm_pwrite  ({uart_pwrite,  i2s_pwrite,  timer_pwrite }),
-      .apbm_pwdata  ({uart_pwdata,  i2s_pwdata,  timer_pwdata }),
-      .apbm_pready  ({uart_pready,  i2s_pready,  timer_pready }),
-      .apbm_prdata  ({uart_prdata,  i2s_prdata,  timer_prdata }),
-      .apbm_pslverr ({uart_pslverr, i2s_pslverr, timer_pslverr})
+      .apbm_paddr   ({snooper_paddr,   uart_paddr,   i2s_paddr,   timer_paddr  }),
+      .apbm_psel    ({snooper_psel,    uart_psel,    i2s_psel,    timer_psel   }),
+      .apbm_penable ({snooper_penable, uart_penable, i2s_penable, timer_penable}),
+      .apbm_pwrite  ({snooper_pwrite,  uart_pwrite,  i2s_pwrite,  timer_pwrite }),
+      .apbm_pwdata  ({snooper_pwdata,  uart_pwdata,  i2s_pwdata,  timer_pwdata }),
+      .apbm_pready  ({snooper_pready,  uart_pready,  i2s_pready,  timer_pready }),
+      .apbm_prdata  ({snooper_prdata,  uart_prdata,  i2s_prdata,  timer_prdata }),
+      .apbm_pslverr ({snooper_pslverr, uart_pslverr, i2s_pslverr, timer_pslverr})
   );
 
   // ----------------------------------------------------------------------------
@@ -700,6 +727,40 @@ module kws_soc #(
       .i2s_irq      (i2s_irq)
   );
 
+
+  // ----------------------------------------------------------------------------
+  // Bus snooper (debug). Snoops the AHB bridge interface on the d-port path
+  // and the CPU's M-stage forwarding signals; readable over APB at 0x4000_C000.
+  // See peris/snooper/bus_snooper.v for the register map.
+
+  bus_snooper #(
+      .W_DATA   (W_DATA),
+      .N_ENTRIES(16)
+  ) snooper_u (
+      .clk  (clk),
+      .rst_n(rst_n),
+
+      .apbs_psel    (snooper_psel),
+      .apbs_penable (snooper_penable),
+      .apbs_pwrite  (snooper_pwrite),
+      .apbs_paddr   (snooper_paddr),
+      .apbs_pwdata  (snooper_pwdata),
+      .apbs_prdata  (snooper_prdata),
+      .apbs_pready  (snooper_pready),
+      .apbs_pslverr (snooper_pslverr),
+
+      .bridge_haddr  (bridge_haddr[15:0]),
+      .bridge_hwrite (bridge_hwrite),
+      .bridge_htrans (bridge_htrans),
+      .bridge_hready (bridge_hready),
+      .bridge_hwdata (bridge_hwdata),
+
+      .dbg_xm_rs2    (snoop_xm_rs2),
+      .dbg_mw_rd     (snoop_mw_rd),
+      .dbg_xm_result (snoop_xm_result),
+      .dbg_mw_result (snoop_mw_result),
+      .dbg_m_wdata   (snoop_m_wdata)
+  );
 
   // Microsecond timebase for timer
 
