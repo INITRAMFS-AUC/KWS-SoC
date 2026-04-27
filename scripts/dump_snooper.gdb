@@ -14,8 +14,9 @@ define dump_snooper
   set $head  = ($stat >> 8) & 0xf
   set $cycle = *(unsigned int *)($base + 0x208)
   printf "snooper: count=%u head=%u live_cycle=%u\n", $count, $head, $cycle
-  printf "%-3s %-10s %-6s %-2s %-10s %-10s %-3s %-3s %-10s %-10s\n", \
-         "i", "cycle", "addr", "wr", "hwdata", "m_wdata", "rs2", "rd", "xm_res", "mw_res"
+  printf "%-3s %-10s %-12s %-12s %-2s %-10s %-10s %-3s %-3s %-10s %-10s\n", \
+         "i", "cycle", "bridge_addr", "dport_addr", "wr", "hwdata", "m_wdata", \
+         "rs2", "rd", "xm_res", "mw_res"
 
   set $i = 0
   while $i < 16
@@ -27,16 +28,31 @@ define dump_snooper
     set $idx      = *(unsigned int *)($e + 0x10)
     set $xmres    = *(unsigned int *)($e + 0x14)
     set $mwres    = *(unsigned int *)($e + 0x18)
+    set $dport_a  = *(unsigned int *)($e + 0x1C)
 
-    set $haddr  = $addrctrl & 0xffff
-    set $hwrite = ($addrctrl >> 16) & 1
-    set $rs2    = $idx & 0x1f
-    set $rd     = ($idx >> 8) & 0x1f
+    set $bridge_haddr = $addrctrl & 0xffff
+    set $bridge_wr    = ($addrctrl >> 16) & 1
+    set $bridge_trans = ($addrctrl >> 17) & 3
+    set $dport_wr     = ($addrctrl >> 19) & 1
+    set $dport_trans  = ($addrctrl >> 20) & 3
+    set $rs2 = $idx & 0x1f
+    set $rd  = ($idx >> 8) & 0x1f
 
-    printf "%2d  %-10u 0x%04x %d  0x%08x 0x%08x  %2u  %2u  0x%08x 0x%08x", \
-           $i, $cyc, $haddr, $hwrite, $hwdata, $mwdata, $rs2, $rd, $xmres, $mwres
-    if ($hwrite == 1) && (($hwdata & 0xff) != ($mwdata & 0xff))
-      printf "   <- HWDATA != M_WDATA (low byte: 0x%02x vs 0x%02x)", \
+    printf "%2d  %-10u 0x%04x       0x%08x  %d  0x%08x 0x%08x  %2u  %2u  0x%08x 0x%08x", \
+           $i, $cyc, $bridge_haddr, $dport_a, $bridge_wr, $hwdata, $mwdata, \
+           $rs2, $rd, $xmres, $mwres
+    set $note_count = 0
+    if ($bridge_haddr != ($dport_a & 0xffff))
+      printf "   <- ROUTING: bridge=%04x vs dport=%08x", $bridge_haddr, $dport_a
+      set $note_count = $note_count + 1
+    end
+    if ($bridge_wr == 1) && (($hwdata & 0xff) != ($mwdata & 0xff))
+      if $note_count == 0
+        printf "   <-"
+      else
+        printf " ;"
+      end
+      printf " HWDATA: bridge=%02x vs m_wdata=%02x", \
              ($hwdata & 0xff), ($mwdata & 0xff)
     end
     printf "\n"

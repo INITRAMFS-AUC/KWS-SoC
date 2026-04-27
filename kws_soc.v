@@ -755,6 +755,13 @@ module kws_soc #(
       .bridge_hready (bridge_hready),
       .bridge_hwdata (bridge_hwdata),
 
+      // CPU d-port aphase taps (between hazard3_cpu_2port and the crossbar).
+      // bridge_haddr above is what the crossbar drives into the bridge slave;
+      // d_haddr here is what the CPU itself emitted in the same aphase.
+      .dport_haddr   (d_haddr),
+      .dport_hwrite  (d_hwrite),
+      .dport_htrans  (d_htrans),
+
       .dbg_xm_rs2    (snoop_xm_rs2),
       .dbg_mw_rd     (snoop_mw_rd),
       .dbg_xm_result (snoop_xm_result),
