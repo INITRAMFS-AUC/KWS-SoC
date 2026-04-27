@@ -23,9 +23,13 @@ ROOT_DIR  := $(shell pwd)
 ## SIM
 SIM_DIR	:= $(ROOT_DIR)/sim
 
-# Use listfiles script to generate file list from .f file
-FILE_LIST			:= $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
-FILE_LIST_VH 	:= $(shell python3 $(SCRIPTS)/listfiles -f flat --auto-vh $(DOTF))
+# Use a project-local listfiles script (kept in scripts/, not the Hazard3
+# submodule). Upstream's listfiles dropped the `--auto-vh` flag we rely on
+# for adding `include directories to Quartus's search path; vendoring the
+# old version here keeps us decoupled from upstream Hazard3 churn.
+LISTFILES		:= $(ROOT_DIR)/scripts/listfiles
+FILE_LIST		:= $(shell python3 $(LISTFILES) -f flat $(DOTF))
+FILE_LIST_VH 	:= $(shell python3 $(LISTFILES) -f flat --auto-vh $(DOTF))
 
 # FPGA device family and party, set by env shell with defaults being the de-10 standard
 FPGA_FAMILY ?= "Cyclone V"
