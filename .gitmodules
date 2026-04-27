@@ -13,3 +13,6 @@
 [submodule "third_party/nnom"]
 	path = third_party/nnom
 	url = https://github.com/INITRAMFS-AUC/nnom.git
+[submodule "peris/MS_DMAC_AHBL"]
+	path = peris/MS_DMAC_AHBL
+	url = git@github.com:INITRAMFS-AUC/MS_DMAC_AHBL.git
