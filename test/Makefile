@@ -50,6 +50,7 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/hello_world_xip.elf     $(BUILD_DIR)/hello_world_xip.dis     $(BUILD_DIR)/hello_world_xip.bin \
 	$(BUILD_DIR)/readI2s_xip.elf         $(BUILD_DIR)/readI2s_xip.dis         $(BUILD_DIR)/readI2s_xip.bin \
 	$(BUILD_DIR)/flash_read_test_xip.elf $(BUILD_DIR)/flash_read_test_xip.dis $(BUILD_DIR)/flash_read_test_xip.bin \
+	$(BUILD_DIR)/snooper_test_xip.elf    $(BUILD_DIR)/snooper_test_xip.dis    $(BUILD_DIR)/snooper_test_xip.bin \
 	$(BUILD_DIR)/tests_xip.elf           $(BUILD_DIR)/tests_xip.dis           $(BUILD_DIR)/tests_xip.bin
 
 ALL_TARGETS = $(SRAM_TARGETS) $(XIP_TARGETS)
@@ -95,6 +96,9 @@ $(BUILD_DIR)/readI2s_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/readI2s.o $(BUILD
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/flash_read_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/flash_read_test.o
+	$(LD) $(XIP_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/snooper_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/snooper_test.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/tests_xip.elf: $(BUILD_DIR)/tests.o
