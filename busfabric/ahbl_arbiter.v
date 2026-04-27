@@ -28,12 +28,14 @@
 
 // TODO: no burst support!
 
+`default_nettype none
 
 module ahbl_arbiter #(
-	parameter N_PORTS = 2,
-	parameter W_ADDR = 32,
-	parameter W_DATA = 32,
-	parameter CONN_MASK = {N_PORTS{1'b1}}
+	parameter N_PORTS          = 2,
+	parameter W_ADDR           = 32,
+	parameter W_DATA           = 32,
+	parameter CONN_MASK        = {N_PORTS{1'b1}},
+	parameter FAIR_ARBITRATION = 0
 ) (
 	// Global signals
 	input wire                       clk,
@@ -43,13 +45,16 @@ module ahbl_arbiter #(
 	input  wire [N_PORTS-1:0]        src_hready,
 	output wire [N_PORTS-1:0]        src_hready_resp,
 	output wire [N_PORTS-1:0]        src_hresp,
+	output wire [N_PORTS-1:0]        src_hexokay,
 	input  wire [N_PORTS*W_ADDR-1:0] src_haddr,
 	input  wire [N_PORTS-1:0]        src_hwrite,
 	input  wire [N_PORTS*2-1:0]      src_htrans,
 	input  wire [N_PORTS*3-1:0]      src_hsize,
 	input  wire [N_PORTS*3-1:0]      src_hburst,
 	input  wire [N_PORTS*4-1:0]      src_hprot,
+	input  wire [N_PORTS*8-1:0]      src_hmaster,
 	input  wire [N_PORTS-1:0]        src_hmastlock,
+	input  wire [N_PORTS-1:0]        src_hexcl,
 	input  wire [N_PORTS*W_DATA-1:0] src_hwdata,
 	output wire [N_PORTS*W_DATA-1:0] src_hrdata,
 
@@ -57,13 +62,16 @@ module ahbl_arbiter #(
 	output wire                      dst_hready,
 	input  wire                      dst_hready_resp,
 	input  wire                      dst_hresp,
+	input  wire                      dst_hexokay,
 	output wire [W_ADDR-1:0]         dst_haddr,
 	output wire                      dst_hwrite,
 	output wire [1:0]                dst_htrans,
 	output wire [2:0]                dst_hsize,
 	output wire [2:0]                dst_hburst,
 	output wire [3:0]                dst_hprot,
+	output wire [7:0]                dst_hmaster,
 	output wire                      dst_hmastlock,
+	output wire                      dst_hexcl,
 	output wire [W_DATA-1:0]         dst_hwdata,
 	input  wire [W_DATA-1:0]         dst_hrdata
 );
@@ -79,7 +87,9 @@ reg [1:0]                buf_htrans     [0:N_PORTS-1];
 reg [2:0]                buf_hsize      [0:N_PORTS-1];
 reg [2:0]                buf_hburst     [0:N_PORTS-1];
 reg [3:0]                buf_hprot      [0:N_PORTS-1];
+reg [7:0]                buf_hmaster    [0:N_PORTS-1];
 reg                      buf_hmastlock  [0:N_PORTS-1];
+reg                      buf_hexcl      [0:N_PORTS-1];
 
 reg [N_PORTS*W_ADDR-1:0] actual_haddr;
 reg [N_PORTS-1:0]        actual_hwrite;
@@ -87,7 +97,10 @@ reg [N_PORTS*2-1:0]      actual_htrans;
 reg [N_PORTS*3-1:0]      actual_hsize;
 reg [N_PORTS*3-1:0]      actual_hburst;
 reg [N_PORTS*4-1:0]      actual_hprot;
+reg [N_PORTS*8-1:0]      actual_hmaster;
 reg [N_PORTS-1:0]        actual_hmastlock;
+reg [N_PORTS-1:0]        actual_hexcl;
+
 
 always @ (*) begin
 	for (i = 0; i < N_PORTS; i = i + 1) begin
@@ -98,7 +111,9 @@ always @ (*) begin
 			actual_hsize     [i * 3 +: 3]           = buf_hsize     [i];
 			actual_hburst    [i * 3 +: 3]           = buf_hburst    [i];
 			actual_hprot     [i * 4 +: 4]           = buf_hprot     [i];
+			actual_hmaster   [i * 8 +: 8]           = buf_hmaster   [i];
 			actual_hmastlock [i]                    = buf_hmastlock [i];
+			actual_hexcl     [i]                    = buf_hexcl     [i];
 		end else begin
 			actual_haddr     [i * W_ADDR +: W_ADDR] = src_haddr     [i * W_ADDR +: W_ADDR];
 			actual_hwrite    [i]                    = src_hwrite    [i];
@@ -106,7 +121,9 @@ always @ (*) begin
 			actual_hsize     [i * 3 +: 3]           = src_hsize     [i * 3 +: 3];
 			actual_hburst    [i * 3 +: 3]           = src_hburst    [i * 3 +: 3];
 			actual_hprot     [i * 4 +: 4]           = src_hprot     [i * 4 +: 4];
+			actual_hmaster   [i * 8 +: 8]           = src_hmaster   [i * 8 +: 8];
 			actual_hmastlock [i]                    = src_hmastlock [i];
+			actual_hexcl     [i]                    = src_hexcl     [i];
 		end
 	end
 end
@@ -123,12 +140,44 @@ always @ (*) begin
 	end
 end
 
-onehot_priority #(
-	.W_INPUT(N_PORTS)
-) arb_priority (
-	.in(mast_req_a),
-	.out(mast_gnt_a)
-);
+generate
+if (FAIR_ARBITRATION) begin: fair_priority
+
+	// Give a golden ticket to each request slot for one transfer at a time.
+	// If the golden request is present, it's boosted over all others. This
+	// has only one useful property: all requests are eventually served.
+	reg [N_PORTS-1:0] golden_ticket;
+	always @ (posedge clk or negedge rst_n) begin
+		if (!rst_n) begin
+			golden_ticket <= {{N_PORTS-1{1'b0}}, 1'b1};
+		end else if (dst_hready_resp) begin
+			golden_ticket <= {golden_ticket[N_PORTS-2:0], golden_ticket[N_PORTS-1]};
+		end
+	end
+
+	wire [2*N_PORTS-1:0] req_full = {mast_req_a, mast_req_a & golden_ticket};
+	wire [2*N_PORTS-1:0] gnt_full;
+
+	onehot_priority #(
+		.W_INPUT(2 * N_PORTS)
+	) arb_priority (
+		.in  (req_full),
+		.out (gnt_full)
+	);
+
+	assign mast_gnt_a = gnt_full[0 +: N_PORTS] | gnt_full[N_PORTS +: N_PORTS];
+
+end else begin: strict_priority
+
+	onehot_priority #(
+		.W_INPUT(N_PORTS)
+	) arb_priority (
+		.in  (mast_req_a),
+		.out (mast_gnt_a)
+	);
+
+end
+endgenerate
 
 // AHB State Machine
 
@@ -148,8 +197,10 @@ always @ (posedge clk or negedge rst_n) begin
 			buf_hwrite[i]    <= 1'b0;
 			buf_hsize[i]     <= 3'h0;
 			buf_hburst[i]    <= 3'h0;
-			buf_hprot[i]     <= 3'h0;
+			buf_hprot[i]     <= 4'h0;
+			buf_hmaster[i]   <= 8'h0;
 			buf_hmastlock[i] <= 1'b0;
+			buf_hexcl[i]     <= 1'b0;
 		end
 	end else begin
 		if (dst_hready) begin
@@ -165,7 +216,9 @@ always @ (posedge clk or negedge rst_n) begin
 				buf_hsize    [i] <= src_hsize    [i * 3 +: 3];
 				buf_hburst   [i] <= src_hburst   [i * 3 +: 3];
 				buf_hprot    [i] <= src_hprot    [i * 4 +: 4];
+				buf_hmaster  [i] <= src_hmaster  [i * 8 +: 8];
 				buf_hmastlock[i] <= src_hmastlock[i];
+				buf_hexcl    [i] <= src_hexcl    [i];
 			end
 		end
 	end
@@ -182,6 +235,7 @@ wire [N_PORTS-1:0] mast_in_dphase = buf_valid | mast_gnt_d;
 // - the master is in data phase with both arbiter and slave, and slave is ready
 assign src_hready_resp = ~mast_in_dphase | (mast_gnt_d & {N_PORTS{dst_hready_resp}});
 assign src_hresp = mast_gnt_d & {N_PORTS{dst_hresp}};
+assign src_hexokay = mast_gnt_d & {N_PORTS{dst_hexokay}};
 assign src_hrdata = {N_PORTS{dst_hrdata}};
 
 onehot_mux #(
@@ -250,12 +304,30 @@ onehot_mux #(
 );
 
 onehot_mux #(
+	.W_INPUT(8),
+	.N_INPUTS(N_PORTS)
+) mux_hmaster (
+	.in(actual_hmaster),
+	.sel(mast_gnt_a),
+	.out(dst_hmaster)
+);
+
+onehot_mux #(
 	.W_INPUT(1),
 	.N_INPUTS(N_PORTS)
 ) mux_hmastlock (
 	.in(actual_hmastlock),
 	.sel(mast_gnt_a),
 	.out(dst_hmastlock)
+);
+
+onehot_mux #(
+	.W_INPUT(1),
+	.N_INPUTS(N_PORTS)
+) mux_hexcl (
+	.in(actual_hexcl),
+	.sel(mast_gnt_a),
+	.out(dst_hexcl)
 );
 
 endmodule
