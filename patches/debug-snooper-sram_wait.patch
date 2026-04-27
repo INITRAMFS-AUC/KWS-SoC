@@ -1,0 +1,47 @@
+diff --git a/mem/ahb_sync_sram.v b/mem/ahb_sync_sram.v
+index be2508e..c773219 100644
+--- a/mem/ahb_sync_sram.v
++++ b/mem/ahb_sync_sram.v
+@@ -27,6 +27,11 @@ module ahb_sync_sram #(
+ 	parameter W_ADDR = 32,
+ 	parameter DEPTH = 1 << 11,
+ 	parameter HAS_WRITE_BUFFER = 1,
++	// KWS-SoC debug knob: when 1, insert a single hready=0 wait state on
++	// every read transaction. Used to make Verilator simulate the extra
++	// d-port read latency we suspect the Cyclone V M10K has on the FPGA
++	// build (see docs/2port_dport_bridge_bug.md). 0 = upstream behaviour.
++	parameter EXTRA_RD_WAIT = 0,
+ 	parameter PRELOAD_FILE = ""
+ ) (
+ 	// Globals
+@@ -141,7 +146,29 @@ sram_sync #(
+ 
+ 
+ assign ahbls_hresp = 1'b0;
+-assign ahbls_hready_resp = !read_delay_state;
++
++// KWS-SoC: optional 1-cycle read wait state. Pulses high for one cycle
++// after every read aphase, so:
++//   T   : ahb_read_aphase=1, hready_resp=1 (slave samples).
++//   T+1 : rd_wait_state=1, hready_resp=0 (master holds).
++//   T+2 : rd_wait_state=0, hready_resp=1 (master samples rdata).
++// Master holds aphase signals during T+1, so sram_sync's already-latched
++// rdata (= mem[addr_T] from posedge T+1) is presented at T+2.
++reg rd_wait_state;
++generate if (EXTRA_RD_WAIT) begin: g_extra_rd_wait
++	always @(posedge clk or negedge rst_n) begin
++		if (!rst_n)
++			rd_wait_state <= 1'b0;
++		else if (ahb_read_aphase && !rd_wait_state)
++			rd_wait_state <= 1'b1;
++		else
++			rd_wait_state <= 1'b0;
++	end
++end else begin: g_no_extra_rd_wait
++	always @(*) rd_wait_state = 1'b0;
++end endgenerate
++
++assign ahbls_hready_resp = !read_delay_state && !rd_wait_state;
+ 
+ // Merge buffered write data into AHBL read bus (note that addr_saved is the
+ // address of a previous write, which will eventually be used to retire that

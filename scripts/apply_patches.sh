@@ -17,6 +17,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PATCH_DIR="$ROOT/patches"
 HAZARD3="$ROOT/Hazard3"
+LIBFPGA="$ROOT/Hazard3/example_soc/libfpga"
 
 REVERT=0
 case "${1:-}" in
@@ -33,6 +34,10 @@ for patch in "$PATCH_DIR"/*.patch; do
     case "$name" in
         debug-snooper-hazard3_taps.patch)
             target="$HAZARD3"
+            ;;
+        debug-snooper-sram_wait.patch)
+            # libfpga is a nested submodule of Hazard3, with its own git tree
+            target="$LIBFPGA"
             ;;
         *)
             echo "[patches] $name has no known target, skipping" >&2

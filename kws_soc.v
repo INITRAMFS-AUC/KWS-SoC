@@ -649,7 +649,13 @@ module kws_soc #(
   // zero-initialised so don't leave the little guy hanging too long)
 
   ahb_sync_sram #(
-      .DEPTH(SRAM_DEPTH)
+      .DEPTH(SRAM_DEPTH),
+      // Force a 1-cycle read wait state on the d-port SRAM, to test whether
+      // the FPGA-only "duplicate aphase to UART_TX" bug is caused by the
+      // Cyclone V M10K having extra read latency the behavioural sram_sync
+      // doesn't model. See docs/2port_dport_bridge_bug.md and
+      // patches/debug-snooper-sram_wait.patch.
+      .EXTRA_RD_WAIT(1)
   ) sram0 (
       .clk  (clk),
       .rst_n(rst_n),
