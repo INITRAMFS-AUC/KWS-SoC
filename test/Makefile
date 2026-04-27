@@ -5,9 +5,6 @@ LD = $(CROSS_COMPILE)ld
 OBJDUMP = $(CROSS_COMPILE)objdump
 OBJCOPY = $(CROSS_COMPILE)objcopy
 
-# Model-only link driver. Keep the rest of the test workflow on raw ld.
-MODEL_LINK = $(CC)
-
 # Directories
 BUILD_DIR    = build
 COMMON_DIR   = common
@@ -23,11 +20,24 @@ NNOM_DIR     = ../third_party/nnom
 NNOM_INC_DIR = $(NNOM_DIR)/inc
 NNOM_PORT_DIR = $(NNOM_DIR)/port
 
-NNOM_CORE_SRCS = $(wildcard $(NNOM_DIR)/src/core/*.c)
-NNOM_LAYER_SRCS = $(wildcard $(NNOM_DIR)/src/layers/*.c)
-NNOM_BACKEND_SRCS = $(NNOM_DIR)/src/backends/nnom_local.c $(NNOM_DIR)/src/backends/nnom_local_q15.c
-NNOM_SRCS = $(NNOM_CORE_SRCS) $(NNOM_LAYER_SRCS) $(NNOM_BACKEND_SRCS)
-NNOM_OBJS = $(patsubst $(NNOM_DIR)/src/%.c,$(BUILD_DIR)/nnom_%.o,$(NNOM_SRCS))
+NNOM_SRCS_MODEL = $(NNOM_DIR)/src/core/nnom.c \
+                  $(NNOM_DIR)/src/core/nnom_layers.c \
+                  $(NNOM_DIR)/src/core/nnom_tensor.c \
+                  $(NNOM_DIR)/src/core/nnom_utils.c \
+                  $(NNOM_DIR)/src/layers/nnom_activation.c \
+                  $(NNOM_DIR)/src/layers/nnom_avgpool.c \
+                  $(NNOM_DIR)/src/layers/nnom_baselayer.c \
+                  $(NNOM_DIR)/src/layers/nnom_conv2d.c \
+                  $(NNOM_DIR)/src/layers/nnom_dense.c \
+                  $(NNOM_DIR)/src/layers/nnom_flatten.c \
+                  $(NNOM_DIR)/src/layers/nnom_global_pool.c \
+                  $(NNOM_DIR)/src/layers/nnom_input.c \
+                  $(NNOM_DIR)/src/layers/nnom_maxpool.c \
+                  $(NNOM_DIR)/src/layers/nnom_output.c \
+                  $(NNOM_DIR)/src/layers/nnom_reshape.c \
+                  $(NNOM_DIR)/src/layers/nnom_softmax.c \
+                  $(NNOM_DIR)/src/backends/nnom_local.c \
+                  $(NNOM_DIR)/src/backends/nnom_local_q15.c
 
 
 # Header include paths (relative to this Makefile's directory)
@@ -52,11 +62,24 @@ CFLAGS += -I$(UART_REGS_DIR)
 SRAM_LDFLAGS = -T $(COMMON_DIR)/sram_link.ld --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
 XIP_LDFLAGS  = -T $(COMMON_DIR)/link.ld      --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
 
-# GCC-driver model link flags: pull compiler helper routines from libgcc
-# without bringing full default runtime libraries.
-MODEL_COMMON_GCC_LDFLAGS = -march=rv32i_zicsr -mabi=ilp32 -nostdlib -nostartfiles -nodefaultlibs -Wl,--gc-sections
-MODEL_SRAM_GCC_LDFLAGS   = $(MODEL_COMMON_GCC_LDFLAGS) -Wl,-T,$(COMMON_DIR)/sram_link.ld -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
-MODEL_XIP_GCC_LDFLAGS    = $(MODEL_COMMON_GCC_LDFLAGS) -Wl,-T,$(COMMON_DIR)/link.ld -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
+# Shared compilation and link flags for all model (NNoM) targets.
+MODEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
+               -Os -flto -std=gnu99 \
+               -ffunction-sections -fdata-sections \
+               -falign-functions=4 \
+               -DNNOM_USING_STATIC_MEMORY \
+               -DNNOM_BARE_METAL \
+               "-DNNOM_LOG(...)=" \
+               -DCLK_MHZ=36 -DUART_BAUD_RATE=115200 \
+               -DI2S_FIFO_DEPTH=8 \
+               -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR)
+
+MODEL_LDFLAGS_COMMON = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
+                       -nostartfiles \
+                       -Wl,--gc-sections \
+                       -lm -lgcc
+MODEL_LDFLAGS_SRAM   = $(MODEL_LDFLAGS_COMMON) -Wl,-T,$(COMMON_DIR)/sram_link.ld -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
+MODEL_LDFLAGS_XIP    = $(MODEL_LDFLAGS_COMMON) -Wl,-T,$(COMMON_DIR)/link.ld     -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
 
 # --- TARGET LISTS ---
 # *_sram: GDB workflow — `make gdb`, then `load build/<test>_sram.elf`, then `continue`
@@ -79,7 +102,8 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/malloc_simple_test_xip.elf  $(BUILD_DIR)/malloc_simple_test_xip.dis  $(BUILD_DIR)/malloc_simple_test_xip.bin \
 	$(BUILD_DIR)/malloc_torture_test_xip.elf $(BUILD_DIR)/malloc_torture_test_xip.dis $(BUILD_DIR)/malloc_torture_test_xip.bin \
 	$(BUILD_DIR)/memcpy_simple_test_xip.elf  $(BUILD_DIR)/memcpy_simple_test_xip.dis  $(BUILD_DIR)/memcpy_simple_test_xip.bin \
-	$(BUILD_DIR)/strided_s16_nodil_xip.elf   $(BUILD_DIR)/strided_s16_nodil_xip.dis   $(BUILD_DIR)/strided_s16_nodil_xip.bin
+	$(BUILD_DIR)/strided_s16_nodil_xip.elf   $(BUILD_DIR)/strided_s16_nodil_xip.dis   $(BUILD_DIR)/strided_s16_nodil_xip.bin \
+	$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin
 
 
 ALL_TARGETS = $(SRAM_TARGETS) $(XIP_TARGETS)
@@ -133,8 +157,14 @@ $(BUILD_DIR)/malloc_torture_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/mall
 $(BUILD_DIR)/memcpy_simple_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/memcpy_simple_test.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/memcpy.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
-$(BUILD_DIR)/strided_s16_nodil_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/strided_s16_nodil_main.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/malloc.o $(BUILD_DIR)/memcpy.o $(BUILD_DIR)/memset.o $(NNOM_OBJS)
-	$(MODEL_LINK) $(MODEL_SRAM_GCC_LDFLAGS) -o $@ $^ -lgcc
+$(BUILD_DIR)/strided_s16_nodil_sram.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/sbrk.c \
+    $(MODEL_C_DIR)/strided_s16_nodil_main.c \
+    $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
+	$(CC) $(STRIDED_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_SRAM)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/strided_s16_nodil_sram.bin
+	$(CROSS_COMPILE)size $@
 
 # --- XIP LINK RULES ---
 $(BUILD_DIR)/hello_world_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/hello_world.o
@@ -158,8 +188,14 @@ $(BUILD_DIR)/malloc_torture_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/mallo
 $(BUILD_DIR)/memcpy_simple_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/memcpy_simple_test.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/memcpy.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
-$(BUILD_DIR)/strided_s16_nodil_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/strided_s16_nodil_main.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/malloc.o $(BUILD_DIR)/memcpy.o $(BUILD_DIR)/memset.o $(NNOM_OBJS)
-	$(MODEL_LINK) $(MODEL_XIP_GCC_LDFLAGS) -o $@ $^ -lgcc
+$(BUILD_DIR)/strided_s16_nodil_xip.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/sbrk.c \
+    $(MODEL_C_DIR)/strided_s16_nodil_main.c \
+    $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
+	$(CC) $(STRIDED_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/strided_s16_nodil_xip.bin
+	$(CROSS_COMPILE)size $@
 
 # --- COMPILATION RULES ---
 $(BUILD_DIR)/crt0.o: $(COMMON_DIR)/crt0.s $(ROOT_MAKEFILE)
@@ -192,13 +228,6 @@ $(BUILD_DIR)/malloc_torture_test.o: $(MALLOC_C_DIR)/torture_test.c $(ROOT_MAKEFI
 $(BUILD_DIR)/memcpy_simple_test.o: $(MEMCPY_C_DIR)/simple_test.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
 
-$(BUILD_DIR)/strided_s16_nodil_main.o: $(MODEL_C_DIR)/strided_s16_nodil_main.c $(ROOT_MAKEFILE)
-	$(CC) $(CFLAGS) -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR) -o $@ $<
-
-$(BUILD_DIR)/nnom_%.o: $(NNOM_DIR)/src/%.c $(ROOT_MAKEFILE)
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR) -o $@ $<
-
 $(BUILD_DIR)/malloc.o: $(COMMON_DIR)/malloc.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
 
@@ -228,71 +257,16 @@ clean:
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)
 
-# ── mel_compact_4blk_ch36 — 195M cycle baseline ──────────────────────────────
-#
-# Reproduces the confirmed 195,486,216 cycle inference result.
-#
-# SoC config: CSR_COUNTER=1, MULDIV_UNROLL=1, no accelerator (this branch).
-# Model: mel_compact_4blk_ch36 seed=789, 88.7% int8, 26.2 KB flash.
-#
-# Build:
-#   make mel-compact
-#
-# Run (from kws_soc/ root with Nix devshell active):
-#   NO_JTAG=1 make sim-verilator \
-#     FLASH=test/build/mel_compact_4blk_ch36_xip.bin \
-#     MIC=sim/down_0000.hex
-#
-# Toolchain: riscv32-unknown-elf-gcc (rv32imac_zicsr_zifencei, ilp32)
-# NNoM: third_party/nnom (INITRAMFS-AUC fork)
-
 MEL_DIR = mel_compact
-
-NNOM_SRCS_MEL = $(NNOM_DIR)/src/core/nnom.c \
-                $(NNOM_DIR)/src/core/nnom_layers.c \
-                $(NNOM_DIR)/src/core/nnom_tensor.c \
-                $(NNOM_DIR)/src/core/nnom_utils.c \
-                $(NNOM_DIR)/src/layers/nnom_activation.c \
-                $(NNOM_DIR)/src/layers/nnom_avgpool.c \
-                $(NNOM_DIR)/src/layers/nnom_baselayer.c \
-                $(NNOM_DIR)/src/layers/nnom_conv2d.c \
-                $(NNOM_DIR)/src/layers/nnom_dense.c \
-                $(NNOM_DIR)/src/layers/nnom_flatten.c \
-                $(NNOM_DIR)/src/layers/nnom_global_pool.c \
-                $(NNOM_DIR)/src/layers/nnom_input.c \
-                $(NNOM_DIR)/src/layers/nnom_maxpool.c \
-                $(NNOM_DIR)/src/layers/nnom_output.c \
-                $(NNOM_DIR)/src/layers/nnom_reshape.c \
-                $(NNOM_DIR)/src/layers/nnom_softmax.c \
-                $(NNOM_DIR)/src/backends/nnom_local.c \
-                $(NNOM_DIR)/src/backends/nnom_local_q15.c
-
-MEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
-             -Os -flto -std=gnu99 \
-             -ffunction-sections -fdata-sections \
-             -falign-functions=4 \
-             -DNNOM_USING_STATIC_MEMORY \
-             -DNNOM_BARE_METAL \
-             "-DNNOM_LOG(...)=" \
-             -DCLK_MHZ=36 -DUART_BAUD_RATE=115200 \
-             -DI2S_FIFO_DEPTH=8 \
-             -DNNOM_STATIC_BUF_KB=36 \
-             -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR) \
-             -I$(MEL_DIR)
-
-MEL_LDFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
-              -nostartfiles \
-              -Wl,-T,$(COMMON_DIR)/link.ld \
-              -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES) \
-              -Wl,--gc-sections \
-              -lm -lgcc
+MEL_CFLAGS     = $(MODEL_CFLAGS) -DNNOM_STATIC_BUF_KB=36 -I$(MEL_DIR)
+STRIDED_CFLAGS = $(MODEL_CFLAGS) -DNNOM_STATIC_BUF_KB=52 -I$(MODEL_C_DIR)
 
 $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf: \
     $(COMMON_DIR)/crt0.s \
     $(COMMON_DIR)/sbrk.c \
     $(MEL_DIR)/kws_bare.c \
-    $(NNOM_SRCS_MEL) | $(BUILD_DIR)
-	$(CC) $(MEL_CFLAGS) -o $@ $^ $(MEL_LDFLAGS)
+    $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
+	$(CC) $(MEL_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
 	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin
 	$(CROSS_COMPILE)size $@
 

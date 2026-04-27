@@ -35,3 +35,4 @@ soc_conf_temp.sh
 notes.md
 images
 hazard3_instantiation_params.vh
+*.saif

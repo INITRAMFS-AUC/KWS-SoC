@@ -121,7 +121,9 @@ SH  := quartus_sh
 .PHONY: clean all lint sim sim-vcd sim_yosys sim_verilator sim-verilator-vcd \
         map fit asm sta program test test-xip testbench check_timing config \
         openocd-sim openocd-hw gdb telnet \
-        clean_sim clean_yosys clean_verilator clean_test clean_quartus
+        clean_sim clean_yosys clean_verilator clean_test clean_quartus \
+        synth_sky130 clean_sky130 \
+        gls gls_saif clean_gls
 
 all: $(TBEXEC) test
 
@@ -129,6 +131,107 @@ all: $(TBEXEC) test
 YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) -DSIMULATION=1 -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(XIP_DEBUG_VFLAG) $(FILE_LIST);
 YOSYS_SYNTH_CMD += hierarchy -top $(TOP);
 YOSYS_SYNTH_CMD += write_cxxrtl $(YOSYS_BUILD_DIR)/dut.cpp
+
+## SKY130 ASIC SYNTHESIS VARS
+# PDK root: set SKYWATER_PATH in your shell (default shown for reference)
+SKYWATER_PATH       ?= $(pwd)/skywater-pdk/.ciel/sky130A
+SKY130_SC_LIB       := sky130_fd_sc_hd
+SKY130_CORNER       ?= tt_025C_1v80
+SKY130_LIB          := $(SKYWATER_PATH)/libs.ref/$(SKY130_SC_LIB)/lib/$(SKY130_SC_LIB)__$(SKY130_CORNER).lib
+SKY130_BUILD_DIR    := $(BUILD_DIR)/yosys/synth
+SKY130_NETLIST      := $(SKY130_BUILD_DIR)/kws_soc_sky130.v
+
+SKY130_SYNTH_SCRIPT := $(SKY130_BUILD_DIR)/synth_sky130.ys
+
+$(SKY130_NETLIST): $(FILE_LIST) $(wildcard *.vh) $(DOTF) $(GEN_PARAMS_VH)
+	@echo "--- Synthesizing kws_soc for SkyWater 130nm ($(SKY130_CORNER)) ---"
+	@echo "    Liberty: $(SKY130_LIB)"
+	@test -f "$(SKY130_LIB)" || (echo "ERROR: Liberty file not found: $(SKY130_LIB)"; exit 1)
+	mkdir -p $(SKY130_BUILD_DIR)
+	@printf '%s\n' \
+		'read_verilog -I$(HDL) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(FILE_LIST)' \
+		'hierarchy -check -top $(TOP)' \
+		'proc; opt' \
+		'memory; opt' \
+		'fsm; opt' \
+		'techmap; opt' \
+		'dfflibmap -liberty $(SKY130_LIB)' \
+		'abc -liberty $(SKY130_LIB)' \
+		'clean' \
+		'write_verilog $(SKY130_NETLIST)' \
+		> $(SKY130_SYNTH_SCRIPT)
+	yosys $(SKY130_SYNTH_SCRIPT)
+
+synth_sky130: $(SKY130_NETLIST)
+	@echo "--- Gate-level netlist written to $(SKY130_NETLIST) ---"
+
+clean_sky130:
+	rm -rf $(SKY130_BUILD_DIR)
+
+## GATE-LEVEL SIMULATION (Verilator + sky130 cells → full-depth SAIF for OpenSTA)
+#
+# Reuses kws_soc_vpi.cpp (flash model, I2S, UART decode) compiled against the
+# gate-level netlist so every internal net is tracked.  The binary is always
+# built with -DTRACE_SAIF regardless of the TRACE_FORMAT setting above.
+#
+# Usage:
+#   make gls_saif FLASH=test/fw.bin CYCLES=5000000
+#   → produces build/gls/kws_soc_gate.saif, ready for OpenSTA read_saif
+
+GLS_BUILD_DIR      := $(BUILD_DIR)/gls
+SKY130_VERILOG_DIR := $(SKYWATER_PATH)/libs.ref/$(SKY130_SC_LIB)/verilog
+SKY130_CELL_V      := $(SKY130_VERILOG_DIR)/$(SKY130_SC_LIB).v
+# primitives.v uses Verilog-1995 UDP tables which Verilator cannot elaborate.
+# sky130_udp_rtl.v provides drop-in module equivalents for all UDP primitives.
+SKY130_UDP_RTL     := $(ROOT_DIR)/sim/sky130_udp_rtl.v
+GLS_CELL_SRCS      := $(SKY130_UDP_RTL) $(SKY130_CELL_V)
+GLS_SAIF_OUT       ?= $(GLS_BUILD_DIR)/kws_soc_gate.saif
+# --output-split-cfuncs 500 : split the flat eval() across many small TUs so
+#   no single compile unit blows memory.
+# -O1 (not -O3) : keeps per-TU compile memory safe while giving ~5-10x faster
+#   simulation than -O0.
+# --threads $(GLS_THREADS) : Verilator statically partitions the eval graph;
+#   set to 1 if the netlist is too flat for good partitioning.
+GLS_THREADS        ?= 8
+GLS_JOBS           ?= $(shell nproc)
+GLS_CXXFLAGS       := $(UART_CFLAGS) -DTRACE_SAIF -std=c++14 -O1 -I$(ROOT_DIR) -lpthread
+
+$(GLS_BUILD_DIR)/V$(TOP): $(SKY130_NETLIST) $(SKY130_CELL_V) $(SKY130_UDP_RTL) \
+                           kws_soc_vpi.cpp sim/flashsim.cpp sim/i2s_mic_sim.cpp \
+                           $(wildcard *.vh)
+	@test -f "$(SKY130_CELL_V)" || \
+	    (echo "ERROR: sky130 Verilog cells not found: $(SKY130_CELL_V)"; exit 1)
+	@test -f "$(SKY130_NETLIST)" || \
+	    (echo "ERROR: gate-level netlist not found — run 'make synth_sky130' first"; exit 1)
+	mkdir -p $(GLS_BUILD_DIR)
+	$(VERILATOR) -Wall -Wno-fatal --cc --no-timing --x-initial 0 \
+	    --threads $(GLS_THREADS) \
+	    --output-split-cfuncs 500 \
+	    --top-module $(TOP) \
+	    --Mdir $(GLS_BUILD_DIR) \
+	    -DFUNCTIONAL -DUNIT_DELAY= \
+	    -CFLAGS "-I$(ROOT_DIR)" \
+	    --exe $(ROOT_DIR)/kws_soc_vpi.cpp \
+	          $(ROOT_DIR)/sim/flashsim.cpp \
+	          $(ROOT_DIR)/sim/i2s_mic_sim.cpp \
+	    $(GLS_CELL_SRCS) $(SKY130_NETLIST) \
+	    -I$(ROOT_DIR) -I$(SKY130_VERILOG_DIR)
+	$(MAKE) -C $(GLS_BUILD_DIR) -j$(GLS_JOBS) -f V$(TOP).mk \
+	    CXXFLAGS='$(GLS_CXXFLAGS)' V$(TOP)
+
+gls: $(GLS_BUILD_DIR)/V$(TOP)
+	@echo "--- GLS binary ready: $(GLS_BUILD_DIR)/V$(TOP) ---"
+	@echo "Run: $(GLS_BUILD_DIR)/V$(TOP) --no-jtag --flash <fw.bin> --cycles <N> --waves <out.saif>"
+
+gls_saif: $(GLS_BUILD_DIR)/V$(TOP)
+	@test -n "$(FLASH)" || \
+	    (echo "ERROR: FLASH=path/to/fw.bin is required  (e.g. make gls_saif FLASH=test/fw.bin CYCLES=5000000)"; exit 1)
+	$(GLS_BUILD_DIR)/V$(TOP) --no-jtag $(FLASH_ARG) \
+	    $(MIC_ARG) $(CYCLES_ARG) --waves $(GLS_SAIF_OUT) $(EXTRA_ARGS)
+	@echo "--- Gate-level SAIF written to $(GLS_SAIF_OUT) ---"
+
+clean_gls:
+	rm -rf $(GLS_BUILD_DIR)
 
 # --- GENERATED FILES ---
 HAZARD3_CONFIG  :=$(ROOT_DIR)/hazard3_config.vh
@@ -178,12 +281,17 @@ VERILATOR_BUILD_DIR ?= $(BUILD_DIR)/verilator
 # ---------------------------------------------------------------------------
 # Trace format: FST (default) or VCD
 #
-#   make sim_verilator                     → FST (smaller, faster)
-#   TRACE_FORMAT=VCD make sim_verilator    → VCD (classic, wider tool support)
+#   make sim_verilator                      → FST (smaller, faster)
+#   TRACE_FORMAT=VCD  make sim_verilator    → VCD (classic, wider tool support)
+#   TRACE_FORMAT=SAIF make sim_verilator    → SAIF toggle-activity file for power analysis
 # ---------------------------------------------------------------------------
 TRACE_FORMAT ?= FST
 
-ifeq ($(TRACE_FORMAT),VCD)
+ifeq ($(TRACE_FORMAT),SAIF)
+  VERILATOR_TRACE_FLAG :=           # no Verilator waveform file — SaifWriter tracks natively
+  TRACE_CFLAGS         := -DTRACE_SAIF
+  TRACE_EXT            := saif
+else ifeq ($(TRACE_FORMAT),VCD)
   VERILATOR_TRACE_FLAG := --trace
   TRACE_CFLAGS         := -DTRACE_VCD
   TRACE_EXT            := vcd
@@ -438,7 +546,7 @@ clean_test::
 	$(MAKE) -C test clean
 
 clean_yosys::
-	rm -rf $(YOSYS_BUILD_DIR) $(TBEXEC) *.vcd
+	rm -rf $(TBEXEC) *.vcd
 	rm -f $(GEN_PARAMS_VH)
 
 clean_quartus::

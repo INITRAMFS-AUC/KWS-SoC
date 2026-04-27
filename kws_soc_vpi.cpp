@@ -59,9 +59,14 @@
 
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>        // TCP_NODELAY
+
+// Set by SIGINT/SIGTERM handler; checked in the main loop for graceful exit.
+static volatile sig_atomic_t g_interrupted = 0;
+static void on_signal(int) { g_interrupted = 1; }
 
 #include "sim/i2s_mic_sim.h"
 #include "sim/flashsim.h"
@@ -80,7 +85,9 @@
 //   TRACE_FORMAT=VCD  make sim_verilator   → uses VCD
 //   make sim_verilator                     → uses FST (default)
 // ---------------------------------------------------------------------------
-#ifdef TRACE_VCD
+#ifdef TRACE_SAIF
+#  define TRACE_EXT "saif"
+#elif defined(TRACE_VCD)
 #  include "verilated_vcd_c.h"
    typedef VerilatedVcdC TraceFile;
 #  define TRACE_EXT "vcd"
@@ -89,6 +96,92 @@
    typedef VerilatedFstC TraceFile;
 #  define TRACE_EXT "fst"
 #endif
+
+// ---------------------------------------------------------------------------
+// SaifWriter — lightweight SAIF toggle-activity recorder
+//
+// Tracks every top-level port at every eval() call (both clock edges).
+// T0/T1 are counted in half-cycles and converted to picoseconds on write().
+// Multi-bit ports (xip_do, flash_di) are recorded at the word level:
+//   T0 = half-cycles the entire word is zero, T1 = otherwise, TC = word changes.
+// ---------------------------------------------------------------------------
+#ifdef TRACE_SAIF
+#include <ctime>
+#include <vector>
+
+struct SaifEntry {
+    const char* name;
+    const CData* ptr;
+    CData       prev;
+    int64_t     t0;
+    int64_t     t1;
+    int64_t     tc;
+};
+
+class SaifWriter {
+public:
+    std::vector<SaifEntry> sigs;
+    int64_t half_cycles = 0;
+
+    void add(const char* name, const CData* ptr) {
+        sigs.push_back({name, ptr, *ptr, 0, 0, 0});
+    }
+
+    void update() {
+        for (auto& s : sigs) {
+            const CData cur = *s.ptr;
+            if (cur == 0) ++s.t0; else ++s.t1;
+            if (cur != s.prev) { ++s.tc; s.prev = cur; }
+        }
+        ++half_cycles;
+    }
+
+    void write(const char* path) {
+        // 1 half-cycle = 500 000 / CLK_MHZ picoseconds (integer division)
+        const int64_t ps_per_hc = 500000LL / CLK_MHZ;
+        const int64_t duration  = half_cycles * ps_per_hc;
+
+        FILE* f = fopen(path, "w");
+        if (!f) { perror("saif: fopen"); return; }
+
+        time_t now = time(nullptr);
+        char   date_buf[64];
+        strftime(date_buf, sizeof(date_buf), "%a %b %d %H:%M:%S %Y",
+                 localtime(&now));
+
+        fprintf(f,
+            "(SAIF (VERSION 2.0)\n"
+            "(DIRECTION backward)\n"
+            "(DESIGN kws_soc)\n"
+            "(DATE \"%s\")\n"
+            "(VENDOR \"\")\n"
+            "(PROGRAM_NAME \"kws_soc_vpi\")\n"
+            "(DIVIDER /)\n"
+            "(TIMESCALE 1 ps)\n"
+            "(DURATION %lld)\n"
+            "(INSTANCE kws_soc\n"
+            "  (NET\n",
+            date_buf, (long long)duration);
+
+        for (const auto& s : sigs) {
+            fprintf(f,
+                "    (%s\n"
+                "      (T0 %lld)(T1 %lld)(TX 0)(TZ 0)\n"
+                "      (TC %lld)(IG 0)\n"
+                "    )\n",
+                s.name,
+                (long long)(s.t0 * ps_per_hc),
+                (long long)(s.t1 * ps_per_hc),
+                (long long)s.tc);
+        }
+
+        fprintf(f, "  )\n)\n)\n");
+        fclose(f);
+        printf("SAIF: %s  (%lld signals, %lld half-cycles, duration %lld ps)\n",
+               path, (long long)sigs.size(), (long long)half_cycles, (long long)duration);
+    }
+};
+#endif // TRACE_SAIF
 
 // ---------------------------------------------------------------------------
 // Build-time guards
@@ -150,7 +243,12 @@ static const char *help_str =
     "    --jtagdump x         : Record raw remote_bitbang byte stream to file\n"
     "    --jtagreplay x       : Replay a recorded bitbang byte stream\n"
     "\n"
-    "Trace format: " TRACE_EXT " (compile with -DTRACE_VCD to use VCD instead)\n"
+    "Trace format: " TRACE_EXT
+#ifdef TRACE_SAIF
+    " (top-level port toggle counts only; no waveform file)\n"
+#else
+    " (compile with -DTRACE_VCD for VCD, or TRACE_FORMAT=SAIF for SAIF)\n"
+#endif
     "\n"
 
     "One of --port, --jtagreplay, or --no-jtag must be supplied.\n"
@@ -431,6 +529,14 @@ int main(int argc, char **argv) {
         exit_help("--jtagdump requires --port.\n");
     if (jc.replay_jtag && jc.port != 0)
         exit_help("Cannot specify both --port and --jtagreplay.\n");
+#ifdef TRACE_SAIF
+    if (!dump_waves)
+        fprintf(stderr, "Warning: SAIF mode active but --waves <file.saif> not given — "
+                        "no output will be written.\n");
+#endif
+
+    signal(SIGINT,  on_signal);
+    signal(SIGTERM, on_signal);
 
     // -----------------------------------------------------------------------
     // QSPI flash model (same params as cxxrtl tb: 16 MiB, rddelay=1, ndummy=4)
@@ -487,13 +593,41 @@ int main(int argc, char **argv) {
     // -----------------------------------------------------------------------
     std::unique_ptr<VerilatedContext> contextp(new VerilatedContext);
     contextp->commandArgs(1, argv);
+#ifdef TRACE_SAIF
+    contextp->traceEverOn(false);  // SAIF tracks signals natively; Verilator trace unused
+#else
     contextp->traceEverOn(dump_waves);
+#endif
 
     std::unique_ptr<Vkws_soc> top(new Vkws_soc(contextp.get()));
 
     // -----------------------------------------------------------------------
-    // Waveform trace (FST default, VCD if compiled with -DTRACE_VCD)
+    // Waveform / activity trace setup
     // -----------------------------------------------------------------------
+#ifdef TRACE_SAIF
+    SaifWriter saif_writer;
+    if (dump_waves) {
+        saif_writer.add("clk",         &top->clk);
+        saif_writer.add("rst_n",       &top->rst_n);
+        saif_writer.add("tck",         &top->tck);
+        saif_writer.add("trst_n",      &top->trst_n);
+        saif_writer.add("tms",         &top->tms);
+        saif_writer.add("tdi",         &top->tdi);
+        saif_writer.add("tdo",         &top->tdo);
+        saif_writer.add("uart_rx",     &top->uart_rx);
+        saif_writer.add("uart_tx",     &top->uart_tx);
+        saif_writer.add("i2s_sd",      &top->i2s_sd);
+        saif_writer.add("i2s_sck_out", &top->i2s_sck_out);
+        saif_writer.add("i2s_ws_out",  &top->i2s_ws_out);
+        saif_writer.add("xip_csn",     &top->xip_csn);
+        saif_writer.add("xip_sck",     &top->xip_sck);
+        saif_writer.add("xip_do",      &top->xip_do);
+        saif_writer.add("flash_di",    &top->flash_di);
+        printf("SAIF: recording %zu top-level ports → %s\n",
+               saif_writer.sigs.size(), waves_path.c_str());
+    }
+#else
+    // FST (default) or VCD waveform trace
     std::unique_ptr<TraceFile> tfp;
     if (dump_waves) {
         tfp.reset(new TraceFile);
@@ -502,6 +636,7 @@ int main(int argc, char **argv) {
         printf("Trace [" TRACE_EXT "]: %s  (sample every %d cycle(s))\n",
                waves_path.c_str(), vcd_sample_rate);
     }
+#endif
 
     // -----------------------------------------------------------------------
     // Reset sequence  (mirrors CXXRTL tb)
@@ -526,7 +661,9 @@ int main(int argc, char **argv) {
     top->rst_n  = 1;
     top->eval();
 
+#ifndef TRACE_SAIF
     if (tfp) tfp->dump(0);
+#endif
 
     // -----------------------------------------------------------------------
     // UART decode state
@@ -554,8 +691,12 @@ int main(int argc, char **argv) {
         // ---- Falling edge --------------------------------------------------
         top->clk = 0;
         top->eval();
+#ifdef TRACE_SAIF
+        if (dump_waves) saif_writer.update();
+#else
         if (tfp && (cycle % vcd_sample_rate == 0))
             tfp->dump(static_cast<uint64_t>(cycle * 2));
+#endif
         {
             bool csn = static_cast<bool>(top->xip_csn);
             if (xip_debug) {
@@ -573,8 +714,12 @@ int main(int argc, char **argv) {
         // ---- Rising edge ---------------------------------------------------
         top->clk = 1;
         top->eval();
+#ifdef TRACE_SAIF
+        if (dump_waves) saif_writer.update();
+#else
         if (tfp && (cycle % vcd_sample_rate == 0))
             tfp->dump(static_cast<uint64_t>(cycle * 2 + 1));
+#endif
         top->flash_di = qspi_flash(top->xip_csn, top->xip_sck, top->xip_do) & 0xF;
 
         // ---- UART TX decode ------------------------------------------------
@@ -654,6 +799,10 @@ int main(int argc, char **argv) {
             printf("Max cycles (" I64_FMT ") reached\n", max_cycles);
             quit = true;
         }
+        if (!quit && g_interrupted) {
+            printf("Interrupted — flushing outputs\n");
+            quit = true;
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -662,10 +811,14 @@ int main(int argc, char **argv) {
     fflush(stdout);
     top->final();
 
+#ifdef TRACE_SAIF
+    if (dump_waves) saif_writer.write(waves_path.c_str());
+#else
     if (tfp) {
         tfp->close();
         tfp.reset();
     }
+#endif
     top.reset();
     contextp.reset();
 
