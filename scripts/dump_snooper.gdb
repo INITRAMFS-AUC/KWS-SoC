@@ -14,9 +14,10 @@ define dump_snooper
   set $head  = ($stat >> 8) & 0xf
   set $cycle = *(unsigned int *)($base + 0x208)
   printf "snooper: count=%u head=%u live_cycle=%u\n", $count, $head, $cycle
-  printf "%-3s %-10s %-12s %-12s %-2s %-10s %-10s %-3s %-3s %-10s %-10s\n", \
-         "i", "cycle", "bridge_addr", "dport_addr", "wr", "hwdata", "m_wdata", \
-         "rs2", "rd", "xm_res", "mw_res"
+  printf "memop legend: 04=LBU 05=SW 0a=SH 0b=SB 10=NONE\n"
+  printf "%-3s %-10s %-6s %-10s %-2s %-10s %-10s %-3s %-3s %-10s %-10s %-3s %-2s %-2s\n", \
+         "i", "cycle", "bridge", "dport_addr", "wr", "hwdata", "m_wdata", \
+         "rs2", "rd", "xm_res", "mw_res", "memop", "aphq", "stl"
 
   set $i = 0
   while $i < 16
@@ -35,12 +36,15 @@ define dump_snooper
     set $bridge_trans = ($addrctrl >> 17) & 3
     set $dport_wr     = ($addrctrl >> 19) & 1
     set $dport_trans  = ($addrctrl >> 20) & 3
+    set $aph_req      = ($addrctrl >> 22) & 1
+    set $xm_memop     = ($addrctrl >> 23) & 0x1f
+    set $m_bus_stall  = ($addrctrl >> 28) & 1
     set $rs2 = $idx & 0x1f
     set $rd  = ($idx >> 8) & 0x1f
 
-    printf "%2d  %-10u 0x%04x       0x%08x  %d  0x%08x 0x%08x  %2u  %2u  0x%08x 0x%08x", \
+    printf "%2d  %-10u 0x%04x 0x%08x  %d  0x%08x 0x%08x  %2u  %2u  0x%08x 0x%08x  %02x   %d  %d", \
            $i, $cyc, $bridge_haddr, $dport_a, $bridge_wr, $hwdata, $mwdata, \
-           $rs2, $rd, $xmres, $mwres
+           $rs2, $rd, $xmres, $mwres, $xm_memop, $aph_req, $m_bus_stall
     set $note_count = 0
     if ($bridge_haddr != ($dport_a & 0xffff))
       printf "   <- ROUTING: bridge=%04x vs dport=%08x", $bridge_haddr, $dport_a
@@ -54,6 +58,15 @@ define dump_snooper
       end
       printf " HWDATA: bridge=%02x vs m_wdata=%02x", \
              ($hwdata & 0xff), ($mwdata & 0xff)
+      set $note_count = $note_count + 1
+    end
+    if ($bridge_wr == 1) && ($xm_memop != 5) && ($xm_memop != 10) && ($xm_memop != 11)
+      if $note_count == 0
+        printf "   <-"
+      else
+        printf " ;"
+      end
+      printf " EARLY-APHASE: write fired but xm_memop=0x%02x is not a store", $xm_memop
     end
     printf "\n"
     set $i = $i + 1

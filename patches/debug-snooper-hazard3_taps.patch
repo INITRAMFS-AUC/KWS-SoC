@@ -1,8 +1,8 @@
 diff --git a/hdl/hazard3_core.v b/hdl/hazard3_core.v
-index 84b748b..88fc6c8 100644
+index 84b748b..6698337 100644
 --- a/hdl/hazard3_core.v
 +++ b/hdl/hazard3_core.v
-@@ -86,7 +86,14 @@ module hazard3_core #(
+@@ -86,7 +86,19 @@ module hazard3_core #(
  	// Level-sensitive interrupt sources
  	input  wire [NUM_IRQS-1:0] irq,       // -> mip.meip
  	input  wire                soft_irq,  // -> mip.msip
@@ -14,11 +14,16 @@ index 84b748b..88fc6c8 100644
 +	output wire [4:0]          dbg_mw_rd,
 +	output wire [W_DATA-1:0]   dbg_xm_result,
 +	output wire [W_DATA-1:0]   dbg_mw_result,
-+	output wire [W_DATA-1:0]   dbg_m_wdata
++	output wire [W_DATA-1:0]   dbg_m_wdata,
++
++	// More taps to chase the early-aphase pipelining hypothesis.
++	output wire                dbg_bus_aph_req_d,
++	output wire [4:0]          dbg_xm_memop,
++	output wire                dbg_m_bus_stall
  );
  
  `include "hazard3_ops.vh"
-@@ -1579,6 +1586,15 @@ hazard3_regfile_1w2r #(
+@@ -1579,6 +1591,19 @@ hazard3_regfile_1w2r #(
  	.wen    (m_reg_wen)
  );
  
@@ -31,14 +36,18 @@ index 84b748b..88fc6c8 100644
 +assign dbg_mw_result = mw_result;
 +assign dbg_m_wdata   = m_wdata;
 +
++assign dbg_bus_aph_req_d = bus_aph_req_d;
++assign dbg_xm_memop      = xm_memop;
++assign dbg_m_bus_stall   = m_bus_stall;
++
  `ifdef RISCV_FORMAL
  `include "hazard3_rvfi_monitor.vh"
  `endif
 diff --git a/hdl/hazard3_cpu_1port.v b/hdl/hazard3_cpu_1port.v
-index bf3300a..903f6e7 100644
+index bf3300a..308a2b7 100644
 --- a/hdl/hazard3_cpu_1port.v
 +++ b/hdl/hazard3_cpu_1port.v
-@@ -87,7 +87,14 @@ module hazard3_cpu_1port #(
+@@ -87,7 +87,17 @@ module hazard3_cpu_1port #(
  	// Level-sensitive interrupt sources
  	input wire [NUM_IRQS-1:0] irq,       // -> mip.meip
  	input wire                soft_irq,  // -> mip.msip
@@ -50,11 +59,14 @@ index bf3300a..903f6e7 100644
 +	output wire [4:0]         dbg_mw_rd,
 +	output wire [W_DATA-1:0]  dbg_xm_result,
 +	output wire [W_DATA-1:0]  dbg_mw_result,
-+	output wire [W_DATA-1:0]  dbg_m_wdata
++	output wire [W_DATA-1:0]  dbg_m_wdata,
++	output wire               dbg_bus_aph_req_d,
++	output wire [4:0]         dbg_xm_memop,
++	output wire               dbg_m_bus_stall
  );
  
  // ----------------------------------------------------------------------------
-@@ -185,7 +192,13 @@ hazard3_core #(
+@@ -185,7 +195,16 @@ hazard3_core #(
  
  	.irq                        (irq),
  	.soft_irq                   (soft_irq),
@@ -65,15 +77,18 @@ index bf3300a..903f6e7 100644
 +	.dbg_mw_rd                  (dbg_mw_rd),
 +	.dbg_xm_result              (dbg_xm_result),
 +	.dbg_mw_result              (dbg_mw_result),
-+	.dbg_m_wdata                (dbg_m_wdata)
++	.dbg_m_wdata                (dbg_m_wdata),
++	.dbg_bus_aph_req_d          (dbg_bus_aph_req_d),
++	.dbg_xm_memop               (dbg_xm_memop),
++	.dbg_m_bus_stall            (dbg_m_bus_stall)
  );
  
  // ----------------------------------------------------------------------------
 diff --git a/hdl/hazard3_cpu_2port.v b/hdl/hazard3_cpu_2port.v
-index 7356671..fcc9f72 100644
+index 7356671..2c22442 100644
 --- a/hdl/hazard3_cpu_2port.v
 +++ b/hdl/hazard3_cpu_2port.v
-@@ -100,7 +100,14 @@ module hazard3_cpu_2port #(
+@@ -100,7 +100,17 @@ module hazard3_cpu_2port #(
  	// Level-sensitive interrupt sources
  	input wire [NUM_IRQS-1:0] irq,       // -> mip.meip
  	input wire                soft_irq,  // -> mip.msip
@@ -85,11 +100,14 @@ index 7356671..fcc9f72 100644
 +	output wire [4:0]         dbg_mw_rd,
 +	output wire [W_DATA-1:0]  dbg_xm_result,
 +	output wire [W_DATA-1:0]  dbg_mw_result,
-+	output wire [W_DATA-1:0]  dbg_m_wdata
++	output wire [W_DATA-1:0]  dbg_m_wdata,
++	output wire               dbg_bus_aph_req_d,
++	output wire [4:0]         dbg_xm_memop,
++	output wire               dbg_m_bus_stall
  );
  
  // ----------------------------------------------------------------------------
-@@ -196,7 +203,13 @@ hazard3_core #(
+@@ -196,7 +206,16 @@ hazard3_core #(
  
  	.irq                        (irq),
  	.soft_irq                   (soft_irq),
@@ -100,7 +118,10 @@ index 7356671..fcc9f72 100644
 +	.dbg_mw_rd                  (dbg_mw_rd),
 +	.dbg_xm_result              (dbg_xm_result),
 +	.dbg_mw_result              (dbg_mw_result),
-+	.dbg_m_wdata                (dbg_m_wdata)
++	.dbg_m_wdata                (dbg_m_wdata),
++	.dbg_bus_aph_req_d          (dbg_bus_aph_req_d),
++	.dbg_xm_memop               (dbg_xm_memop),
++	.dbg_m_bus_stall            (dbg_m_bus_stall)
  );
  
  // ----------------------------------------------------------------------------

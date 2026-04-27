@@ -278,6 +278,9 @@ module kws_soc #(
   wire [W_DATA-1:0] snoop_xm_result;
   wire [W_DATA-1:0] snoop_mw_result;
   wire [W_DATA-1:0] snoop_m_wdata;
+  wire              snoop_bus_aph_req_d;
+  wire [4:0]        snoop_xm_memop;
+  wire              snoop_m_bus_stall;
 
   hazard3_cpu_2port #(
       // These must have the values given here for you to end up with a useful SoC:
@@ -414,7 +417,11 @@ module kws_soc #(
       .dbg_mw_rd     (snoop_mw_rd),
       .dbg_xm_result (snoop_xm_result),
       .dbg_mw_result (snoop_mw_result),
-      .dbg_m_wdata   (snoop_m_wdata)
+      .dbg_m_wdata   (snoop_m_wdata),
+
+      .dbg_bus_aph_req_d (snoop_bus_aph_req_d),
+      .dbg_xm_memop      (snoop_xm_memop),
+      .dbg_m_bus_stall   (snoop_m_bus_stall)
   );
 
 
@@ -766,7 +773,11 @@ module kws_soc #(
       .dbg_mw_rd     (snoop_mw_rd),
       .dbg_xm_result (snoop_xm_result),
       .dbg_mw_result (snoop_mw_result),
-      .dbg_m_wdata   (snoop_m_wdata)
+      .dbg_m_wdata   (snoop_m_wdata),
+
+      .dbg_bus_aph_req_d (snoop_bus_aph_req_d),
+      .dbg_xm_memop      (snoop_xm_memop),
+      .dbg_m_bus_stall   (snoop_m_bus_stall)
   );
 
   // Microsecond timebase for timer

@@ -9,13 +9,16 @@
 //   0x000 .. 0x1FC  Ring buffer (16 entries x 32 bytes; one word per offset)
 //                     entry layout (32 bytes per entry):
 //                       +0x00 cycle counter at commit
-//                       +0x04 addr_ctrl word — bridge-side AND CPU-d-port-side aphase signals:
+//                       +0x04 addr_ctrl word — bridge / CPU-d-port / M-stage aphase state:
 //                               [15:0]  bridge_haddr[15:0]
 //                               [16]    bridge_hwrite
 //                               [18:17] bridge_htrans[1:0]
 //                               [19]    dport_hwrite          (CPU d-port aphase)
 //                               [21:20] dport_htrans[1:0]     (CPU d-port aphase)
-//                               [31:22] reserved (zero)
+//                               [22]    bus_aph_req_d         (CPU asks for an aphase)
+//                               [27:23] xm_memop[4:0]         (5'h10=NONE, 5'h05=SW, 5'h04=LBU, ...)
+//                               [28]    m_bus_stall           (M-stage held by bus dphase)
+//                               [31:29] reserved (zero)
 //                       +0x08 bridge_hwdata sampled at dphase end
 //                       +0x0C dbg_m_wdata   sampled at dphase end
 //                       +0x10 {19'h0, dbg_mw_rd[4:0], 3'h0, dbg_xm_rs2[4:0]}
@@ -73,7 +76,12 @@ module bus_snooper #(
     input  wire [4:0]        dbg_mw_rd,
     input  wire [W_DATA-1:0] dbg_xm_result,
     input  wire [W_DATA-1:0] dbg_mw_result,
-    input  wire [W_DATA-1:0] dbg_m_wdata
+    input  wire [W_DATA-1:0] dbg_m_wdata,
+
+    // Pipelining-state taps. Captured at aphase along with dport_*.
+    input  wire              dbg_bus_aph_req_d,
+    input  wire [4:0]        dbg_xm_memop,
+    input  wire              dbg_m_bus_stall
 );
 
 assign apbs_pready  = 1'b1;
@@ -102,6 +110,9 @@ reg [1:0]        pend_htrans;
 reg [W_DATA-1:0] pend_dport_haddr;
 reg              pend_dport_hwrite;
 reg [1:0]        pend_dport_htrans;
+reg              pend_aph_req;
+reg [4:0]        pend_xm_memop;
+reg              pend_m_bus_stall;
 
 wire wen = apbs_psel && apbs_penable && apbs_pwrite;
 
@@ -131,6 +142,9 @@ always @(posedge clk or negedge rst_n) begin
         pend_dport_haddr  <= {W_DATA{1'b0}};
         pend_dport_hwrite <= 1'b0;
         pend_dport_htrans <= 2'b00;
+        pend_aph_req      <= 1'b0;
+        pend_xm_memop     <= 5'h10;     // MEMOP_NONE
+        pend_m_bus_stall  <= 1'b0;
     end else begin
         cycle_ctr <= cycle_ctr + 1'b1;
 
@@ -145,7 +159,10 @@ always @(posedge clk or negedge rst_n) begin
         end else begin
             if (commit) begin
                 r_cycle   [head] <= cycle_ctr;
-                r_addrctrl[head] <= {10'h0,
+                r_addrctrl[head] <= {3'h0,
+                                     pend_m_bus_stall,
+                                     pend_xm_memop,
+                                     pend_aph_req,
                                      pend_dport_htrans, pend_dport_hwrite,
                                      pend_htrans,       pend_hwrite,
                                      pend_haddr};
@@ -168,6 +185,9 @@ always @(posedge clk or negedge rst_n) begin
                 pend_dport_haddr  <= dport_haddr;
                 pend_dport_hwrite <= dport_hwrite;
                 pend_dport_htrans <= dport_htrans;
+                pend_aph_req      <= dbg_bus_aph_req_d;
+                pend_xm_memop     <= dbg_xm_memop;
+                pend_m_bus_stall  <= dbg_m_bus_stall;
             end else if (commit) begin
                 pend_vld <= 1'b0;
             end
