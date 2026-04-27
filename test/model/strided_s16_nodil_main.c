@@ -288,7 +288,9 @@ void __attribute__((interrupt("machine"))) kws_trap_handler(void) {
         ring_ready = 1;
         DMAC->control = DMAC_CTRL_I2S_PIRQ & ~1u; /* EN=0 — main re-arms after copy */
     } else {
-        dma_arm();
+        /* Reset staging buffer pointer; keep EN=1 so DMA re-arms on next PIRQ
+         * without an EN=0→EN=1 gap that could drop a sample. */
+        DMAC->daddr = (uint32_t)(uintptr_t)dma_batch;
     }
 }
 

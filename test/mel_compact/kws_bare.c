@@ -10,7 +10,7 @@
  *
  * For full pipeline, register map, and build instructions see the parent
  * model's kws_bare.c (strided_s16_nodil/kws_bare.c). This file is identical
- * except for the weights include.
+ * except for the weights include and I2S clock divisor.
  *
  * CLASSES (index order matches mel_compact_4blk_ch36_weights.h)
  * ----------------------------------------
@@ -78,13 +78,17 @@ typedef struct {
 } i2s_hw_t;
 
 #define I2S_BASE_ADDR    0x40008000UL
+#define I2S_FIFO_PA      0x40008008UL   /* physical address of I2S->fifo for DMA */
 #define I2S              ((i2s_hw_t *)I2S_BASE_ADDR)
 #ifndef I2S_FIFO_DEPTH
 #define I2S_FIFO_DEPTH   8
 #endif
 
 #ifndef I2S_CLK_DIV
-#define I2S_CLK_DIV  70
+/* cfg_div=35 → SCK half-period=36 sys-clk cycles → SCK=500 kHz → ~7812 Hz sample rate.
+ * At 36 MHz: sample_rate = 36e6 / (2*(cfg_div+1)*64) where 64 = 32 L-bits + 32 R-bits.
+ * I2S peripheral stores both L and R in the FIFO; both are captured by DMA. */
+#define I2S_CLK_DIV  35
 #endif
 
 static void i2s_init(uint32_t clk_div) {
@@ -106,7 +110,6 @@ typedef struct {
 
 #define DMAC_BASE    0x60000000UL
 #define DMAC         ((dmac_hw_t *)DMAC_BASE)
-#define I2S_FIFO_PA  0x40008008UL
 
 /* PIRQ[0]-triggered word transfer: fixed source (FIFO), incrementing dest */
 #define DMAC_CTRL_I2S_PIRQ \
@@ -115,17 +118,21 @@ typedef struct {
 static volatile uint32_t dma_batch[I2S_FIFO_DEPTH];
 
 static void dma_arm(void) {
-    DMAC->control = DMAC_CTRL_I2S_PIRQ & ~1u;
+    DMAC->control = DMAC_CTRL_I2S_PIRQ & ~1u;       /* EN=0 while reconfiguring */
     DMAC->saddr   = I2S_FIFO_PA;
     DMAC->daddr   = (uint32_t)(uintptr_t)dma_batch;
-    DMAC->count   = (uint32_t)(I2S_FIFO_DEPTH - 1);
-    DMAC->control = DMAC_CTRL_I2S_PIRQ;
+    DMAC->count   = (uint32_t)(I2S_FIFO_DEPTH - 1); /* COUNT = N-1 for N transfers */
+    DMAC->control = DMAC_CTRL_I2S_PIRQ;              /* EN=1 — armed on PIRQ[0] */
 }
 
 /* ── RISC-V CSR helpers ──────────────────────────────────────────────────── */
 
 static inline void csr_set_mtvec(void (*handler)(void)) {
     asm volatile ("csrw mtvec, %0" :: "r"((uintptr_t)handler));
+}
+static inline void csr_enable_cycle_counter(void) {
+    /* Hazard3 inhibits mcycle by default; clear mcountinhibit so it runs. */
+    asm volatile ("csrw 0x320, zero");
 }
 static inline void csr_enable_meie(void) {
     asm volatile ("csrs mie, %0" :: "r"(1u << 11));
@@ -134,6 +141,9 @@ static inline void csr_enable_mie(void) {
     asm volatile ("csrsi mstatus, 8");
 }
 static inline void csr_meiea_dmac_en(void) {
+    /* Unmask dmac_irq (IRQ 0) in Hazard3 MEIEA — required with XH3IRQ=1.
+     * kws_soc.v wires irq = {uart_irq[2], i2s_irq[1], dmac_irq[0]}.
+     * IRQ 0 → MEIEA group 0 bit 16. */
     asm volatile ("csrw 0xbe0, %0" :: "r"(1u << 16));
 }
 
@@ -152,8 +162,9 @@ static uint8_t nnom_static_buf[NNOM_STATIC_BUF_KB * 1024];
 #define NUM_CLASSES       11
 
 static volatile int8_t ring_buf[SAMPLES_PER_CLIP];
-static volatile int    ring_pos   = 0;
-static volatile int    ring_ready = 0;
+static volatile int    ring_pos      = 0;
+static volatile int    ring_ready    = 0;
+static volatile int    i2s_irq_count = 0;
 
 /* ── Class names ─────────────────────────────────────────────────────────── */
 static const char * const class_names[NUM_CLASSES] = {
@@ -161,9 +172,14 @@ static const char * const class_names[NUM_CLASSES] = {
     "right", "stop", "up", "yes", "unknown"
 };
 
-/* ── I2S / Machine External Interrupt handler ────────────────────────────── */
-
-void __attribute__((interrupt("machine"))) kws_trap_handler(void) {
+/* ── Machine trap handler ────────────────────────────────────────────────── */
+/*
+ * dmac_irq fires after each DMA burst (I2S_FIFO_DEPTH words → dma_batch).
+ * Continuous mode (from dma_test T4): keep EN=1 between bursts — only reset
+ * DADDR so the next PIRQ overwrites dma_batch from the start.  This avoids
+ * the brief EN=0→EN=1 gap in a full dma_arm() call which could drop a PIRQ.
+ */
+void __attribute__((interrupt("machine"), aligned(4))) kws_trap_handler(void) {
     uint32_t mcause, mepc, mtval;
     asm volatile ("csrr %0, mcause" : "=r"(mcause));
 
@@ -183,16 +199,18 @@ void __attribute__((interrupt("machine"))) kws_trap_handler(void) {
     DMAC->icr = 1u;   /* clear ICR latch so IRQ de-asserts before mret */
 
     for (int i = 0; i < I2S_FIFO_DEPTH; i++) {
-        int8_t q7 = (int8_t)((uint32_t)dma_batch[i] >> 16);
         if (ring_pos < SAMPLES_PER_CLIP)
-            ring_buf[ring_pos++] = q7;
+            ring_buf[ring_pos++] = (int8_t)((uint32_t)dma_batch[i] >> 16);
     }
+    i2s_irq_count++;
 
     if (ring_pos >= SAMPLES_PER_CLIP) {
         ring_ready = 1;
-        DMAC->control = DMAC_CTRL_I2S_PIRQ & ~1u; /* EN=0, main re-arms after copy */
+        DMAC->control = DMAC_CTRL_I2S_PIRQ & ~1u; /* EN=0 — main re-arms after copy */
     } else {
-        dma_arm();
+        /* Reset staging buffer pointer; keep EN=1 so DMA re-arms on next PIRQ
+         * without an EN=0→EN=1 gap that could drop a sample. */
+        DMAC->daddr = (uint32_t)(uintptr_t)dma_batch;
     }
 }
 
@@ -218,6 +236,7 @@ int main(void) {
     }
     uart_puts("Model loaded\r\n");
 
+    csr_enable_cycle_counter();
     csr_set_mtvec(kws_trap_handler);
     csr_enable_meie();
     csr_meiea_dmac_en();
@@ -229,7 +248,6 @@ int main(void) {
     while (1) {
         if (!ring_ready)
             asm volatile ("wfi");
-
         if (!ring_ready)
             continue;
 
@@ -238,9 +256,13 @@ int main(void) {
 
         ring_pos   = 0;
         ring_ready = 0;
-        dma_arm();
+        dma_arm();  /* full re-arm: EN was disabled when ring became ready */
 
+        uint32_t cyc_start, cyc_end;
+        asm volatile ("csrr %0, mcycle" : "=r"(cyc_start));
         model_run(model);
+        asm volatile ("csrr %0, mcycle" : "=r"(cyc_end));
+        uint32_t cycles = cyc_end - cyc_start;
 
         int    pred      = 0;
         int8_t max_score = nnom_output_data[0];
@@ -251,10 +273,16 @@ int main(void) {
             }
         }
 
+        uart_puts("IRQS:");
+        uart_putdec(i2s_irq_count);
+        uart_puts("\r\n");
         uart_puts("DETECT:");
         uart_putdec(pred);
         uart_putc(',');
         uart_puts(class_names[pred]);
+        uart_puts("\r\n");
+        uart_puts("CYCLES:");
+        uart_putdec((int)cycles);
         uart_puts("\r\n");
     }
 
