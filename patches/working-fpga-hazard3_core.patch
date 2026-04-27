@@ -1,0 +1,25 @@
+diff --git a/hdl/hazard3_core.v b/hdl/hazard3_core.v
+index 84b748b..23298df 100644
+--- a/hdl/hazard3_core.v
++++ b/hdl/hazard3_core.v
+@@ -463,8 +463,18 @@ always @ (*) begin
+ 			// Store addresses cannot be bypassed later, so there is no exception here.
+ 			x_stall_on_raw = 1'b1;
+ 		end else if (|xm_rd && xm_rd == d_rs2) begin
+-			// Store data can be bypassed in M. Any other instructions must stall.
+-			x_stall_on_raw = !(d_memop == MEMOP_SW || d_memop == MEMOP_SH || d_memop == MEMOP_SB);
++			// kws-soc working-fpga patch: the upstream optimisation
++			//   x_stall_on_raw = !(d_memop == MEMOP_SW || ...)
++			// relies on the M-stage mw_result bypass to deliver the load
++			// result to a store's data operand in the next cycle. On our
++			// 2-port CPU + multi-cycle APB bridge that bypass loses a race
++			// on FPGA: mw_rd doesn't latch in time, the bypass condition
++			// xm_rs2 == mw_rd evaluates to false, and m_wdata falls back to
++			// xm_result — which for a load is the load's address, not its
++			// data. The store ends up writing the load's address to the
++			// bridge. Force the stall in all RAW cases to avoid the bypass.
++			// See docs/2port_dport_bridge_bug.md.
++			x_stall_on_raw = 1'b1;
+ 		end
+ 	end
+ end

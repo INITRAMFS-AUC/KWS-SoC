@@ -137,9 +137,21 @@ YOSYS_SYNTH_CMD += write_cxxrtl $(YOSYS_BUILD_DIR)/dut.cpp
 HAZARD3_CONFIG  :=$(ROOT_DIR)/hazard3_config.vh
 GEN_PARAMS_VH   := hazard3_instantiation_params.vh
 
-# TODO: Diffrentiate between scripts (ours) and libfpga scripts
-# Target to generate the instantiation parameters
-$(GEN_PARAMS_VH): $(HAZARD3_CONFIG)
+# --- PROJECT-LOCAL SUBMODULE PATCHES ---
+# This branch (working-fpga) carries one patch in patches/ that is applied
+# to the Hazard3 submodule worktree at build time. Idempotent — running
+# twice does nothing on the second pass. Submodule's tracked SHA is
+# unchanged so `git submodule update` / upstream pulls remain conflict-free.
+# `make clean` reverts the patch so the worktree is left pristine.
+.PHONY: apply_patches revert_patches
+apply_patches:
+	@bash $(ROOT_DIR)/scripts/apply_patches.sh
+
+revert_patches:
+	@bash $(ROOT_DIR)/scripts/apply_patches.sh --revert
+
+# Hook every build path through apply_patches via the params .vh file
+$(GEN_PARAMS_VH): $(HAZARD3_CONFIG) | apply_patches
 	@echo "--- Generating Instantiation Parameters ---"
 	python3 scripts/gen_inst_params.py $< $@
 
@@ -441,7 +453,7 @@ gdb:
 telnet:
 	telnet localhost $(TELNET_PORT)
 
-clean:: clean_sim clean_test clean_quartus
+clean:: clean_sim clean_test clean_quartus revert_patches
 
 clean_sim:: clean_yosys clean_verilator
 
