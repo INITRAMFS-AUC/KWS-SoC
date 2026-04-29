@@ -111,6 +111,19 @@ UART_CFLAGS := $(addprefix -D,$(UART_VERILOG_MACROS))
 # Propagate to all RTL tools (Quartus, Yosys, Verilator Verilog elaboration)
 VERILOG_MACROS += $(UART_VERILOG_MACROS)
 
+# Optional bus-snooper debug peripheral. Set DEBUG_SNOOPER=1 in the
+# environment (e.g. `make DEBUG_SNOOPER=1 sim-verilator …`) to:
+#   - define DEBUG_SNOOPER for Verilog elaboration (instantiates the
+#     snooper at 0x4000_C000, switches apb_splitter to N_SLAVES=4)
+#   - tell scripts/apply_patches.sh to apply the debug-snooper-* patches
+#     (CPU dbg_* output ports + ahb_sync_sram EXTRA_RD_WAIT parameter)
+# Default off — production builds do not pay the snooper's M10K / area cost.
+DEBUG_SNOOPER ?=
+ifneq ($(DEBUG_SNOOPER),)
+  VERILOG_MACROS += DEBUG_SNOOPER
+  export DEBUG_SNOOPER
+endif
+
 export GLOBAL_UART_CONFIG := $(UART_CFLAGS)
 
 # important: these show be in PATH, locate your quartus installation
@@ -138,11 +151,11 @@ HAZARD3_CONFIG  :=$(ROOT_DIR)/hazard3_config.vh
 GEN_PARAMS_VH   := hazard3_instantiation_params.vh
 
 # --- PROJECT-LOCAL SUBMODULE PATCHES ---
-# This branch (working-fpga) carries one patch in patches/ that is applied
-# to the Hazard3 submodule worktree at build time. Idempotent — running
-# twice does nothing on the second pass. Submodule's tracked SHA is
-# unchanged so `git submodule update` / upstream pulls remain conflict-free.
-# `make clean` reverts the patch so the worktree is left pristine.
+# Patches in patches/*.patch are applied to the Hazard3 submodule (and the
+# nested libfpga submodule) at build time. Idempotent — running twice does
+# nothing on the second pass. The submodules' tracked SHAs are unchanged so
+# `git submodule update` / upstream pulls remain conflict-free. `make clean`
+# reverts the patches so the worktree is left pristine.
 .PHONY: apply_patches revert_patches
 apply_patches:
 	@bash $(ROOT_DIR)/scripts/apply_patches.sh
