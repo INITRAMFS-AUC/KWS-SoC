@@ -1,5 +1,5 @@
 diff --git a/hdl/hazard3_core.v b/hdl/hazard3_core.v
-index 84b748b..6698337 100644
+index 84b748b..ba3d05f 100644
 --- a/hdl/hazard3_core.v
 +++ b/hdl/hazard3_core.v
 @@ -86,7 +86,19 @@ module hazard3_core #(
@@ -23,7 +23,46 @@ index 84b748b..6698337 100644
  );
  
  `include "hazard3_ops.vh"
-@@ -1579,6 +1591,19 @@ hazard3_regfile_1w2r #(
+@@ -776,7 +788,7 @@ always @ (*) begin
+ 		MEMOP_SB:  bus_hsize_d = HSIZE_BYTE;
+ 		default:   bus_hsize_d = HSIZE_WORD;
+ 	endcase
+-	bus_aph_req_d = x_memop_vld && !(
++	bus_aph_req_d = x_memop_vld && !x_aph_done && !(
+ 		x_stall_on_raw ||
+ 		x_stall_on_exclusive_overlap ||
+ 		x_loadstore_pmp_fail ||
+@@ -787,6 +799,29 @@ always @ (*) begin
+ 	);
+ end
+ 
++// KWS-SoC fix for the FPGA-only "duplicate aphase" symptom (see
++// docs/2port_dport_bridge_bug.md). When the M-stage stalls on a slow
++// load/store (e.g. multi-cycle bridge or M10K read latency that the
++// behavioural sram_sync doesn't model), the X-stage holds, but
++// bus_aph_req_d / d_htrans=NSEQ stays asserted across multiple
++// hready=1 boundaries. Some slaves (the AHB→APB bridge in this SoC)
++// faithfully sample NSEQ each time, producing duplicate transactions.
++// Track whether the current X-stage instruction's aphase has already
++// been accepted, and gate bus_aph_req_d so it goes low one cycle
++// after acceptance until X advances. Zero overhead in the common
++// case: x_stall (which includes "bus_aph_req_d && !bus_aph_ready_d")
++// drops the same cycle the aphase is accepted, so x_aph_done resets
++// at the same posedge X advances.
++reg x_aph_done;
++always @ (posedge clk or negedge rst_n) begin
++	if (!rst_n)
++		x_aph_done <= 1'b0;
++	else if (!x_stall)
++		x_aph_done <= 1'b0;
++	else if (bus_aph_ready_d)
++		x_aph_done <= 1'b1;
++end
++
+ // Fences are not issued until relevant buses are quiet.
+ wire m_dphase_in_flight;
+ assign x_stall_on_fence =
+@@ -1579,6 +1614,19 @@ hazard3_regfile_1w2r #(
  	.wen    (m_reg_wen)
  );
  
