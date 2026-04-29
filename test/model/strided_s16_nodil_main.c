@@ -107,7 +107,7 @@ static void uart_puthex(uint32_t v) {
 
 typedef struct {
     volatile uint32_t id;    /* 0x00: peripheral ID (ROV = 0xDEADCAFE) */
-    volatile uint32_t conf;  /* 0x04: [31:8]=clk_div, [4]=irq_en */
+    volatile uint32_t conf;  /* 0x04: [31:8]=clk_div, [6]=q8_en, [5]=ds_en, [4]=irq_en */
     volatile uint32_t fifo;  /* 0x08: audio FIFO (read one 32-bit sample) */
 } i2s_hw_t;
 
@@ -133,9 +133,11 @@ typedef struct {
 
 static void i2s_init(uint32_t clk_div) {
     /* Per i2s_regs.h:
-     *   CONF_IRQ_EN  bit 4       (mask 0x10)
-     *   CONF_DIV     bits[31:8]  (mask 0xFFFFFF00) */
-    I2S->conf = ((clk_div & 0xFFFFFFu) << 8) | (1u << 4);
+     *   CONF_DIV     bits[31:8]  (mask 0xFFFFFF00)
+     *   CONF_Q8_EN   bit 6       (mask 0x40) — HW int8 quantization
+     *   CONF_DS_EN   bit 5       (mask 0x20) — 2x HW downsampling
+     *   CONF_IRQ_EN  bit 4       (mask 0x10) */
+    I2S->conf = ((clk_div & 0xFFFFFFu) << 8) | (1u << 6) | (1u << 5) | (1u << 4);
 }
 
 /* ── Interrupt controller note ───────────────────────────────────────────── */
@@ -217,10 +219,11 @@ void __attribute__((interrupt("machine"))) kws_trap_handler(void) {
      * Read exactly I2S_FIFO_DEPTH samples. The IRQ line deasserts automatically
      * once the FIFO drains; no claim/complete handshake is needed. */
     for (int i = 0; i < I2S_FIFO_DEPTH; i++) {
-        int32_t raw = (int32_t)I2S->fifo;
-        int8_t  q7  = (int8_t)(raw >> 16);
-        if (ring_pos < SAMPLES_PER_CLIP)
-            ring_buf[ring_pos++] = q7;
+        uint32_t word = I2S->fifo;  /* 4 packed HW-quantized int8 samples */
+        for (int s = 24; s >= 0; s -= 8) {
+            if (ring_pos < SAMPLES_PER_CLIP)
+                ring_buf[ring_pos++] = (int8_t)(word >> s);
+        }
     }
 
     i2s_irq_count++;

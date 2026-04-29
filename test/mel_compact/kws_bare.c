@@ -92,7 +92,8 @@ typedef struct {
 #endif
 
 static void i2s_init(uint32_t clk_div) {
-    I2S->conf = ((clk_div & 0xFFFFFFu) << 8) | (1u << 4);
+    /* [31:8]=clk_div, [6]=q8_en (HW int8 quant), [5]=ds_en (2x downsample), [4]=irq_en */
+    I2S->conf = ((clk_div & 0xFFFFFFu) << 8) | (1u << 6) | (1u << 5) | (1u << 4);
 }
 
 /* ── RISC-V CSR helpers ──────────────────────────────────────────────────── */
@@ -160,12 +161,12 @@ void __attribute__((interrupt("machine"), aligned(4))) kws_trap_handler(void) {
     /* FIFO contains alternating L and R channel samples (L0,R0,L1,R1,...).
      * Only the L channel has real audio; R is a duplicate from the mic sim.
      * Read pairs: store L, discard R. */
-    for (int i = 0; i < I2S_FIFO_DEPTH / 2; i++) {
-        int32_t raw_l = (int32_t)I2S->fifo;  /* L channel */
-        (void)I2S->fifo;                       /* discard R channel */
-        int8_t  q7  = (int8_t)(raw_l >> 16);
-        if (ring_pos < SAMPLES_PER_CLIP)
-            ring_buf[ring_pos++] = q7;
+    for (int i = 0; i < I2S_FIFO_DEPTH; i++) {
+        uint32_t word = I2S->fifo;  /* 4 packed HW-quantized int8 samples */
+        for (int s = 24; s >= 0; s -= 8) {
+            if (ring_pos < SAMPLES_PER_CLIP)
+                ring_buf[ring_pos++] = (int8_t)(word >> s);
+        }
     }
 
     if (ring_pos >= SAMPLES_PER_CLIP)
