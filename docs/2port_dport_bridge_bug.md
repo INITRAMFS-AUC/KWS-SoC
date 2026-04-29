@@ -428,3 +428,111 @@ int main() {
 ```
 
 UART output: stream of `0xD0`.
+
+---
+
+## Bus-snooper investigation (2026-04-28)
+
+We built the bus snooper proposed in "Next steps" above and ran the
+`snooper_test` firmware on FPGA, in Verilator, and in Verilator with an
+artificially-induced 1-cycle SRAM read wait state. Findings below.
+
+The infrastructure (`peris/snooper/bus_snooper.v`, `test/uart/c/snooper_test.c`,
+`scripts/dump_snooper.gdb`, the d-port and CPU-internal taps via
+`patches/debug-snooper-hazard3_taps.patch`) lives on the `debug-snooper`
+branch and is preserved here as a reusable debug peripheral. It is *not*
+instantiated on `main` by default; bring it back as needed.
+
+### What the snooper captured
+
+For each `buggy_write(0x42)` call, the FPGA ring buffer shows **two**
+bridge transactions to `0x4000_400c`, two cycles apart:
+
+| field | TX1 (the spurious one) | TX2 (the "real" SW@1c4) |
+|---|---|---|
+| `bridge_haddr[15:0]` | `0x400c` | `0x400c` |
+| `dport_haddr` | `0x4000_400c` | `0x4000_400c` |
+| `bridge_hwdata` | `0x0001_ffe0` (= a stack address) | `0x42` |
+| `m_wdata` | `0x0001_ffe0` | `0x42` |
+| `xm_rs2`, `mw_rd` | `0`, `15` (no bypass) | `14`, `14` (bypass fires) |
+| `xm_memop` (M-stage) | `04` (LBU) | `04` (LBU) |
+| `m_bus_stall` | `1` | `0` |
+
+Both transactions have the *same* `dport_haddr`, so the crossbar is not
+misrouting — the CPU's d-port itself is presenting two aphases to the
+bridge. The first fires while M-stage is still on the LBU
+(`m_bus_stall=1`); m_wdata at that moment is whatever the bypass mux
+produces for the LBU's M-stage state, which is the LBU's own
+*address-calc result* (the load address, not the loaded byte). Low byte
+`0xE0`/`0xD0` is what we see in UART output as the "garbage" byte.
+
+The second transaction fires after M-stage advances to the SW; the bypass
+condition `xm_rs2 == mw_rd` (both = `a4` = 14) is true, so
+`m_wdata = mw_result = 0x42`, the correct data.
+
+The clean_write entries (with the asm-block NOP separation) emit one
+transaction per call with correct data.
+
+### Reproducing in Verilator
+
+Unmodified Verilator runs show **8 ring entries** (4 clean + 4 buggy
+correct, no spurious mid-buggy). Identical RTL, identical firmware, and
+yet sim is clean and FPGA isn't — so the trigger is something Quartus /
+the M10K does that the behavioural `sram_sync` doesn't model.
+
+Adding a single hready=0 wait state on every SRAM read in
+`ahb_sync_sram` (parameter `EXTRA_RD_WAIT=1`, off by default; see
+`patches/debug-snooper-sram_wait.patch`) is sufficient to reproduce the
+12-entry FPGA pattern *and* the corrupted UART output in Verilator. So
+the FPGA-only mechanism is timing on the d-port read response, and the
+behavioural SRAM model just happens to be one cycle faster than M10K's
+realised path.
+
+### Why the proper fix is hard from the snooper alone
+
+We attempted a minimal fix in `hazard3_core.v`: gate `bus_aph_req_d` so
+the same X-stage instruction's aphase fires exactly once
+(`reg x_aph_done`, set on `bus_aph_ready_d`, cleared on `!x_stall`).
+**It did not work.** Re-tracing the failing scenario with the wait
+state:
+
+- At the cycle the SRAM wait state ends, `m_bus_stall` drops to 0.
+- `x_stall` already includes the term `bus_aph_req_d && !bus_aph_ready_d`,
+  which goes to 0 the same cycle the aphase is accepted.
+- So `!x_stall` becomes 1 in the same cycle as `bus_aph_ready_d=1`, and
+  the reset branch wins the race in the always-block — `x_aph_done`
+  never latches.
+
+Beyond that, the snooper's two-entries-per-buggy-write is partly a
+**snooper-side double-fire**: the snooper's `bridge_hready` input is
+`dst_hready` from the crossbar (= the master's broadcast hready), which
+transitions `0→1` once when the SRAM wait-state ends *with the splitter's
+`slave_sel_d` still pointing at SRAM* and again when the bridge actually
+finishes its dphase. That gives two snooper commits for one bridge
+transaction, with two different `m_wdata` snapshots. Yet UART still
+receives the wrong byte, so the bridge *must* be sampling `pwdata` from
+the wrong cycle as well. We could not pin down which cycle without a
+waveform.
+
+### What we'd do next, if the bug becomes worth more time
+
+1. `make sim-verilator-vcd FLASH=test/build/snooper_test_xip.bin NO_JTAG=1`
+   and inspect the cycle when `apb_bridge_u.apb_state == S_WR0`.
+2. The single resolving question: *what is `cpu.core.m_wdata` at that
+   cycle?* If `0x42`, the bridge is mis-capturing — fix lives in
+   `ahbl_to_apb` or the splitter's slave-select handoff. If
+   `0x0001_ffd0` (the stack address), the M-stage hasn't advanced when
+   bridge captures — fix lives in the CPU's pipeline-advance / aph_req
+   logic, but the gating condition must be different from what we tried.
+
+### Decision: ship the working-fpga workaround
+
+The `working-fpga` branch's `x_stall_on_raw = 1'b1` change in
+`hazard3_core.v` (force a one-cycle X-stage stall on every load →
+store-data RAW pair) is verified correct on FPGA and costs at most one
+extra cycle per such pair, only on the rare patterns that exercise it.
+That cost is far smaller than the time we have already spent looking
+for the optimal fix, and it keeps the SoC shippable without further RTL
+risk. The snooper, taps, and reproducer infrastructure stay in tree as
+debug tools so a future investigator (us or upstream) can pick this up
+with the diagnostic ladder already built.
