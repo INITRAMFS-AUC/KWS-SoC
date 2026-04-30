@@ -26,8 +26,15 @@
 }:
 
 let
-  riscv-openocd-rev  = "riscv";   # tracks main "riscv" branch — pin to a SHA for reproducibility
-  riscv-openocd-hash = lib.fakeHash;
+  # Pinned to a concrete SHA on the riscv-collab "riscv" branch so the
+  # build is reproducible.  Re-prefetch with:
+  #   nix-prefetch-git --url https://github.com/riscv/riscv-openocd \
+  #                    --rev refs/heads/riscv --fetch-submodules
+  # and paste rev + hash here.  fetchFromGitHub interprets a bare
+  # branch name as `refs/tags/<name>` (which doesn't exist) — must be
+  # a SHA or refs/heads/X.
+  riscv-openocd-rev  = "eb01c632a4bb1c07d2bddb008d6987c809f1c496";  # 2025-10-09
+  riscv-openocd-hash = "sha256-4a6Mt7nT6Lwvj5hf3vC9CFyZ+wSPrdXn/Ng670ZyRLI=";
 
   src = fetchFromGitHub {
     owner = "riscv";
