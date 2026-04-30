@@ -19,7 +19,11 @@ file Hazard3/example_soc/libfpga/common/reset_sync.v
 
 list Hazard3/example_soc/libfpga/peris/uart/uart.f
 list Hazard3/example_soc/libfpga/peris/spi_03h_xip/spi_03h_xip.f
-list Hazard3/example_soc/libfpga/mem/ahb_cache.f
+# Skip libfpga/mem/ahb_cache.f — we use our own ro_dmc (peris/xip/ro_cache.v),
+# never libfpga's ahb_cache_readonly / ahb_cache_writeback / cache_mem_*.
+# sram_sync.v is still pulled in via ahb_sync_sram.f below.
+# Side benefit: avoids compiling ahb_cache_writeback.v which has an upstream
+# stray `;;` that Quartus (correctly) rejects but other tools accept silently.
 list Hazard3/example_soc/libfpga/mem/ahb_sync_sram.f
 
 list busfabric/busfabric.f

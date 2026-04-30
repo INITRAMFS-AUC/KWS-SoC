@@ -23,9 +23,13 @@ ROOT_DIR  := $(shell pwd)
 ## SIM
 SIM_DIR	:= $(ROOT_DIR)/sim
 
-# Use listfiles script to generate file list from .f file
-FILE_LIST			:= $(shell python3 $(SCRIPTS)/listfiles -f flat $(DOTF))
-FILE_LIST_VH 	:= $(shell python3 $(SCRIPTS)/listfiles -f flat --auto-vh $(DOTF))
+# Use a project-local listfiles script (kept in scripts/, not the Hazard3
+# submodule). Upstream's listfiles dropped the `--auto-vh` flag we rely on
+# for adding `include directories to Quartus's search path; vendoring the
+# old version here keeps us decoupled from upstream Hazard3 churn.
+LISTFILES		:= $(ROOT_DIR)/scripts/listfiles
+FILE_LIST		:= $(shell python3 $(LISTFILES) -f flat $(DOTF))
+FILE_LIST_VH 	:= $(shell python3 $(LISTFILES) -f flat --auto-vh $(DOTF))
 
 # FPGA device family and party, set by env shell with defaults being the de-10 standard
 FPGA_FAMILY ?= "Cyclone V"
@@ -33,16 +37,8 @@ FPGA_PART   ?= 5CSXFC6D6F31C6
 FPGA_BOARD  ?= DE10S
 FPGA_FAMILY_CLEAN := $(strip $(subst ",,$(FPGA_FAMILY)))
 
-ifeq ($(FPGA_FAMILY_CLEAN), Cyclone IV E)
-    # Cyclone IV Settings
-    PLL_SRC       	:= quartus/ip/ALTPLL_25/ALTPLL_25.qip
-    VERILOG_MACROS 	+= CYCLONE_IV=1
-else
-    # Default to Cyclone V
-    PLL_SRC					:= quartus/ip/clock_pll_36/clock_pll_36.qip
-    VERILOG_MACROS 	+= CYCLONE_V=1
-endif
-SRC_LIST_IP     		:= $(abspath $(PLL_SRC))
+GEN_PLL_QIP         := quartus/ip/clock_pll_gen/clock_pll_gen.qip
+SRC_LIST_IP         := $(abspath $(GEN_PLL_QIP))
 
 BUILD_DIR						:= build
 ## YOSYS VARS
@@ -69,8 +65,9 @@ SOF_FILE  := $(QUARTUS_DIR)/output_files/KWS-SoC.sof
 CONSTRAINTS_SRC ?= $(QUARTUS_DIR)/CycloneV/DE10_Constraints.tcl
 TOP_FPGA        := fpga_top
 
-# Clock config
-# WARNING TODO: Must be set to 36 as current PLL setup does not allow for anything else
+# Clock config — change CLK_MHZ here (or on the command line) to any integer MHz
+# achievable from 50 MHz (e.g. 25, 36, 40, 50, 100).
+# Run `make gen_pll` first when changing frequency, then `make clean_quartus map`.
 CLK_MHZ ?= 36
 
 # 128k Memory
@@ -92,26 +89,45 @@ UART_PARITY := N
 UART_STOP_BITS := 1
 UART_FLOW_CONTROL := 0
 
-UART_CFLAGS := -DCLK_MHZ=$(CLK_MHZ) \
-               -DUART_BAUD_RATE=$(UART_BAUD_RATE) \
-               -DUART_DATA_WIDTH=$(UART_DATA_WIDTH) \
-               -DUART_STOP_BITS=$(UART_STOP_BITS)
-
+# Verilog-macro form (NAME=VALUE, no -D prefix) — used by Quartus, Yosys, Verilator
+UART_VERILOG_MACROS := CLK_MHZ=$(CLK_MHZ) \
+                       UART_BAUD_RATE=$(UART_BAUD_RATE) \
+                       UART_DATA_WIDTH=$(UART_DATA_WIDTH) \
+                       UART_STOP_BITS=$(UART_STOP_BITS)
 
 # Parity
 ifeq ($(UART_PARITY), N)
-    UART_CFLAGS += -DUART_PARITY_NONE
+    UART_VERILOG_MACROS += UART_PARITY_NONE
 else ifeq ($(UART_PARITY), E)
-    UART_CFLAGS += -DUART_PARITY_EVEN
+    UART_VERILOG_MACROS += UART_PARITY_EVEN
 else ifeq ($(UART_PARITY), O)
-    UART_CFLAGS += -DUART_PARITY_ODD
+    UART_VERILOG_MACROS += UART_PARITY_ODD
 else
     $(error Invalid UART_PARITY: $(UART_PARITY). Use N, E, or O)
 endif
 
 # Flow Control
 ifeq ($(UART_FLOW_CONTROL), 1)
-    UART_CFLAGS += -DUART_FLOW_CTRL_EN
+    UART_VERILOG_MACROS += UART_FLOW_CTRL_EN
+endif
+
+# C-preprocessor form (for firmware and kws_soc_vpi.cpp)
+UART_CFLAGS := $(addprefix -D,$(UART_VERILOG_MACROS))
+
+# Propagate to all RTL tools (Quartus, Yosys, Verilator Verilog elaboration)
+VERILOG_MACROS += $(UART_VERILOG_MACROS)
+
+# Optional bus-snooper debug peripheral. Set DEBUG_SNOOPER=1 in the
+# environment (e.g. `make DEBUG_SNOOPER=1 sim-verilator …`) to:
+#   - define DEBUG_SNOOPER for Verilog elaboration (instantiates the
+#     snooper at 0x4000_C000, switches apb_splitter to N_SLAVES=4)
+#   - tell scripts/apply_patches.sh to apply the debug-snooper-* patches
+#     (CPU dbg_* output ports + ahb_sync_sram EXTRA_RD_WAIT parameter)
+# Default off — production builds do not pay the snooper's M10K / area cost.
+DEBUG_SNOOPER ?=
+ifneq ($(DEBUG_SNOOPER),)
+  VERILOG_MACROS += DEBUG_SNOOPER
+  export DEBUG_SNOOPER
 endif
 
 export GLOBAL_UART_CONFIG := $(UART_CFLAGS)
@@ -126,7 +142,7 @@ SH  := quartus_sh
 
 .PHONY: clean all lint sim sim-vcd sim_yosys sim_verilator sim-verilator-vcd \
         map fit asm sta program test test-xip testbench check_timing config \
-        openocd-sim openocd-hw gdb telnet \
+        openocd-sim openocd-hw gdb telnet gen_pll \
         clean_sim clean_yosys clean_verilator clean_test clean_quartus \
         synth_sky130 clean_sky130 \
         gls gls_saif clean_gls
@@ -134,7 +150,7 @@ SH  := quartus_sh
 all: $(TBEXEC) test
 
 # Yosys synthesis command to generate CXXRTL C++ code
-YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) -DSIMULATION=1 -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(XIP_DEBUG_VFLAG) $(FILE_LIST);
+YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) -DSIMULATION=1 -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(XIP_DEBUG_VFLAG) $(FILE_LIST);
 YOSYS_SYNTH_CMD += hierarchy -top $(TOP);
 YOSYS_SYNTH_CMD += write_cxxrtl $(YOSYS_BUILD_DIR)/dut.cpp
 
@@ -243,9 +259,21 @@ clean_gls:
 HAZARD3_CONFIG  :=$(ROOT_DIR)/hazard3_config.vh
 GEN_PARAMS_VH   := hazard3_instantiation_params.vh
 
-# TODO: Diffrentiate between scripts (ours) and libfpga scripts
-# Target to generate the instantiation parameters
-$(GEN_PARAMS_VH): $(HAZARD3_CONFIG)
+# --- PROJECT-LOCAL SUBMODULE PATCHES ---
+# Patches in patches/*.patch are applied to the Hazard3 submodule (and the
+# nested libfpga submodule) at build time. Idempotent — running twice does
+# nothing on the second pass. The submodules' tracked SHAs are unchanged so
+# `git submodule update` / upstream pulls remain conflict-free. `make clean`
+# reverts the patches so the worktree is left pristine.
+.PHONY: apply_patches revert_patches
+apply_patches:
+	@bash $(ROOT_DIR)/scripts/apply_patches.sh
+
+revert_patches:
+	@bash $(ROOT_DIR)/scripts/apply_patches.sh --revert
+
+# Hook every build path through apply_patches via the params .vh file
+$(GEN_PARAMS_VH): $(HAZARD3_CONFIG) | apply_patches
 	@echo "--- Generating Instantiation Parameters ---"
 	python3 scripts/gen_inst_params.py $< $@
 
@@ -374,7 +402,7 @@ $(VERILATOR_BUILD_DIR)/Vkws_soc: $(FILE_LIST) kws_soc_vpi.cpp sim/flashsim.cpp s
 		--Mdir $(VERILATOR_BUILD_DIR) \
 		-CFLAGS "-I$(ROOT_DIR) -march=native" \
 		--exe $(ROOT_DIR)/kws_soc_vpi.cpp $(ROOT_DIR)/sim/flashsim.cpp $(ROOT_DIR)/sim/i2s_mic_sim.cpp \
-		$(FILE_LIST) -I$(ROOT_DIR) -I$(HDL) -I$(DMAC_RTL_DIR) $(XIP_DEBUG_VFLAG)
+		$(FILE_LIST) -I$(ROOT_DIR) -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) $(XIP_DEBUG_VFLAG)
 	$(MAKE) -C $(VERILATOR_BUILD_DIR) -j -f V$(TOP).mk \
 		CXXFLAGS='$(VERILATOR_CXXFLAGS)' V$(TOP)
 
@@ -390,10 +418,10 @@ sim-verilator-vcd: $(VERILATOR_BUILD_DIR)/Vkws_soc test
 	./$(VERILATOR_BUILD_DIR)/Vkws_soc $(SIM_PORT_ARG) $(NO_JTAG_ARG) --waves waves.$(TRACE_EXT) $(FLASH_ARG) $(MIC_ARG) $(XIP_DEBUG_ARG) $(I2S_DEBUG_ARG) $(UART_DEBUG_ARG) $(CYCLES_ARG) $(EXTRA_ARGS)
 
 lint:
-	verilator --lint-only --top-module $(TOP) -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) $(FILE_LIST)
+	verilator --lint-only -Wno-fatal --top-module $(TOP) -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) $(FILE_LIST)
 
 lint_fpga:
-	verilator --lint-only --top-module $(TOP_FPGA) -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) -DCLK_MHZ=$(CLK_MHZ) $(FILE_LIST)
+	verilator --lint-only -Wno-fatal --top-module $(TOP_FPGA) -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) $(FILE_LIST)
 
 # Allow passing a flash binary via `make sim FLASH=path/to/fw.bin`
 FLASH ?=
@@ -450,8 +478,17 @@ CYCLES_ARG = $(if $(CYCLES),--cycles $(CYCLES),)
 ##### QUARTUS Targets #####
 ###########################
 
+# Generate (or regenerate) the PLL IP for the current CLK_MHZ / FPGA_FAMILY.
+# Re-run manually when changing CLK_MHZ: `make gen_pll`
+.PHONY: gen_pll
+gen_pll:
+	@echo "--- Generating PLL: $(CLK_MHZ) MHz ($(FPGA_FAMILY_CLEAN)) ---"
+	python3 scripts/gen_pll.py --clk-mhz $(CLK_MHZ) --device-family "$(FPGA_FAMILY_CLEAN)"
+
 # 0. Project Generation
 $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile
+	@echo "--- Generating PLL: $(CLK_MHZ) MHz ($(FPGA_FAMILY_CLEAN)) ---"
+	python3 scripts/gen_pll.py --clk-mhz $(CLK_MHZ) --device-family "$(FPGA_FAMILY_CLEAN)"
 	@echo "--- Setting up Quartus Project ---"
 	# We export these variables solely for the next command line
 	export QUARTUS_PROJECT=$(QUARTUS_PROJECT); \
@@ -467,7 +504,6 @@ $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile
 $(MAP_RPT): $(QSF_FILE) $(ALL_QUARTUS_SRCS) $(GEN_PARAMS_VH)
 	@echo "--- Synthesizing ---"
 	$(MAP) $(QUARTUS_PROJECT) --verilog_macro="SRAM_DEPTH=$(SRAM_DEPTH)" \
-			--verilog_macro="CLK_MHZ=$(CLK_MHZ)" \
         	$(foreach m,$(VERILOG_MACROS),--verilog_macro="$(m)")
 
 # 2. Fitting (Place & Route)
@@ -533,13 +569,13 @@ openocd-sim:
 	@echo " -> Sim Port:    $(SIM_PORT)"
 	@echo " -> GDB Port:    $(GDB_PORT)"
 	@echo " -> Telnet Port: $(TELNET_PORT)"
-	riscv-openocd -c "gdb port $(GDB_PORT)" -c "telnet port $(TELNET_PORT)" -c "tcl port disabled" -f openocd/sim.cfg
+	riscv-openocd -c "gdb_port $(GDB_PORT)" -c "telnet_port $(TELNET_PORT)" -c "tcl_port disabled" -f openocd/sim.cfg
 
 openocd-hw:
 	@echo "Starting OpenOCD (Hardware)..."
 	@echo " -> GDB Port:    $(GDB_PORT)"
 	@echo " -> Telnet Port: $(TELNET_PORT)"
-	riscv-openocd -c "gdb port $(GDB_PORT)" -c "telnet port $(TELNET_PORT)" -c "tcl port disabled" -f openocd/picodriver.cfg
+	riscv-openocd -c "gdb_port $(GDB_PORT)" -c "telnet_port $(TELNET_PORT)" -c "tcl_port disabled" -f openocd/picodriver.cfg
 
 gdb:
 	riscv32-unknown-elf-gdb -x gdbinit
@@ -547,7 +583,7 @@ gdb:
 telnet:
 	telnet localhost $(TELNET_PORT)
 
-clean:: clean_sim clean_test clean_quartus
+clean:: clean_sim clean_test clean_quartus revert_patches
 
 clean_sim:: clean_yosys clean_verilator
 
@@ -561,7 +597,8 @@ clean_yosys::
 clean_quartus::
 	rm -rf $(QUARTUS_SRC_DIR) $(QUARTUS_DIR)/db/ $(QUARTUS_DIR)/incremental_db/ $(QUARTUS_DIR)/output_files/ \
 		$(QUARTUS_DIR)/*.qws $(QUARTUS_DIR)/*.sof $(QUARTUS_DIR)/*.pof $(QUARTUS_DIR)/*.rpt $(QUARTUS_DIR)/*.cdf \
-		$(QUARTUS_DIR)/*.qsf $(QUARTUS_DIR)/*.qpf $(QUARTUS_DIR)/*.qws $(QUARTUS_DIR)/*dump.txt
+		$(QUARTUS_DIR)/*.qsf $(QUARTUS_DIR)/*.qpf $(QUARTUS_DIR)/*.qws $(QUARTUS_DIR)/*dump.txt \
+		$(QUARTUS_DIR)/ip/clock_pll_gen/
 
 clean_verilator::
 	rm -rf $(VERILATOR_BUILD_DIR) *.vcd *.fst

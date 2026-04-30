@@ -29,27 +29,16 @@ module fpga_top (
     inout  wire [3:0]   flash_io   // Bidirectional QSPI data bus (IO0-IO3)
 );
 
-    // Instantiate the FPGA-Specific PLL
+    // Instantiate the generated PLL (produced by scripts/gen_pll.py)
     wire sys_clk;
-    // Optional: Can use to hold reset if needed
     wire pll_locked;
 
-    `ifdef CYCLONE_V
-        clock_pll_36 my_pll (
-            .refclk     (clk_50),
-            .rst        (!rst_n),
-            .outclk_0   (sys_clk),
-            .locked     (pll_locked)
-        );
-    `elsif CYCLONE_IV
-        ALTPLL_25 my_pll (
-            .inclk0     (clk_50),
-            .c0         (sys_clk),
-            .locked     (pll_locked)
-        );
-    `else
-        initial $error("No PLL defined for this architecture!");
-    `endif
+    clock_pll_gen my_pll (
+        .inclk0 (clk_50),
+        .areset (!rst_n),
+        .c0     (sys_clk),
+        .locked (pll_locked)
+    );
 
 
     // Tristate buffers: merge internal do/doe/di onto the physical inout pads
@@ -72,7 +61,7 @@ module fpga_top (
         `include "hazard3_instantiation_params.vh"
     ) soc_inst (
         .clk            (sys_clk),      // Connect PLL output to core input
-        .rst_n          (rst_n),        // Safe Reset: Wait for PLL lock // Use & pll_locked for pll lock
+        .rst_n          (rst_n & pll_locked), // Hold reset until PLL locks and sys_clk is stable
 
         .tck            (tck),
         .trst_n         (trst_n),

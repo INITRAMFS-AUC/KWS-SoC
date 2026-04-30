@@ -11,7 +11,7 @@ module flash_ctrl_eb_tb;
     wire         csn;
     wire         sck;
     wire [3:0]   doe;
-    wire [3:0]   do;
+    wire [3:0]   spi_do;
     wire [3:0]   di;
 
     flash_ctrl_eb #(.LW(256)) duv (
@@ -24,16 +24,16 @@ module flash_ctrl_eb_tb;
         .csn(csn),
         .sck(sck),
         .doe(doe),
-        .do(do),
+        .spi_do(spi_do),
         .di(di)
     );
 
     wire [3:0] SIO;
     // Correctly handle tri-state bidirectional logic based on doe mask
-    assign SIO[0] = doe[0] ? do[0] : 1'bz;
-    assign SIO[1] = doe[1] ? do[1] : 1'bz;
-    assign SIO[2] = doe[2] ? do[2] : 1'bz;
-    assign SIO[3] = doe[3] ? do[3] : 1'bz;
+    assign SIO[0] = doe[0] ? spi_do[0] : 1'bz;
+    assign SIO[1] = doe[1] ? spi_do[1] : 1'bz;
+    assign SIO[2] = doe[2] ? spi_do[2] : 1'bz;
+    assign SIO[3] = doe[3] ? spi_do[3] : 1'bz;
 
     assign di = SIO;
 

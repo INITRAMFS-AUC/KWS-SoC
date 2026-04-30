@@ -10,3 +10,6 @@ file xip/ro_cache.v
 
 # DMA Controller
 file MS_DMAC_AHBL/hdl/rtl/MS_DMAC_AHBL.pp.v
+
+# Bus snooper (debug)
+file snooper/bus_snooper.v

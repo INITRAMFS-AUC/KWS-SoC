@@ -91,13 +91,15 @@ MODEL_LDFLAGS_XIP    = $(MODEL_LDFLAGS_COMMON) -Wl,-T,$(COMMON_DIR)/link.ld     
 # --- TARGET LISTS ---
 # *_sram: GDB workflow — `make gdb`, then `load build/<test>_sram.elf`, then `continue`
 SRAM_TARGETS = \
-	$(BUILD_DIR)/inf_loop_sram.elf    $(BUILD_DIR)/inf_loop_sram.dis    $(BUILD_DIR)/inf_loop_sram.bin \
-	$(BUILD_DIR)/hello_world_sram.elf $(BUILD_DIR)/hello_world_sram.dis $(BUILD_DIR)/hello_world_sram.bin \
-	$(BUILD_DIR)/readI2s_sram.elf     $(BUILD_DIR)/readI2s_sram.dis     $(BUILD_DIR)/readI2s_sram.bin \
+	$(BUILD_DIR)/inf_loop_sram.elf            $(BUILD_DIR)/inf_loop_sram.dis            $(BUILD_DIR)/inf_loop_sram.bin \
+	$(BUILD_DIR)/hello_world_sram.elf         $(BUILD_DIR)/hello_world_sram.dis         $(BUILD_DIR)/hello_world_sram.bin \
+	$(BUILD_DIR)/bridge_bug_test_sram.elf     $(BUILD_DIR)/bridge_bug_test_sram.dis     $(BUILD_DIR)/bridge_bug_test_sram.bin \
+	$(BUILD_DIR)/snooper_test_sram.elf        $(BUILD_DIR)/snooper_test_sram.dis        $(BUILD_DIR)/snooper_test_sram.bin \
+	$(BUILD_DIR)/readI2s_sram.elf             $(BUILD_DIR)/readI2s_sram.dis             $(BUILD_DIR)/readI2s_sram.bin \
 	$(BUILD_DIR)/malloc_simple_test_sram.elf  $(BUILD_DIR)/malloc_simple_test_sram.dis  $(BUILD_DIR)/malloc_simple_test_sram.bin \
 	$(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_torture_test_sram.dis $(BUILD_DIR)/malloc_torture_test_sram.bin \
 	$(BUILD_DIR)/memcpy_simple_test_sram.elf  $(BUILD_DIR)/memcpy_simple_test_sram.dis  $(BUILD_DIR)/memcpy_simple_test_sram.bin \
-	$(BUILD_DIR)/dma_test_sram.elf    $(BUILD_DIR)/dma_test_sram.dis    $(BUILD_DIR)/dma_test_sram.bin
+	$(BUILD_DIR)/dma_test_sram.elf            $(BUILD_DIR)/dma_test_sram.dis            $(BUILD_DIR)/dma_test_sram.bin
 # SRAM model artifacts intentionally disabled:
 # $(BUILD_DIR)/strided_s16_nodil_sram.elf $(BUILD_DIR)/strided_s16_nodil_sram.dis $(BUILD_DIR)/strided_s16_nodil_sram.bin
 # $(BUILD_DIR)/streaming_model_sram.elf $(BUILD_DIR)/streaming_model_sram.dis $(BUILD_DIR)/streaming_model_sram.bin
@@ -107,14 +109,15 @@ SRAM_TARGETS = \
 XIP_TARGETS = \
 	$(BUILD_DIR)/hello_world_xip.elf     $(BUILD_DIR)/hello_world_xip.dis     $(BUILD_DIR)/hello_world_xip.bin \
 	$(BUILD_DIR)/readI2s_xip.elf         $(BUILD_DIR)/readI2s_xip.dis         $(BUILD_DIR)/readI2s_xip.bin \
-	$(BUILD_DIR)/flash_read_test_xip.elf $(BUILD_DIR)/flash_read_test_xip.dis $(BUILD_DIR)/flash_read_test_xip.bin \
-	$(BUILD_DIR)/tests_xip.elf           $(BUILD_DIR)/tests_xip.dis           $(BUILD_DIR)/tests_xip.bin \
-	$(BUILD_DIR)/malloc_simple_test_xip.elf  $(BUILD_DIR)/malloc_simple_test_xip.dis  $(BUILD_DIR)/malloc_simple_test_xip.bin \
-	$(BUILD_DIR)/malloc_torture_test_xip.elf $(BUILD_DIR)/malloc_torture_test_xip.dis $(BUILD_DIR)/malloc_torture_test_xip.bin \
-	$(BUILD_DIR)/memcpy_simple_test_xip.elf  $(BUILD_DIR)/memcpy_simple_test_xip.dis  $(BUILD_DIR)/memcpy_simple_test_xip.bin \
-	$(BUILD_DIR)/strided_s16_nodil_xip.elf   $(BUILD_DIR)/strided_s16_nodil_xip.dis   $(BUILD_DIR)/strided_s16_nodil_xip.bin \
-	$(BUILD_DIR)/streaming_model_xip.elf $(BUILD_DIR)/streaming_model_xip.dis $(BUILD_DIR)/streaming_model_xip.bin \
-	$(BUILD_DIR)/dma_test_xip.elf        $(BUILD_DIR)/dma_test_xip.dis        $(BUILD_DIR)/dma_test_xip.bin \
+	$(BUILD_DIR)/flash_read_test_xip.elf       $(BUILD_DIR)/flash_read_test_xip.dis       $(BUILD_DIR)/flash_read_test_xip.bin \
+	$(BUILD_DIR)/snooper_test_xip.elf          $(BUILD_DIR)/snooper_test_xip.dis          $(BUILD_DIR)/snooper_test_xip.bin \
+	$(BUILD_DIR)/tests_xip.elf                 $(BUILD_DIR)/tests_xip.dis                 $(BUILD_DIR)/tests_xip.bin \
+	$(BUILD_DIR)/malloc_simple_test_xip.elf    $(BUILD_DIR)/malloc_simple_test_xip.dis    $(BUILD_DIR)/malloc_simple_test_xip.bin \
+	$(BUILD_DIR)/malloc_torture_test_xip.elf   $(BUILD_DIR)/malloc_torture_test_xip.dis   $(BUILD_DIR)/malloc_torture_test_xip.bin \
+	$(BUILD_DIR)/memcpy_simple_test_xip.elf    $(BUILD_DIR)/memcpy_simple_test_xip.dis    $(BUILD_DIR)/memcpy_simple_test_xip.bin \
+	$(BUILD_DIR)/strided_s16_nodil_xip.elf     $(BUILD_DIR)/strided_s16_nodil_xip.dis     $(BUILD_DIR)/strided_s16_nodil_xip.bin \
+	$(BUILD_DIR)/streaming_model_xip.elf       $(BUILD_DIR)/streaming_model_xip.dis       $(BUILD_DIR)/streaming_model_xip.bin \
+	$(BUILD_DIR)/dma_test_xip.elf              $(BUILD_DIR)/dma_test_xip.dis              $(BUILD_DIR)/dma_test_xip.bin \
 	$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin
 
 ALL_TARGETS = $(SRAM_TARGETS) $(XIP_TARGETS)
@@ -160,6 +163,12 @@ $(BUILD_DIR)/inf_loop_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/inf_loop.o
 $(BUILD_DIR)/hello_world_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/hello_world.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
+$(BUILD_DIR)/bridge_bug_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/bridge_bug_test.o
+	$(LD) $(SRAM_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/snooper_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/snooper_test.o
+	$(LD) $(SRAM_LDFLAGS) -o $@ $^
+
 $(BUILD_DIR)/readI2s_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/readI2s.o $(BUILD_DIR)/uart.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
@@ -183,6 +192,9 @@ $(BUILD_DIR)/readI2s_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/readI2s.o $(BUILD
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/flash_read_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/flash_read_test.o
+	$(LD) $(XIP_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/snooper_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/snooper_test.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/tests_xip.elf: $(BUILD_DIR)/tests.o
@@ -227,6 +239,12 @@ $(BUILD_DIR)/inf_loop.o: $(SANITY_C_DIR)/inf_loop.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
 
 $(BUILD_DIR)/hello_world.o: $(UART_C_DIR)/hello_world.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<
+
+$(BUILD_DIR)/bridge_bug_test.o: $(UART_C_DIR)/bridge_bug_test.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<
+
+$(BUILD_DIR)/snooper_test.o: $(UART_C_DIR)/snooper_test.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
 
 $(BUILD_DIR)/readI2s.o: $(I2S_C_DIR)/readI2s.c $(ROOT_MAKEFILE)

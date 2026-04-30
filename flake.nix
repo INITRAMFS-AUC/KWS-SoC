@@ -75,6 +75,7 @@
             name = "kws-soc";
 
             packages = [
+              (pkgs.python3.withPackages (ps: with ps; [ pyserial ]))
               # ── RTL simulation ───────────────────────────────────────────────
               # yosys: CXXRTL synthesis backend (make sim_yosys)
               yosysFixed
@@ -98,7 +99,6 @@
 
               # ── Scripting & build ────────────────────────────────────────────
               # python3: Hazard3/scripts/listfiles and scripts/gen_inst_params.py
-              pkgs.python3
               pkgs.gnumake
               pkgs.git
 

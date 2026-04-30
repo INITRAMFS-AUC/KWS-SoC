@@ -25,12 +25,15 @@
 
 // TODO: burst support
 
+`default_nettype none
+
 module ahbl_splitter #(
 	parameter N_PORTS = 2,
 	parameter W_ADDR = 32,
 	parameter W_DATA = 32,
 	parameter ADDR_MAP  = 64'h20000000_00000000,
 	parameter ADDR_MASK = 64'hf0000000_f0000000,
+	parameter IGNORE_BUS_ERRORS = 0,
 	parameter CONN_MASK = {N_PORTS{1'b1}}
 ) (
 	// Global signals
@@ -41,13 +44,16 @@ module ahbl_splitter #(
 	input  wire                      src_hready,
 	output wire                      src_hready_resp,
 	output wire                      src_hresp,
+	output wire                      src_hexokay,
 	input  wire [W_ADDR-1:0]         src_haddr,
 	input  wire                      src_hwrite,
 	input  wire [1:0]                src_htrans,
 	input  wire [2:0]                src_hsize,
 	input  wire [2:0]                src_hburst,
 	input  wire [3:0]                src_hprot,
+	input  wire [7:0]                src_hmaster,
 	input  wire                      src_hmastlock,
+	input  wire                      src_hexcl,
 	input  wire [W_DATA-1:0]         src_hwdata,
 	output wire [W_DATA-1:0]         src_hrdata,
 
@@ -55,20 +61,22 @@ module ahbl_splitter #(
 	output wire [N_PORTS-1:0]        dst_hready,
 	input  wire [N_PORTS-1:0]        dst_hready_resp,
 	input  wire [N_PORTS-1:0]        dst_hresp,
+	input  wire [N_PORTS-1:0]        dst_hexokay,
 	output wire [N_PORTS*W_ADDR-1:0] dst_haddr,
 	output wire [N_PORTS-1:0]        dst_hwrite,
 	output reg  [N_PORTS*2-1:0]      dst_htrans,
 	output wire [N_PORTS*3-1:0]      dst_hsize,
 	output wire [N_PORTS*3-1:0]      dst_hburst,
 	output wire [N_PORTS*4-1:0]      dst_hprot,
+	output wire [N_PORTS*8-1:0]      dst_hmaster,
 	output wire [N_PORTS-1:0]        dst_hmastlock,
+	output wire [N_PORTS-1:0]        dst_hexcl,
 	output wire [N_PORTS*W_DATA-1:0] dst_hwdata,
 	input  wire [N_PORTS*W_DATA-1:0] dst_hrdata
 );
 
 localparam HTRANS_IDLE = 2'b00;
 
-integer i;
 
 // Address decode
 
@@ -76,18 +84,20 @@ reg [N_PORTS-1:0] slave_sel_a_nomask;
 reg [N_PORTS-1:0] slave_sel_a;
 reg decode_err_a;
 
-always @ (*) begin
+always @ (*) begin: decode
+	integer i;
 	if (src_htrans == HTRANS_IDLE) begin
+		i = 0; // prevent spurious latch inference warning from yosys
 		slave_sel_a_nomask = {N_PORTS{1'b0}};
 		slave_sel_a = {N_PORTS{1'b0}};
 		decode_err_a = 1'b0;
 	end else begin
 		for (i = 0; i < N_PORTS; i = i + 1) begin
-			slave_sel_a_nomask[i] = !((src_haddr ^ ADDR_MAP[i * W_ADDR +: W_ADDR])
+			slave_sel_a_nomask[i] = ~|((src_haddr ^ ADDR_MAP[i * W_ADDR +: W_ADDR])
 				& ADDR_MASK[i * W_ADDR +: W_ADDR]);
 		end
 		slave_sel_a = slave_sel_a_nomask & CONN_MASK;
-		decode_err_a = !slave_sel_a_nomask;
+		decode_err_a = ~|slave_sel_a_nomask;
 	end
 end
 
@@ -101,9 +111,12 @@ assign dst_hwrite    = {N_PORTS{src_hwrite}};
 assign dst_hsize     = {N_PORTS{src_hsize}};
 assign dst_hburst    = {N_PORTS{src_hburst}};
 assign dst_hprot     = {N_PORTS{src_hprot}};
+assign dst_hmaster   = {N_PORTS{src_hmaster}};
 assign dst_hmastlock = {N_PORTS{src_hmastlock}};
+assign dst_hexcl     = {N_PORTS{src_hexcl}};
 
-always @ (*) begin
+always @ (*) begin: mask_htrans
+	integer i;
 	for (i = 0; i < N_PORTS; i = i + 1) begin
 		dst_htrans[i * 2 +: 2] = slave_sel_a[i] ? src_htrans : HTRANS_IDLE;
 	end 
@@ -152,8 +165,11 @@ onehot_mux #(
 // behaved masters.
 // One rule to avoid this is to *only use data-phase state for muxing*
 
-assign src_hready_resp = (!slave_sel_d && (err_ph1 || !decode_err_d)) ||
+assign src_hready_resp = (~|slave_sel_d && (IGNORE_BUS_ERRORS || err_ph1 || !decode_err_d)) ||
 	|(slave_sel_d & dst_hready_resp);
-assign src_hresp = decode_err_d || |(slave_sel_d & dst_hresp);
+
+assign src_hresp = !IGNORE_BUS_ERRORS && (decode_err_d || |(slave_sel_d & dst_hresp));
+
+assign src_hexokay = |(slave_sel_d & dst_hexokay);
 
 endmodule

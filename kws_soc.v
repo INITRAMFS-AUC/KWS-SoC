@@ -237,9 +237,10 @@ module kws_soc #(
   wire [       2:0] i_hburst;
   wire [       3:0] i_hprot;
   wire              i_hmastlock;
-  wire [       7:0] i_hmaster;   // unused by fabric
+  wire [       7:0] i_hmaster;
   wire              i_hready;
   wire              i_hresp;
+  wire              i_hexcl = 1'b0;    // i-port never does exclusive
   wire [W_DATA-1:0] i_hwdata;
   wire [W_DATA-1:0] i_hrdata;
 
@@ -251,13 +252,18 @@ module kws_soc #(
   wire [       2:0] d_hburst;
   wire [       3:0] d_hprot;
   wire              d_hmastlock;
-  wire [       7:0] d_hmaster;   // unused by fabric
-  wire              d_hexcl;     // exclusive access — crossbar doesn't support; tied off below
+  wire [       7:0] d_hmaster;
+  wire              d_hexcl;     // CPU output, fed into crossbar src_hexcl
   wire              d_hready;
   wire              d_hresp;
-  wire              d_hexokay = 1'b1;  // No global exclusive monitor
+  wire              d_hexokay;   // driven by crossbar src_hexokay[1] (d-port slot)
   wire [W_DATA-1:0] d_hwdata;
   wire [W_DATA-1:0] d_hrdata;
+
+  // Crossbar AHB5 master-side outputs (we don't have a real exclusive monitor;
+  // the splitter/arbiter return hexokay=1 by default when no slave drives it).
+  wire [2:0]        src_hexokay_xbar;  // {dmac, d-port, i-port}
+  assign d_hexokay = src_hexokay_xbar[1];
 
   wire              pwrup_req;
   wire              unblock_out;
@@ -305,8 +311,8 @@ module kws_soc #(
       .MVENDORID_VAL      (MVENDORID_VAL),
       .BREAKPOINT_TRIGGERS(BREAKPOINT_TRIGGERS),
       .IRQ_PRIORITY_BITS  (IRQ_PRIORITY_BITS),
-      .MIMPID_VAL         (MIMPID_VAL),
-      .MHARTID_VAL        (MHARTID_VAL),
+      // MIMPID_VAL / MHARTID_VAL are no longer parameters in upstream HEAD
+      // (8af9929); they are wired as input ports below (mhartid_val, eco_version).
       .REDUCED_BYPASS     (REDUCED_BYPASS),
       .MULDIV_UNROLL      (MULDIV_UNROLL),
       .MUL_FAST           (MUL_FAST),
@@ -384,7 +390,17 @@ module kws_soc #(
       .irq      ({uart_irq, dmac_irq}),
 
       .soft_irq (1'b0),
-      .timer_irq(timer_irq)
+      .timer_irq(timer_irq),
+
+      // Memory-ordering: we don't implement a fence interface, so tie fence_rdy
+      // high (always ready). The fence_i_vld / fence_d_vld outputs are unused.
+      .fence_i_vld (/* unused */),
+      .fence_d_vld (/* unused */),
+      .fence_rdy   (1'b1),
+
+      // Identification CSR values (formerly parameters MHARTID_VAL / MIMPID_VAL).
+      .mhartid_val (32'h0),
+      .eco_version (4'h0)
   );
 
 
@@ -409,6 +425,14 @@ module kws_soc #(
   //   Slave 1 — APB bridge  (0x4000_0000, mask 0xe000_0000)
   //   Slave 2 — DMAC regs   (0x6000_0000, mask 0xe000_0000)
   //   Slave 3 — XIP flash   (0x8000_0000, mask 0xe000_0000)
+
+  // CONN_MATRIX[master*N_SLAVES + slave] — which masters can reach which slaves
+  // Master 0 (i-port): SRAM[0]=1, Bridge[1]=0, DMACregs[2]=0, XIP[3]=1 → 4'b1001 → bits [ 3:0]
+  // Master 1 (d-port): SRAM[0]=1, Bridge[1]=1, DMACregs[2]=1, XIP[3]=1 → 4'b1111 → bits [ 7:4]
+  // Master 2 (dmac) : SRAM[0]=1, Bridge[1]=1, DMACregs[2]=0, XIP[3]=0 → 4'b0011 → bits [11:8]
+  // CONN_MATRIX_TRANSPOSE[slave*N_MASTERS + master]:
+  // SRAM←{dmac,d,i}=3'b111 [2:0], Bridge←{dmac,d,i}=3'b110 [5:3],
+  // DMACregs←{dmac,d,i}=3'b010 [8:6], XIP←{dmac,d,i}=3'b011 [11:9]
 
   // --- Slave-side wires ---
 
@@ -480,35 +504,45 @@ module kws_soc #(
       .W_ADDR   (W_ADDR),
       .W_DATA   (W_DATA),
       .ADDR_MAP (128'h80000000_60000000_40000000_00000000),
-      .ADDR_MASK(128'he0000000_e0000000_e0000000_e0000000)
+      .ADDR_MASK(128'he0000000_e0000000_e0000000_e0000000),
+      .CONN_MATRIX           (12'b0011_1111_1001),
+      .CONN_MATRIX_TRANSPOSE (12'b011_010_110_111)
   ) xbar_u (
       .clk  (clk),
       .rst_n(rst_n),
 
-      // Masters: {dmac [MSB], d-port, i-port [LSB]}
+      // Masters: {dmac [MSB], d-port, i-port [LSB]}.
+      // DMAC master has no exclusive monitor / hmaster, so tie those off.
       .src_hready_resp({dmac_m_hready,  d_hready,    i_hready   }),
       .src_hresp      ({dmac_m_hresp,   d_hresp,     i_hresp    }),
+      .src_hexokay    (src_hexokay_xbar),
       .src_haddr      ({dmac_m_haddr,   d_haddr,     i_haddr    }),
       .src_hwrite     ({dmac_m_hwrite,  d_hwrite,    i_hwrite   }),
       .src_htrans     ({dmac_m_htrans,  d_htrans,    i_htrans   }),
       .src_hsize      ({dmac_m_hsize,   d_hsize,     i_hsize    }),
       .src_hburst     ({3'b000,         d_hburst,    i_hburst   }),
       .src_hprot      ({4'b0011,        d_hprot,     i_hprot    }),
+      .src_hmaster    ({8'd0,           d_hmaster,   i_hmaster  }),
       .src_hmastlock  ({1'b0,           d_hmastlock, i_hmastlock}),
+      .src_hexcl      ({1'b0,           d_hexcl,     i_hexcl    }),
       .src_hwdata     ({dmac_m_hwdata,  d_hwdata,    i_hwdata   }),
       .src_hrdata     ({dmac_m_hrdata,  d_hrdata,    i_hrdata   }),
 
-      // Slaves: {xip [MSB], dmac regs, bridge, sram [LSB]}
+      // Slaves: {xip [MSB], dmac regs, bridge, sram [LSB]}.
+      // No slave drives hexokay; tie off.  dst_hmaster / dst_hexcl unused.
       .dst_hready_resp({xip_hready_resp,  dmac_hready_resp, bridge_hready_resp, sram0_hready_resp}),
       .dst_hready     ({xip_hready,       dmac_hready,      bridge_hready,      sram0_hready     }),
       .dst_hresp      ({xip_hresp,        1'b0,             bridge_hresp,       sram0_hresp      }),
+      .dst_hexokay    (4'b0000),
       .dst_haddr      ({xip_haddr,        dmac_haddr,       bridge_haddr,       sram0_haddr      }),
       .dst_hwrite     ({xip_hwrite,       dmac_hwrite,      bridge_hwrite,      sram0_hwrite     }),
       .dst_htrans     ({xip_htrans,       dmac_htrans,      bridge_htrans,      sram0_htrans     }),
       .dst_hsize      ({xip_hsize,        dmac_hsize,       bridge_hsize,       sram0_hsize      }),
       .dst_hburst     ({xip_hburst,       dmac_hburst,      bridge_hburst,      sram0_hburst     }),
       .dst_hprot      ({xip_hprot,        dmac_hprot,       bridge_hprot,       sram0_hprot      }),
+      .dst_hmaster    (/* unused */),
       .dst_hmastlock  ({xip_hmastlock,    dmac_hmastlock,   bridge_hmastlock,   sram0_hmastlock  }),
+      .dst_hexcl      (/* unused */),
       .dst_hwdata     ({xip_hwdata,       dmac_hwdata,      bridge_hwdata,      sram0_hwdata     }),
       .dst_hrdata     ({xip_hrdata,       dmac_hrdata,      bridge_hrdata,      sram0_hrdata     })
   );
