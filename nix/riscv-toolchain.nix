@@ -40,7 +40,7 @@
 , autoconf, automake, autoconf-archive
 , gawk, bison, flex, texinfo, gperf, libtool
 , patchutils, bc, perl, python3
-, gnumake, git, makeWrapper
+, gnumake, git, makeWrapper, which
 , gmp, mpfr, libmpc, isl, zlib, expat
 , file, gnused, gnutar, gzip, xz
 , curl, util-linux       # util-linux → flock for the meta-repo's Makefile
@@ -262,7 +262,7 @@ stdenv.mkDerivation {
     gawk bison flex texinfo gperf libtool patchutils
     bc perl python3
     gnumake git makeWrapper gnused gnutar gzip xz file
-    curl util-linux
+    curl util-linux which   # which: gcc/config.gcc + bootstrap scripts
     ninja cmake
   ];
   buildInputs = [
