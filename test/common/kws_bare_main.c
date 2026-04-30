@@ -14,13 +14,14 @@
  *                                  "CYCLES:" UART print.  Off by default —
  *                                  the Verilator/CXXRTL VPI testbench
  *                                  already records accurate cycle counts.
- *     -DKWS_DEBUG_DUMP_FIRST_CLIP  emit an `ebreak` after the first full
- *                                  ring_buf is captured, before memcpy /
- *                                  inference.  Used together with
- *                                  scripts/dump_ring_buf.gdb to dump the
- *                                  captured Q7 samples and diff them
- *                                  against the audio hex file fed by
- *                                  i2s_mic_sim.  Off by default.
+ *     -DKWS_DEBUG_DUMP_FIRST_CLIP  after the first full ring_buf is
+ *                                  captured, dump every Q7 sample over
+ *                                  UART in the same hex-word format as
+ *                                  the i2s_mic_sim input file (bracketed
+ *                                  by RB_BEGIN / RB_END), then ebreak.
+ *                                  Diff against e.g. sim/down_0000.hex
+ *                                  to expose any sample-level corruption
+ *                                  in the I2S → DMA → ring_buf path.
  *
  * PIPELINE
  * --------
@@ -297,12 +298,24 @@ int main(void) {
             continue;
 
 #ifdef KWS_DEBUG_DUMP_FIRST_CLIP
-        /* Halt after the FIRST captured clip so GDB can read ring_buf and
-         * diff it against the audio hex fed by i2s_mic_sim.  See
-         * scripts/dump_ring_buf.gdb. */
+        /* Dump the FIRST captured clip over UART in the same hex-word
+         * format as i2s_mic_sim's input file (q7 << 16, sign-extended in
+         * the upper 16 bits) so the output diff's directly against e.g.
+         * sim/down_0000.hex.  Bracketed by RB_BEGIN / RB_END for easy
+         * `awk '/RB_BEGIN/,/RB_END/'` extraction.  No GDB needed —
+         * decouples the diagnostic from LTO / DWARF / OpenOCD entirely. */
         if (!dumped) {
             dumped = 1;
-            asm volatile ("ebreak");
+            uart_puts("RB_BEGIN\r\n");
+            for (int k = 0; k < SAMPLES_PER_CLIP; k++) {
+                /* Sign-extend int8 ring_buf[k] into the upper 16 bits. */
+                uint32_t word = ((uint32_t)(int32_t)ring_buf[k] << 16)
+                                & 0xffff0000u;
+                uart_puthex(word);
+                uart_puts("\r\n");
+            }
+            uart_puts("RB_END\r\n");
+            asm volatile ("ebreak");   /* halt the run after the dump */
         }
 #endif
 

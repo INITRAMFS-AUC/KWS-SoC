@@ -335,10 +335,9 @@ MEL_DIR = mel_compact
 # Debug knobs (set on the make command line):
 #   KWS_DEBUG_DUMP_FIRST_CLIP=1
 #       Insert an `ebreak` in kws_bare_main.c after the first full ring_buf
-#       capture; pair with scripts/dump_ring_buf.gdb.  Also disables LTO so
-#       GDB can address ring_buf / ring_pos / i2s_irq_count via their
-#       symbols (with -flto, GCC drops DWARF location info for static
-#       volatiles even with -g, marking them <optimized out> in GDB).
+#       capture; pair with scripts/dump_ring_buf.gdb.  ring_buf / ring_pos
+#       / i2s_irq_count carry __attribute__((used)) so GDB sees them under
+#       LTO too — no need to drop -flto.
 #   USE_MCYCLE_CSR=1
 #       Enable the in-firmware mcycle-CSR cycle counter and "CYCLES:"
 #       UART line.  Off by default — VPI testbenches measure cycles more
@@ -347,7 +346,7 @@ KWS_DEBUG_DUMP_FIRST_CLIP ?= 0
 USE_MCYCLE_CSR           ?= 0
 KWS_EXTRA_CFLAGS         :=
 ifeq ($(KWS_DEBUG_DUMP_FIRST_CLIP),1)
-  KWS_EXTRA_CFLAGS += -DKWS_DEBUG_DUMP_FIRST_CLIP=1 -fno-lto
+  KWS_EXTRA_CFLAGS += -DKWS_DEBUG_DUMP_FIRST_CLIP=1
 endif
 ifeq ($(USE_MCYCLE_CSR),1)
   KWS_EXTRA_CFLAGS += -DUSE_MCYCLE_CSR=1
