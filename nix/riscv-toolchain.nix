@@ -311,6 +311,13 @@ stdenv.mkDerivation {
                qemu spike uclibc-ng; do
       touch "riscv-gnu-toolchain/$sub/.git"
     done
+
+    # Patch all script shebangs in-source.  The Nix build sandbox
+    # has no /usr/bin/env, so anything starting with `#!/usr/bin/env
+    # python3` (e.g. gcc/config/riscv/multilib-generator) fails to
+    # execute with "required file not found" otherwise.  patchShebangs
+    # rewrites those to absolute Nix-store interpreter paths.
+    patchShebangs riscv-gnu-toolchain gcc-14
     runHook postUnpack
   '';
 
