@@ -328,19 +328,37 @@ MEL_DIR = mel_compact
 # (weights header, model name, NNoM activation buffer size in KB) are passed
 # via -D so the only thing changing between targets is the model itself —
 # cycle counts compare apples-to-apples.
-MEL_CFLAGS = $(MODEL_CFLAGS) \
+
+# Debug knobs (set on the make command line):
+#   KWS_DEBUG_DUMP_FIRST_CLIP=1
+#       Insert an `ebreak` in kws_bare_main.c after the first full ring_buf
+#       capture; pair with scripts/dump_ring_buf.gdb.
+#   USE_MCYCLE_CSR=1
+#       Enable the in-firmware mcycle-CSR cycle counter and "CYCLES:"
+#       UART line.  Off by default — VPI testbenches measure cycles more
+#       accurately and without running extra firmware code.
+KWS_DEBUG_DUMP_FIRST_CLIP ?= 0
+USE_MCYCLE_CSR           ?= 0
+KWS_EXTRA_CFLAGS         :=
+ifeq ($(KWS_DEBUG_DUMP_FIRST_CLIP),1)
+  KWS_EXTRA_CFLAGS += -DKWS_DEBUG_DUMP_FIRST_CLIP=1
+endif
+ifeq ($(USE_MCYCLE_CSR),1)
+  KWS_EXTRA_CFLAGS += -DUSE_MCYCLE_CSR=1
+endif
+MEL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
              -DNNOM_STATIC_BUF_KB=36 \
              -DKWS_WEIGHTS_HEADER='"mel_compact_4blk_ch36_weights.h"' \
              -DKWS_MODEL_NAME='"mel_compact_4blk_ch36"' \
              -I$(MEL_DIR)
 
-STRIDED_CFLAGS = $(MODEL_CFLAGS) \
+STRIDED_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
                  -DNNOM_STATIC_BUF_KB=52 \
                  -DKWS_WEIGHTS_HEADER='"strided_s16_nodil_weights.h"' \
                  -DKWS_MODEL_NAME='"strided_s16_nodil"' \
                  -I$(MODEL_C_DIR)
 
-STREAMING_CFLAGS = $(MODEL_CFLAGS) \
+STREAMING_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
                    -DNNOM_STATIC_BUF_KB=36 \
                    -I$(STREAMING_MODEL_C_DIR) -I$(MODEL_C_DIR)
 
