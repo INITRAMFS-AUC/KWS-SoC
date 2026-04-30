@@ -10,10 +10,23 @@
  *     -DNNOM_STATIC_BUF_KB=52      (model-dependent activation peak)
  *
  * Optional:
- *     -DUSE_MCYCLE_CSR             enable in-firmware cycle measurement +
- *                                  "CYCLES:" UART print.  Off by default —
- *                                  the Verilator/CXXRTL VPI testbench
- *                                  already records accurate cycle counts.
+ *     -DUSE_MCYCLE_CSR             enable in-firmware cycle measurement.
+ *                                  Off by default — the Verilator/CXXRTL
+ *                                  VPI testbench records the total sim
+ *                                  cycle count too.  When on, prints per
+ *                                  clip:
+ *                                    CYCLES_CAPTURE: I2S+DMA+ISR window
+ *                                                    (CPU mostly WFI but
+ *                                                    SoC clock + perips
+ *                                                    are alive — real
+ *                                                    energy cost).
+ *                                    CYCLES_INFER:   model_run() only.
+ *                                    CYCLES_TOTAL:   capture + infer
+ *                                                    (the budget that
+ *                                                    matters for real-
+ *                                                    time / power).
+ *                                    CYCLES:         legacy alias =
+ *                                                    CYCLES_INFER.
  *     -DKWS_DEBUG_DUMP_FIRST_CLIP  after the first full ring_buf is
  *                                  captured, dump every Q7 sample over
  *                                  UART in the same hex-word format as
@@ -297,11 +310,28 @@ int main(void) {
     int dumped = 0;
 #endif
 
+#ifdef USE_MCYCLE_CSR
+    /* Capture-window measurement: read mcycle when we *start* waiting
+     * for a clip, then again when ring_ready latches.  Difference is
+     * "cycles spent capturing 1 clip via I2S+DMA+ISR" — the runtime
+     * cost we pay every inference window even though the CPU is in
+     * WFI.  Initialised here for the first iteration; updated at the
+     * end of the loop for each subsequent clip. */
+    uint32_t cyc_capture_start;
+    asm volatile ("csrr %0, mcycle" : "=r"(cyc_capture_start));
+#endif
+
     while (1) {
         if (!ring_ready)
             asm volatile ("wfi");
         if (!ring_ready)
             continue;
+
+#ifdef USE_MCYCLE_CSR
+        uint32_t cyc_capture_end;
+        asm volatile ("csrr %0, mcycle" : "=r"(cyc_capture_end));
+        uint32_t cycles_capture = cyc_capture_end - cyc_capture_start;
+#endif
 
 #ifdef KWS_DEBUG_DUMP_FIRST_CLIP
         /* Dump the FIRST captured clip over UART in the same hex-word
@@ -360,9 +390,26 @@ int main(void) {
         uart_puts(class_names[pred]);
         uart_puts("\r\n");
 #ifdef USE_MCYCLE_CSR
-        uart_puts("CYCLES:");
+        /* Three counters per clip:
+         *   CYCLES_CAPTURE  I2S + DMA + ISR window (CPU mostly WFI).
+         *   CYCLES_INFER    model_run() — the value the old "CYCLES:"
+         *                    line reported.  Kept under that name too
+         *                    for log-scraper backwards compatibility.
+         *   CYCLES_TOTAL    capture + inference, the end-to-end cost
+         *                    per clip (what matters for energy and
+         *                    real-time latency budgets). */
+        uart_puts("CYCLES_CAPTURE:");
+        uart_putdec((int)cycles_capture);
+        uart_puts("\r\nCYCLES_INFER:");
+        uart_putdec((int)cycles);
+        uart_puts("\r\nCYCLES_TOTAL:");
+        uart_putdec((int)(cycles_capture + cycles));
+        uart_puts("\r\nCYCLES:");      /* legacy alias = CYCLES_INFER */
         uart_putdec((int)cycles);
         uart_puts("\r\n");
+
+        /* Restart the capture-window timer for the next clip. */
+        asm volatile ("csrr %0, mcycle" : "=r"(cyc_capture_start));
 #endif
     }
 
