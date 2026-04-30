@@ -14,6 +14,13 @@
  *                                  "CYCLES:" UART print.  Off by default —
  *                                  the Verilator/CXXRTL VPI testbench
  *                                  already records accurate cycle counts.
+ *     -DKWS_DEBUG_DUMP_FIRST_CLIP  emit an `ebreak` after the first full
+ *                                  ring_buf is captured, before memcpy /
+ *                                  inference.  Used together with
+ *                                  scripts/dump_ring_buf.gdb to dump the
+ *                                  captured Q7 samples and diff them
+ *                                  against the audio hex file fed by
+ *                                  i2s_mic_sim.  Off by default.
  *
  * PIPELINE
  * --------
@@ -279,11 +286,25 @@ int main(void) {
     uart_puts("I2S started\r\n");
     csr_enable_mie();
 
+#ifdef KWS_DEBUG_DUMP_FIRST_CLIP
+    int dumped = 0;
+#endif
+
     while (1) {
         if (!ring_ready)
             asm volatile ("wfi");
         if (!ring_ready)
             continue;
+
+#ifdef KWS_DEBUG_DUMP_FIRST_CLIP
+        /* Halt after the FIRST captured clip so GDB can read ring_buf and
+         * diff it against the audio hex fed by i2s_mic_sim.  See
+         * scripts/dump_ring_buf.gdb. */
+        if (!dumped) {
+            dumped = 1;
+            asm volatile ("ebreak");
+        }
+#endif
 
         memcpy(nnom_input_data, (const void *)ring_buf,
                (size_t)SAMPLES_PER_CLIP);
