@@ -37,10 +37,15 @@
  *    to `lib.fakeHash`, run `nix build`, paste the new hashes back.
  */
 { lib, stdenv, fetchFromGitHub, fetchgit
-, autoconf, automake, gawk, bison, flex, texinfo, gperf, libtool
-, patchutils, bc, perl, python3, gnumake, git, makeWrapper
-, gmp, mpfr, libmpc, isl, zlib, expat, file, gnused, gnutar, gzip, xz
-, curl
+, autoconf, automake, autoconf-archive
+, gawk, bison, flex, texinfo, gperf, libtool
+, patchutils, bc, perl, python3
+, gnumake, git, makeWrapper
+, gmp, mpfr, libmpc, isl, zlib, expat
+, file, gnused, gnutar, gzip, xz
+, curl, util-linux       # util-linux → flock for the meta-repo's Makefile
+, ninja, cmake           # qemu/optional build helpers (skipped, but the
+, glib, libslirp         # configure script may still probe for them)
 }:
 
 let
@@ -78,14 +83,20 @@ let
   newlib-rev  = "26f7004bf73c421c3fd5e5a6ccf470d05337b435";  # 2023-12-31
   newlib-hash = "sha256-6jaggRYn2WH/aWCQsxzC15y5aYyBPBDkqN7C16u63ac=";
 
-  # We deliberately skip dejagnu (testsuite only — we don't run tests),
-  # gdb (we use riscv-openocd), glibc / musl / uclibc-ng (we build
+  # 5. gdb at the meta-repo's `gdb` submodule pin.  Same upstream as
+  #    binutils (sourceware binutils-gdb.git) but a different branch
+  #    (gdb-15-branch) so a different commit.  The local recipe builds
+  #    gdb by default; --with-gcc-src does not turn it off.
+  gdb-rev  = "23c84db5b3cb4e8a0d555c76e1a0ab56dc8355f3";  # 2024-09-29
+  gdb-hash = "sha256-hz0iyBCZGkSZ/eHWaPdusqlCLSHyyWDNn/ty1X4tKEE=";
+
+  # We deliberately skip glibc / musl / uclibc-ng (we build
   # `riscv32-unknown-elf` with newlib, no full libc needed), llvm
   # (we use GCC), pk (no proxy kernel), qemu (sim done in Verilator),
-  # spike (sim done in Verilator), uclibc-ng.  The Makefile picks
-  # which submodules to actually use based on configure flags; with
-  # --with-newlib + no --enable-* for the rest, it never looks at
-  # those directories.
+  # spike (sim done in Verilator), dejagnu (testsuite only).  The
+  # Makefile picks which submodules to actually use based on configure
+  # flags; with --with-newlib + default --enable-gdb (no --disable-*
+  # for the rest), it consumes binutils + gcc + newlib + gdb only.
 
   # Multilib generator string: every soft-float ilp32 extension combo our
   # SoC could plausibly target, deliberately excluding Zcmp (Hazard3 has
@@ -209,54 +220,97 @@ let
     fetchSubmodules = false;
   };
 
+  gdb-src = fetchgit {
+    url    = "https://sourceware.org/git/binutils-gdb.git";
+    rev    = gdb-rev;
+    hash   = gdb-hash;
+    fetchSubmodules = false;
+  };
+
 in
 stdenv.mkDerivation {
   pname    = "riscv32-unknown-elf-gcc14-no-zcmp";
   version  = "14-${riscv-gnu-toolchain-rev}";
 
-  # Four sources, assembled in unpackPhase to mirror the local recipe:
-  #   riscv-gnu-toolchain/        ← meta-repo (configure + Makefile.in)
-  #   riscv-gnu-toolchain/binutils ← populate the empty submodule dir
-  #   riscv-gnu-toolchain/newlib   ← populate the empty submodule dir
-  #   gcc-14/                     ← sibling, referenced via --with-gcc-src
+  # Five sources, assembled in unpackPhase to mirror the local recipe:
+  #   riscv-gnu-toolchain/         ← meta-repo (configure + Makefile.in)
+  #   riscv-gnu-toolchain/binutils ← overlay submodule
+  #   riscv-gnu-toolchain/newlib   ← overlay submodule
+  #   riscv-gnu-toolchain/gdb      ← overlay submodule
+  #   gcc-14/                      ← sibling, referenced via --with-gcc-src
   srcs = [
     riscv-gnu-toolchain-src
     gcc-14-src
     binutils-src
     newlib-src
+    gdb-src
   ];
   sourceRoot = ".";
 
+  # Mapped 1:1 from the local Ubuntu prerequisites list:
+  #   sudo apt install autoconf automake autotools-dev curl python3
+  #   python3-pip libmpc-dev libmpfr-dev libgmp-dev gawk build-essential
+  #   bison flex texinfo gperf libtool patchutils bc zlib1g-dev
+  #   libexpat-dev ninja-build git cmake libglib2.0-dev libslirp-dev
+  # build-essential / autotools-dev are subsumed by stdenv + autoconf +
+  # automake.  python3-pip is unused (we don't pip-install anything at
+  # build time).  curl satisfies the configure check for a file-transfer
+  # utility (never invoked under Nix sandbox).  util-linux ships flock
+  # which the meta-repo's Makefile uses to serialise submodule init.
   nativeBuildInputs = [
-    autoconf automake gawk bison flex texinfo gperf libtool patchutils
-    bc perl python3 gnumake git makeWrapper gnused gnutar gzip xz file
-    curl   # configure rejects without one of curl/wget/ftp on PATH;
-           # never actually used at build time (Nix sandbox = no net).
+    autoconf automake autoconf-archive
+    gawk bison flex texinfo gperf libtool patchutils
+    bc perl python3
+    gnumake git makeWrapper gnused gnutar gzip xz file
+    curl util-linux
+    ninja cmake
   ];
-  buildInputs = [ gmp mpfr libmpc isl zlib expat ];
+  buildInputs = [
+    gmp mpfr libmpc isl zlib expat
+    glib libslirp
+  ];
 
   # `cp -r` preserves the +x bit on configure / install-sh / etc.;
   # `chmod -R u+w` makes the tree writable since Nix-store files are
-  # mode 444 by default.  We overlay binutils + newlib INSIDE the
-  # meta-repo's submodule paths so the meta-repo's Makefile finds them
-  # at exactly the locations its build steps expect — same shape as
-  # `git submodule update --init` would produce in the local recipe.
+  # mode 444 by default.  We overlay binutils + newlib + gdb INSIDE
+  # the meta-repo's submodule paths so the meta-repo's Makefile finds
+  # them at exactly the locations its build steps expect — same shape
+  # as `git submodule update --init` would produce in the local recipe.
+  #
+  # The meta-repo's Makefile has a pattern rule `$(srcdir)/%/.git:` that
+  # runs `git submodule update` on demand.  We can't run that under the
+  # Nix sandbox (no .git, no network), so we pre-touch a `.git` marker
+  # in every submodule directory to satisfy the rule's existence check
+  # — Make sees the file, treats the prerequisite as already built, and
+  # skips the recipe entirely.
   unpackPhase = ''
     runHook preUnpack
     cp -r "${riscv-gnu-toolchain-src}" riscv-gnu-toolchain
     cp -r "${gcc-14-src}"              gcc-14
     chmod -R u+w riscv-gnu-toolchain gcc-14
 
-    # Replace the empty `binutils` / `newlib` submodule stubs with the
-    # real (pre-fetched, hash-pinned) sources.  rmdir first so the
-    # cp doesn't end up nesting `binutils/binutils-gdb/`.
-    rmdir riscv-gnu-toolchain/binutils
-    cp -r "${binutils-src}" riscv-gnu-toolchain/binutils
-    chmod -R u+w riscv-gnu-toolchain/binutils
+    # Replace the empty submodule stubs with the real prefetched
+    # sources.  rmdir first so cp doesn't nest e.g. binutils/binutils-gdb/.
+    for sub_pair in \
+      'binutils:${binutils-src}' \
+      'newlib:${newlib-src}' \
+      'gdb:${gdb-src}'; do
+      sub="''${sub_pair%%:*}"
+      src="''${sub_pair#*:}"
+      rmdir "riscv-gnu-toolchain/$sub"
+      cp -r "$src" "riscv-gnu-toolchain/$sub"
+      chmod -R u+w "riscv-gnu-toolchain/$sub"
+    done
 
-    rmdir riscv-gnu-toolchain/newlib
-    cp -r "${newlib-src}" riscv-gnu-toolchain/newlib
-    chmod -R u+w riscv-gnu-toolchain/newlib
+    # Pre-create .git markers in every submodule dir (including the
+    # ones we don't populate — dejagnu, glibc, llvm, musl, pk, qemu,
+    # spike, uclibc-ng, plus gcc).  Touching the file makes the
+    # meta-repo's `$(srcdir)/%/.git:` rule a no-op so it never tries
+    # to run `git submodule update` against a non-existent .git.
+    for sub in binutils dejagnu gcc gdb glibc llvm musl newlib pk \
+               qemu spike uclibc-ng; do
+      touch "riscv-gnu-toolchain/$sub/.git"
+    done
     runHook postUnpack
   '';
 
