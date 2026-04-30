@@ -22,7 +22,7 @@
 { lib, stdenv, fetchFromGitHub
 , autoconf, automake, libtool, pkg-config, gnumake, gnused
 , libusb1, libftdi1, hidapi, jimtcl, libjaylink, libyaml
-, makeWrapper, perl
+, makeWrapper, perl, which
 }:
 
 let
@@ -54,6 +54,7 @@ stdenv.mkDerivation {
 
   nativeBuildInputs = [
     autoconf automake libtool pkg-config gnumake gnused makeWrapper perl
+    which   # ./bootstrap uses `which libtool` to locate libtool
   ];
   buildInputs = [
     libusb1 libftdi1 hidapi jimtcl libjaylink libyaml
