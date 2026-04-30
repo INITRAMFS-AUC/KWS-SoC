@@ -212,7 +212,7 @@ $(BUILD_DIR)/memcpy_simple_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/memcpy
 $(BUILD_DIR)/strided_s16_nodil_xip.elf: \
     $(COMMON_DIR)/crt0.s \
     $(COMMON_DIR)/sbrk.c \
-    $(MODEL_C_DIR)/strided_s16_nodil_main.c \
+    $(COMMON_DIR)/kws_bare_main.c \
     $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
 	$(CC) $(STRIDED_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
 	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/strided_s16_nodil_xip.bin
@@ -307,14 +307,31 @@ clean:
 -include $(wildcard $(BUILD_DIR)/*.d)
 
 MEL_DIR = mel_compact
-MEL_CFLAGS      = $(MODEL_CFLAGS) -DNNOM_STATIC_BUF_KB=36 -I$(MEL_DIR)
-STRIDED_CFLAGS  = $(MODEL_CFLAGS) -DNNOM_STATIC_BUF_KB=52 -I$(MODEL_C_DIR)
-STREAMING_CFLAGS = $(MODEL_CFLAGS) -DNNOM_STATIC_BUF_KB=36 -I$(STREAMING_MODEL_C_DIR) -I$(MODEL_C_DIR)
+
+# All KWS NNoM models share test/common/kws_bare_main.c.  Per-model knobs
+# (weights header, model name, NNoM activation buffer size in KB) are passed
+# via -D so the only thing changing between targets is the model itself —
+# cycle counts compare apples-to-apples.
+MEL_CFLAGS = $(MODEL_CFLAGS) \
+             -DNNOM_STATIC_BUF_KB=36 \
+             -DKWS_WEIGHTS_HEADER='"mel_compact_4blk_ch36_weights.h"' \
+             -DKWS_MODEL_NAME='"mel_compact_4blk_ch36"' \
+             -I$(MEL_DIR)
+
+STRIDED_CFLAGS = $(MODEL_CFLAGS) \
+                 -DNNOM_STATIC_BUF_KB=52 \
+                 -DKWS_WEIGHTS_HEADER='"strided_s16_nodil_weights.h"' \
+                 -DKWS_MODEL_NAME='"strided_s16_nodil"' \
+                 -I$(MODEL_C_DIR)
+
+STREAMING_CFLAGS = $(MODEL_CFLAGS) \
+                   -DNNOM_STATIC_BUF_KB=36 \
+                   -I$(STREAMING_MODEL_C_DIR) -I$(MODEL_C_DIR)
 
 $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf: \
     $(COMMON_DIR)/crt0.s \
     $(COMMON_DIR)/sbrk.c \
-    $(MEL_DIR)/kws_bare.c \
+    $(COMMON_DIR)/kws_bare_main.c \
     $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
 	$(CC) $(MEL_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
 	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin
