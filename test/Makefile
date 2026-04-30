@@ -81,7 +81,7 @@ MODEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
                -DNNOM_BARE_METAL \
                "-DNNOM_LOG(...)=" \
                -DCLK_MHZ=36 -DUART_BAUD_RATE=115200 \
-               -DI2S_FIFO_DEPTH=8 \
+               -DI2S_FIFO_DEPTH=4 \
                -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR)
 
 # Truly bare-metal link: drop newlib's libc / libgloss / libgcc entirely.
