@@ -40,6 +40,7 @@
 , autoconf, automake, gawk, bison, flex, texinfo, gperf, libtool
 , patchutils, bc, perl, python3, gnumake, git, makeWrapper
 , gmp, mpfr, libmpc, isl, zlib, expat, file, gnused, gnutar, gzip, xz
+, curl
 }:
 
 let
@@ -229,6 +230,8 @@ stdenv.mkDerivation {
   nativeBuildInputs = [
     autoconf automake gawk bison flex texinfo gperf libtool patchutils
     bc perl python3 gnumake git makeWrapper gnused gnutar gzip xz file
+    curl   # configure rejects without one of curl/wget/ftp on PATH;
+           # never actually used at build time (Nix sandbox = no net).
   ];
   buildInputs = [ gmp mpfr libmpc isl zlib expat ];
 
