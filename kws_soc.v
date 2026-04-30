@@ -743,8 +743,14 @@ module kws_soc #(
       .dreq(  /* unused */)
   );
 
+  // FIFO_DEPTH comes from the root Makefile (-DI2S_FIFO_DEPTH=N).  The
+  // firmware DMA burst (test/common/kws_bare_main.c) is derived as N/2
+  // from the same source so the two stay in lock-step — see task #13.
+`ifndef I2S_FIFO_DEPTH
+`define I2S_FIFO_DEPTH 16
+`endif
   apb_i2s_receiver #(
-      .FIFO_DEPTH(8)
+      .FIFO_DEPTH(`I2S_FIFO_DEPTH)
   ) apb_i2s_receiver_inst (
       .clk          (clk),
       .rst_n        (rst_n),

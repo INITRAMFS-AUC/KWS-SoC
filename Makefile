@@ -75,6 +75,15 @@ SRAM_DEPTH ?= 32768
 
 export SRAM_DEPTH := $(SRAM_DEPTH)
 
+# I2S receiver hardware FIFO depth — single source of truth for both
+# Verilog (apb_i2s_receiver's FIFO_DEPTH parameter, threshold = N/2) and
+# firmware (DMA burst = N/2, derived in test/Makefile).  Until task #12
+# lands (autonomous DMA drain), the firmware burst MUST equal the half-
+# full threshold or every other 4-block in ring_buf is silently zero-
+# padded by FIFO-empty reads — keep both knobs derived from this one.
+I2S_FIFO_DEPTH ?= 16
+export I2S_FIFO_DEPTH
+
 # DMA Controller base address (slave registers at 0x6000_0000)
 DMAC_BASE_ADDR ?= 0x60000000
 
@@ -93,7 +102,8 @@ UART_FLOW_CONTROL := 0
 UART_VERILOG_MACROS := CLK_MHZ=$(CLK_MHZ) \
                        UART_BAUD_RATE=$(UART_BAUD_RATE) \
                        UART_DATA_WIDTH=$(UART_DATA_WIDTH) \
-                       UART_STOP_BITS=$(UART_STOP_BITS)
+                       UART_STOP_BITS=$(UART_STOP_BITS) \
+                       I2S_FIFO_DEPTH=$(I2S_FIFO_DEPTH)
 
 # Parity
 ifeq ($(UART_PARITY), N)

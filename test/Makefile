@@ -73,6 +73,13 @@ XIP_LDFLAGS  = -T $(COMMON_DIR)/link.ld      --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTE
 # `-g` adds DWARF debug info to the ELF only — `objcopy -O binary` strips
 # `.debug_*` so the runtime .bin (and the SRAM image we ship to flash)
 # stays the exact same size.  Cost is purely ELF-on-disk + GDB working.
+# I2S FIFO depth flows from the root Makefile.  Until task #12 (autonomous
+# DMA drain) lands, the DMA burst MUST equal the I2S half-full threshold
+# (= FIFO_DEPTH / 2) or ring_buf gets silently zero-padded — see task #13.
+# Derive the burst from the same source so the two can't desync.
+I2S_FIFO_DEPTH      ?= 16
+I2S_DMA_BURST_WORDS := $(shell expr $(I2S_FIFO_DEPTH) / 2)
+
 MODEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
                -Os -flto -g -std=gnu99 \
                -ffunction-sections -fdata-sections \
@@ -81,7 +88,7 @@ MODEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
                -DNNOM_BARE_METAL \
                "-DNNOM_LOG(...)=" \
                -DCLK_MHZ=36 -DUART_BAUD_RATE=115200 \
-               -DI2S_FIFO_DEPTH=4 \
+               -DI2S_DMA_BURST_WORDS=$(I2S_DMA_BURST_WORDS) \
                -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR)
 
 # Truly bare-metal link: drop newlib's libc / libgloss / libgcc entirely.

@@ -111,8 +111,14 @@ typedef struct {
 #define I2S_FIFO_PA      0x40008008UL   /* physical address of I2S->fifo for DMA */
 #define I2S              ((i2s_hw_t *)I2S_BASE_ADDR)
 
-#ifndef I2S_FIFO_DEPTH
-#define I2S_FIFO_DEPTH   8
+/* DMA burst size in 32-bit words.  MUST equal the I2S receiver's half-
+ * full IRQ threshold (= hardware FIFO_DEPTH / 2) or every other 4-block
+ * in ring_buf is silently zero-padded by FIFO-empty reads.  Don't set
+ * this directly — it's derived in test/Makefile from the root Makefile's
+ * I2S_FIFO_DEPTH so the two can't drift apart.  Goes away once task #12
+ * (autonomous DMA drain) lands. */
+#ifndef I2S_DMA_BURST_WORDS
+#  error "I2S_DMA_BURST_WORDS must be passed via -D (= I2S_FIFO_DEPTH / 2)"
 #endif
 
 /* I2S clock divisor: SoC_clock / (sample_rate * 32_bits * 2_channels)
@@ -153,13 +159,13 @@ typedef struct {
 #define DMAC_CTRL_I2S_PIRQ \
     ((1u <<  0) | (1u <<  8) | (2u << 16) | (0u << 18) | (2u << 24) | (4u << 26))
 
-static volatile uint32_t dma_batch[I2S_FIFO_DEPTH];
+static volatile uint32_t dma_batch[I2S_DMA_BURST_WORDS];
 
 static void dma_arm(void) {
     DMAC->control = DMAC_CTRL_I2S_PIRQ & ~1u;       /* EN=0 while reconfiguring */
     DMAC->saddr   = I2S_FIFO_PA;
     DMAC->daddr   = (uint32_t)(uintptr_t)dma_batch;
-    DMAC->count   = (uint32_t)(I2S_FIFO_DEPTH - 1); /* COUNT = N-1 for N transfers */
+    DMAC->count   = (uint32_t)(I2S_DMA_BURST_WORDS - 1); /* COUNT = N-1 for N transfers */
     DMAC->control = DMAC_CTRL_I2S_PIRQ;              /* EN=1 — armed on PIRQ[0] */
 }
 
@@ -241,7 +247,7 @@ void __attribute__((interrupt("machine"), aligned(4))) kws_trap_handler(void) {
 
     DMAC->icr = 1u;   /* clear ICR latch so IRQ de-asserts before mret */
 
-    for (int i = 0; i < I2S_FIFO_DEPTH; i++) {
+    for (int i = 0; i < I2S_DMA_BURST_WORDS; i++) {
         if (ring_pos < SAMPLES_PER_CLIP)
             ring_buf[ring_pos++] = (int8_t)((uint32_t)dma_batch[i] >> 16);
     }
