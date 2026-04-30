@@ -34,41 +34,23 @@
           };
 
           # ── RISC-V 32-bit bare-metal cross toolchain ────────────────────────
-          # nixpkgs ships the toolchain under the riscv32-none-elf- prefix, but
-          # test/Makefile hardcodes CROSS_COMPILE = riscv32-unknown-elf-
-          # so we add aliased symlinks for every riscv32-none-elf-* binary.
-          riscvPkgs = pkgs.pkgsCross.riscv32-embedded;
-
-          riscvToolchain = pkgs.symlinkJoin {
-            name = "riscv32-unknown-elf-toolchain";
-            paths = with riscvPkgs.buildPackages; [ gcc binutils gdb ];
-            postBuild = ''
-              for exe in "$out"/bin/riscv32-none-elf-*; do
-                base=$(basename "$exe")
-                alias="riscv32-unknown-elf-''${base#riscv32-none-elf-}"
-                [ -e "$out/bin/$alias" ] || ln -s "$exe" "$out/bin/$alias"
-              done
-            '';
-          };
+          # Build the riscv-collab/riscv-gnu-toolchain meta-repo + GCC 14
+          # branch from source (multilib soft-float, no Zcmp), matching the
+          # recipe used to install /opt/riscv/gcc14-no-zcmp.  The previous
+          # nixpkgs-backed toolchain was GCC 13.3 single-multilib (ilp32d
+          # libgcc only) and produced inference cycle counts ~50M cycles
+          # off the canonical multilib build.  See nix/riscv-toolchain.nix
+          # for the full recipe + first-build hash flow.
+          riscvToolchain = pkgs.callPackage ./nix/riscv-toolchain.nix {};
 
           # ── OpenOCD with RISC-V support ─────────────────────────────────────
-          # The installed riscv-openocd is 0.12.0+dev-04404 (riscv/riscv-openocd fork,
-          # built with --enable-remote-bitbang --enable-ftdi --program-prefix=riscv-).
-          # nixpkgs openocd 0.12.0 is built with the same flags (verified: configureFlags
-          # includes --enable-remote-bitbang and --enable-ftdi) so it is a drop-in.
-          # We alias the binary as `riscv-openocd` to match Makefile invocations.
-          #
-          # TODO: Run `make openocd-sim` with this binary to confirm the remote-bitbang
-          # JTAG session works identically to the fork before removing this comment.
-          # If there are issues, replace with a derivation that builds the fork from:
-          #   github:riscv/riscv-openocd  (pin to commit eb01c632a or HEAD of riscv-0.12 branch)
-          riscvOpenocd = pkgs.symlinkJoin {
-            name = "riscv-openocd";
-            paths = [ pkgs.openocd ];
-            postBuild = ''
-              ln -s "$out/bin/openocd" "$out/bin/riscv-openocd"
-            '';
-          };
+          # Build the riscv/riscv-openocd fork from source so we get the
+          # same `riscv-openocd` binary as the system install at
+          # /usr/local/bin/riscv-openocd (configured with
+          # --enable-remote-bitbang --enable-ftdi --program-prefix=riscv-).
+          # See nix/riscv-openocd.nix for the recipe + first-build hash
+          # flow.
+          riscvOpenocd = pkgs.callPackage ./nix/riscv-openocd.nix {};
 
         in {
           default = pkgs.mkShell {
@@ -110,19 +92,16 @@
             ];
 
             shellHook = ''
-              # ── Optional toolchain override ──────────────────────────────
-              # The Nix-shipped riscv32-none-elf toolchain is GCC 13.3 with
-              # `--disable-multilib` (single libgcc, built ilp32d), which
-              # forces a hard-float ABI dance for our soft-float SoC and
-              # produces inference cycle counts that don't match the
-              # original 130M baseline measured on a multilib GCC-14 build.
-              # If the canonical toolchain at /opt/riscv/gcc14-no-zcmp is
-              # installed, prepend it to PATH so it wins over the Nix one.
-              # Falls back to the Nix toolchain otherwise (e.g. fresh
-              # clones on other machines).
+              # ── Optional fast-path toolchain override ────────────────────
+              # The Nix-built toolchain (nix/riscv-toolchain.nix) is the
+              # same canonical multilib GCC 14 + binutils + newlib build
+              # as /opt/riscv/gcc14-no-zcmp — same recipe, same hashes.
+              # If the local install is present, prefer it just to skip
+              # the first-build wallclock (~30-60 min) on machines where
+              # the binary cache is cold.  Functionally identical.
               if [ -x /opt/riscv/gcc14-no-zcmp/bin/riscv32-unknown-elf-gcc ]; then
                 export PATH=/opt/riscv/gcc14-no-zcmp/bin:$PATH
-                _kws_toolchain="local: /opt/riscv/gcc14-no-zcmp (multilib)"
+                _kws_toolchain="local: /opt/riscv/gcc14-no-zcmp (cached)"
               else
                 _kws_toolchain="nix: $(command -v riscv32-unknown-elf-gcc 2>/dev/null || echo 'unavailable')"
               fi
