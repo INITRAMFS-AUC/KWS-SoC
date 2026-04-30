@@ -349,6 +349,14 @@ stdenv.mkDerivation {
 
   enableParallelBuilding = true;
 
+  # Nix's stdenv enables -Werror=format-security by default.  Several
+  # legitimate `fmt = "literal"` calls in GCC 14's own libcpp/expr.cc
+  # and libcpp/macro.cc trip the warning, killing the bootstrap-gcc
+  # build with errors like
+  #   error: format not a string literal and no format arguments
+  # Disable the format hardening flag (only) for this derivation.
+  hardeningDisable = [ "format" ];
+
   # Sandbox the build: the meta-Makefile shells out to `git` to update
   # submodule state in some paths; with all submodules already present
   # via fetchSubmodules=true this should be a no-op, but disable network
