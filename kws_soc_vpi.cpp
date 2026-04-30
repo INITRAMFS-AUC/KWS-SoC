@@ -786,9 +786,12 @@ int main(int argc, char **argv) {
         }
 
         // ---- Heartbeat (every 10M cycles so the user knows the sim is alive) --
+        // Route to stderr so it doesn't interleave with the UART byte stream
+        // on stdout — important for diagnostics that capture firmware UART
+        // (e.g. KWS_DEBUG_DUMP_FIRST_CLIP=1 dumping ring_buf as hex words).
         if (cycle > 0 && cycle % 10000000 == 0) {
-            printf("[Sim] Cycle " I64_FMT "  uart_tx=%d\n", cycle, (int)(top->uart_tx));
-            fflush(stdout);
+            fprintf(stderr, "[Sim] Cycle " I64_FMT "  uart_tx=%d\n", cycle, (int)(top->uart_tx));
+            fflush(stderr);
         }
 
         // ---- JTAG (non-blocking, CDC-safe) ---------------------------------
