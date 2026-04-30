@@ -110,6 +110,23 @@
             ];
 
             shellHook = ''
+              # ── Optional toolchain override ──────────────────────────────
+              # The Nix-shipped riscv32-none-elf toolchain is GCC 13.3 with
+              # `--disable-multilib` (single libgcc, built ilp32d), which
+              # forces a hard-float ABI dance for our soft-float SoC and
+              # produces inference cycle counts that don't match the
+              # original 130M baseline measured on a multilib GCC-14 build.
+              # If the canonical toolchain at /opt/riscv/gcc14-no-zcmp is
+              # installed, prepend it to PATH so it wins over the Nix one.
+              # Falls back to the Nix toolchain otherwise (e.g. fresh
+              # clones on other machines).
+              if [ -x /opt/riscv/gcc14-no-zcmp/bin/riscv32-unknown-elf-gcc ]; then
+                export PATH=/opt/riscv/gcc14-no-zcmp/bin:$PATH
+                _kws_toolchain="local: /opt/riscv/gcc14-no-zcmp (multilib)"
+              else
+                _kws_toolchain="nix: $(command -v riscv32-unknown-elf-gcc 2>/dev/null || echo 'unavailable')"
+              fi
+
               echo "╔══════════════════════════════════════════════════╗"
               echo "║  KWS-SoC dev shell                               ║"
               echo "╠══════════════════════════════════════════════════╣"
@@ -123,9 +140,11 @@
               echo "║    make openocd-sim     # start OpenOCD for sim   ║"
               echo "║    make gdb             # start GDB session       ║"
               echo "╠══════════════════════════════════════════════════╣"
+              echo "║  RISC-V toolchain: $_kws_toolchain"
               echo "║  NOTE: Quartus (FPGA synthesis) must be          ║"
               echo "║  installed separately and on PATH.               ║"
               echo "╚══════════════════════════════════════════════════╝"
+              unset _kws_toolchain
             '';
           };
         }
