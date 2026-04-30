@@ -25,24 +25,21 @@ NNOM_DIR     = ../third_party/nnom
 NNOM_INC_DIR = $(NNOM_DIR)/inc
 NNOM_PORT_DIR = $(NNOM_DIR)/port
 
-NNOM_SRCS_MODEL = $(NNOM_DIR)/src/core/nnom.c \
-                  $(NNOM_DIR)/src/core/nnom_layers.c \
-                  $(NNOM_DIR)/src/core/nnom_tensor.c \
-                  $(NNOM_DIR)/src/core/nnom_utils.c \
-                  $(NNOM_DIR)/src/layers/nnom_activation.c \
-                  $(NNOM_DIR)/src/layers/nnom_avgpool.c \
-                  $(NNOM_DIR)/src/layers/nnom_baselayer.c \
-                  $(NNOM_DIR)/src/layers/nnom_conv2d.c \
-                  $(NNOM_DIR)/src/layers/nnom_dense.c \
-                  $(NNOM_DIR)/src/layers/nnom_flatten.c \
-                  $(NNOM_DIR)/src/layers/nnom_global_pool.c \
-                  $(NNOM_DIR)/src/layers/nnom_input.c \
-                  $(NNOM_DIR)/src/layers/nnom_maxpool.c \
-                  $(NNOM_DIR)/src/layers/nnom_output.c \
-                  $(NNOM_DIR)/src/layers/nnom_reshape.c \
-                  $(NNOM_DIR)/src/layers/nnom_softmax.c \
-                  $(NNOM_DIR)/src/backends/nnom_local.c \
-                  $(NNOM_DIR)/src/backends/nnom_local_q15.c
+# Per upstream NNoM README ("Accessing C files"): add inc/ and port/ to the
+# include path and compile every src/*.c file.  --gc-sections drops layer
+# implementations the active model doesn't reach, so we don't pay for them
+# at runtime.  This is the canonical integration; hand-listing only the
+# layers the current model uses is fragile (silent breakage when a future
+# model needs depthwise conv, lambda, lstm/gru cells, concat, etc.).
+#
+# nnom_lstm_cell.c and nnom_gru_cell.c contain raw printf() debug calls;
+# they should be stripped by --gc-sections because our int8 KWS path never
+# reaches them.  If a future model that uses LSTM/GRU is added, those
+# printfs must be silenced (e.g. wrap them in NNOM_LOG or stub printf in
+# nnom_port.h).
+NNOM_SRCS_MODEL = $(wildcard $(NNOM_DIR)/src/core/*.c) \
+                  $(wildcard $(NNOM_DIR)/src/layers/*.c) \
+                  $(wildcard $(NNOM_DIR)/src/backends/*.c)
 
 # Header include paths (relative to this Makefile's directory)
 I2S_REGS_DIR  = ../peris/i2s/i2s_apb/i2s_itr2
@@ -89,6 +86,7 @@ MODEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
                "-DNNOM_LOG(...)=" \
                -DCLK_MHZ=36 -DUART_BAUD_RATE=115200 \
                -DI2S_DMA_BURST_WORDS=$(I2S_DMA_BURST_WORDS) \
+               -I$(COMMON_DIR) \
                -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR)
 
 # Truly bare-metal link: drop newlib's libc / libgloss / libgcc entirely.
