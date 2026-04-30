@@ -81,10 +81,22 @@ MODEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
                -DI2S_FIFO_DEPTH=8 \
                -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR)
 
+# Truly bare-metal link: drop newlib's libc / libgloss / libgcc entirely.
+# `-nostdlib` = -nostartfiles + -nodefaultlibs.  We replace what we'd lose
+# with project-local sources so we keep the real soft-float ABI:
+#   common/memcpy.c, common/memset.c — gcc emits libcalls to these for
+#                    non-trivial copy / fill sizes (NNoM moves activations).
+#   common/intrinsics.c              — provides __ashrdi3, the only libgcc
+#                    symbol the model build pulls in after --gc-sections
+#                    (Conv2D 64-bit requantisation shift).  See that file
+#                    for why we don't link the toolchain's libgcc.
+# No -lm: no NNoM unit we compile calls into libm (int8 softmax is a LUT,
+# no sqrt/exp/etc.).
+# Net effect: minimal binary, real -mabi=ilp32 (4-byte stack alignment)
+# instead of the libgcc-imposed ilp32d (16-byte alignment).
 MODEL_LDFLAGS_COMMON = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
-                       -nostartfiles \
-                       -Wl,--gc-sections \
-                       -lm -lgcc
+                       -nostdlib \
+                       -Wl,--gc-sections
 MODEL_LDFLAGS_SRAM   = $(MODEL_LDFLAGS_COMMON) -Wl,-T,$(COMMON_DIR)/sram_link.ld -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
 MODEL_LDFLAGS_XIP    = $(MODEL_LDFLAGS_COMMON) -Wl,-T,$(COMMON_DIR)/link.ld     -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
 
@@ -211,7 +223,9 @@ $(BUILD_DIR)/memcpy_simple_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/memcpy
 
 $(BUILD_DIR)/strided_s16_nodil_xip.elf: \
     $(COMMON_DIR)/crt0.s \
-    $(COMMON_DIR)/sbrk.c \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
     $(COMMON_DIR)/kws_bare_main.c \
     $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
 	$(CC) $(STRIDED_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
@@ -220,7 +234,9 @@ $(BUILD_DIR)/strided_s16_nodil_xip.elf: \
 
 $(BUILD_DIR)/streaming_model_xip.elf: \
     $(COMMON_DIR)/crt0.s \
-    $(COMMON_DIR)/sbrk.c \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
     $(STREAMING_MODEL_C_DIR)/kws_bare_stream.c \
     $(STREAMING_MODEL_C_DIR)/kws_stream_b.c \
     $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
@@ -330,7 +346,9 @@ STREAMING_CFLAGS = $(MODEL_CFLAGS) \
 
 $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf: \
     $(COMMON_DIR)/crt0.s \
-    $(COMMON_DIR)/sbrk.c \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
     $(COMMON_DIR)/kws_bare_main.c \
     $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
 	$(CC) $(MEL_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
