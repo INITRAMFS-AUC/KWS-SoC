@@ -70,8 +70,11 @@ SRAM_LDFLAGS = -T $(COMMON_DIR)/sram_link.ld --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTE
 XIP_LDFLAGS  = -T $(COMMON_DIR)/link.ld      --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
 
 # Shared compilation and link flags for all model (NNoM) targets.
+# `-g` adds DWARF debug info to the ELF only — `objcopy -O binary` strips
+# `.debug_*` so the runtime .bin (and the SRAM image we ship to flash)
+# stays the exact same size.  Cost is purely ELF-on-disk + GDB working.
 MODEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
-               -Os -flto -std=gnu99 \
+               -Os -flto -g -std=gnu99 \
                -ffunction-sections -fdata-sections \
                -falign-functions=4 \
                -DNNOM_USING_STATIC_MEMORY \
@@ -332,7 +335,10 @@ MEL_DIR = mel_compact
 # Debug knobs (set on the make command line):
 #   KWS_DEBUG_DUMP_FIRST_CLIP=1
 #       Insert an `ebreak` in kws_bare_main.c after the first full ring_buf
-#       capture; pair with scripts/dump_ring_buf.gdb.
+#       capture; pair with scripts/dump_ring_buf.gdb.  Also disables LTO so
+#       GDB can address ring_buf / ring_pos / i2s_irq_count via their
+#       symbols (with -flto, GCC drops DWARF location info for static
+#       volatiles even with -g, marking them <optimized out> in GDB).
 #   USE_MCYCLE_CSR=1
 #       Enable the in-firmware mcycle-CSR cycle counter and "CYCLES:"
 #       UART line.  Off by default — VPI testbenches measure cycles more
@@ -341,7 +347,7 @@ KWS_DEBUG_DUMP_FIRST_CLIP ?= 0
 USE_MCYCLE_CSR           ?= 0
 KWS_EXTRA_CFLAGS         :=
 ifeq ($(KWS_DEBUG_DUMP_FIRST_CLIP),1)
-  KWS_EXTRA_CFLAGS += -DKWS_DEBUG_DUMP_FIRST_CLIP=1
+  KWS_EXTRA_CFLAGS += -DKWS_DEBUG_DUMP_FIRST_CLIP=1 -fno-lto
 endif
 ifeq ($(USE_MCYCLE_CSR),1)
   KWS_EXTRA_CFLAGS += -DUSE_MCYCLE_CSR=1

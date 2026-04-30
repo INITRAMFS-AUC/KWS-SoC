@@ -37,13 +37,14 @@ define dump_ring_buf
     printf "usage: dump_ring_buf <output-file>\n"
   else
     # Sanity: ring_pos should be SAMPLES_PER_CLIP (=8000) at the dump point.
+    # Casts are explicit so this works even on a stripped ELF (no -g).
     printf "ring_pos = %d (expect 8000), i2s_irq_count = %d\n", \
-           ring_pos, i2s_irq_count
+           *(volatile int *)&ring_pos, *(volatile int *)&i2s_irq_count
 
     set logging file $arg0
     set logging overwrite on
     set logging redirect on
-    set logging on
+    set logging enabled on
     printf "# ring_buf dump (post-DMA capture)\n"
     printf "# 8000 samples, int8 Q7 reconstructed into the I2S FIFO word.\n"
     printf "# word = ((int16_t)q7) << 16  -- matches sim/*.hex / i2s_mic_sim\n"
@@ -57,7 +58,7 @@ define dump_ring_buf
       printf "%08X\n", $word
       set $i = $i + 1
     end
-    set logging off
+    set logging enabled off
 
     printf "ring_buf -> %s (8000 lines, hex-word format)\n", "$arg0"
   end
