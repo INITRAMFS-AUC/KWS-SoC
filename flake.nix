@@ -99,7 +99,11 @@
               # If the local install is present, prefer it just to skip
               # the first-build wallclock (~30-60 min) on machines where
               # the binary cache is cold.  Functionally identical.
-              if [ -x /opt/riscv/gcc14-no-zcmp/bin/riscv32-unknown-elf-gcc ]; then
+              # Set KWS_FORCE_NIX_TOOLCHAIN=1 to bypass the local fast
+              # path and exercise the Nix-built toolchain — useful for
+              # verifying byte-/cycle-equivalence between the two.
+              if [ -z "$KWS_FORCE_NIX_TOOLCHAIN" ] \
+                 && [ -x /opt/riscv/gcc14-no-zcmp/bin/riscv32-unknown-elf-gcc ]; then
                 export PATH=/opt/riscv/gcc14-no-zcmp/bin:$PATH
                 _kws_toolchain="local: /opt/riscv/gcc14-no-zcmp (cached)"
               else
