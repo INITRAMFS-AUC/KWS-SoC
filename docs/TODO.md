@@ -10,29 +10,36 @@ Priority ladder:
 
 ## P0 — correctness
 
-- **ring_buf overflow**.  Trap handler silently drops samples once
-  `ring_pos == SAMPLES_PER_CLIP`.  Inference takes longer than one
-  capture window today, so every clip after the first is on
-  **partial** audio.  Detect, or extend ring to 2× clip, or queue
-  multiple input buffers.
 - **`-fno-lto` hangs `nnom_model_create`**.  LTO build runs end-to-end;
   `-fno-lto` hangs after the boot banner.  Lost diagnostic GDB
   visibility; real bug somewhere in NNoM static-memory init that LTO
   is masking.
 
+## Deferred (waiting on external dep)
+
+- **ring_buf overflow / lost audio between clips**.  Trap handler
+  silently drops samples once `ring_pos == SAMPLES_PER_CLIP`; today
+  inference takes ~3× longer than one capture window so we lose ~3
+  clips of audio between every processed clip.  **Deferred while the
+  team's Conv1D accelerator lands** — once inference fits inside one
+  capture window, the gap closes naturally and most of this becomes
+  moot.  Re-evaluate after accelerator merge; if inference still
+  > capture, do double-buffering (ring = 2× clip).
+
 ## P1 — perf / power
 
+- **Merge peris/i2s `nnom-quantize` branch (HW Q7 + downsample)**.
+  A branch on the peris/i2s submodule does hardware-side Q7
+  conversion + decimation.  After merge: drop the `>>16` extraction
+  in the ISR, capture-leg bus traffic shrinks 4×, ring_buf shrinks
+  4×.  Steps: identify branch on peris/i2s, bump submodule pointer,
+  update `kws_soc.v` instantiation if ports / parameters changed,
+  update ISR / DMA configuration to consume the new sample format.
 - **Voice-activity detector before model_run**.  Today every clip
   pays ~108M cycles of inference whether anyone is talking or not.
   Real deployment is mostly silence — gate with even a free
   energy-threshold VAD and inference power drops 90 %+.  Hook in
   `kws_bare_main.c` between `memcpy` and `model_run`.
-- **Merge peris/i2s `nnom-quantize` branch (HW Q7 + downsample)**.
-  A branch on the peris/i2s submodule does hardware-side Q7
-  conversion + decimation.  After merge: drop the `>>16` extraction
-  in the ISR, capture-leg bus traffic shrinks 4×.  Steps: identify
-  branch, bump submodule, update `kws_soc.v` instantiation, update
-  ISR / DMA configuration.
 - **DMA drains valid I2S FIFO entries autonomously** (Plan B/C/D, not
   A).  Today the firmware burst is hardcoded and must match the I2S
   half-full threshold or every other 4-block in `ring_buf` is silently
