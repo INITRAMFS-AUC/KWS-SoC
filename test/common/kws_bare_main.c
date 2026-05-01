@@ -134,11 +134,22 @@ typedef struct {
 #  error "I2S_DMA_BURST_WORDS must be passed via -D (= I2S_FIFO_DEPTH / 2)"
 #endif
 
-/* I2S clock divisor: SoC_clock / (sample_rate * 32_bits * 2_channels)
- *   36 MHz FPGA: 36e6 / (8000 * 32 * 2) = 70  → 8 kHz mono int8 Q7.
- * Override on the make line (e.g. -DI2S_CLK_DIV=23 for 12 MHz sim). */
+/* I2S clock divisor.  apb_i2s_receiver toggles SCK every (cfg_div + 1)
+ * system cycles, so the SCK PERIOD is 2 * (cfg_div + 1) cycles.  One
+ * stereo frame is 64 SCK ticks (32-bit L + 32-bit R), and we sample
+ * the L channel only (MONO_MODE), so:
+ *
+ *   sample_rate = clk / (128 * (cfg_div + 1))
+ *
+ *   36 MHz FPGA, 8 kHz target → cfg_div = 36e6 / (128 * 8000) - 1 = 35
+ *   12 MHz sim,  8 kHz target → cfg_div = 12e6 / (128 * 8000) - 1 = 11
+ *
+ * Earlier comments here had `36M / (8000 * 32 * 2) = 70`, which forgot
+ * the 2× for the SCK half-period and silently gave 4 kHz capture —
+ * 1 sec of audio took 2 sec of sim time.  Don't repeat that mistake.
+ * Override on the make line (e.g. -DI2S_CLK_DIV=11 for 12 MHz sim). */
 #ifndef I2S_CLK_DIV
-#define I2S_CLK_DIV  70
+#define I2S_CLK_DIV  35
 #endif
 
 static void i2s_init(uint32_t clk_div) {
