@@ -60,8 +60,13 @@ let
   #    files are just the configure script + Makefile.in + helper
   #    scripts.  Submodule directories show up as empty stubs, which
   #    we then populate from the per-component fetches below.
-  riscv-gnu-toolchain-rev  = "2024.12.16";  # tag, == 43536ac
-  riscv-gnu-toolchain-hash = "sha256-FZE7DIW+aP5mAmmWdgMXohOhMLngQrG2zoyF+zV97+A=";
+  #    Pinned to master HEAD on 2025-11-15 — the date /opt/riscv was
+  #    built — so the gitlinks for binutils/newlib/gdb match what the
+  #    user's `git clone` would have pulled.  Re-pin by querying:
+  #      curl https://api.github.com/repos/riscv-collab/riscv-gnu-toolchain/commits \
+  #           '?sha=master&until=YYYY-MM-DDTHH:MM:SSZ&per_page=1'
+  riscv-gnu-toolchain-rev  = "4e7952b5f6c106c01b2e1c056476687e1390105d";  # 2025-11-03
+  riscv-gnu-toolchain-hash = "sha256-HyLylTg3hqLN9YP1I81fJMnISgxBaW75QblBjIvqjaY=";
 
   # 2. gcc-mirror/gcc on releases/gcc-14, pinned to a SHA matching the
   #    branch tip on 2025-11-15 — the date /opt/riscv/gcc14-no-zcmp
@@ -76,11 +81,11 @@ let
   gcc-hash = "sha256-QWo4BTdWrZ+rgeGY0J2OVrP3scJmRazfjET//uqjFoE=";
 
   # 3. binutils-gdb at the SHA the meta-repo's `binutils` submodule
-  #    pins (read with `git ls-tree HEAD binutils` against the meta).
-  #    Pulled directly from sourceware — the same upstream URL the
-  #    meta-repo's .gitmodules declares.
-  binutils-rev  = "beb2cdbcda911764b2bed5e57921fe90493260bd";  # 2024-08-17
-  binutils-hash = "sha256-p/zvtCd3uzZgn4DTAkG/SxSrk3U7TLA3Vy4lI0a/5OY=";
+  #    pins (read with the GitHub trees API against the meta-repo
+  #    commit above).  Pulled directly from sourceware — the same
+  #    upstream URL the meta-repo's .gitmodules declares.
+  binutils-rev  = "2bc7af1ff7732451b6a7b09462a815c3284f9613";  # 2025-07-27
+  binutils-hash = "sha256-+mXHutsDcO7W//mswlXF8V1BNbZL2G26uIpzqlOnyL4=";
 
   # 4. newlib-cygwin at the meta-repo's `newlib` submodule pin.
   newlib-rev  = "26f7004bf73c421c3fd5e5a6ccf470d05337b435";  # 2023-12-31
@@ -90,8 +95,8 @@ let
   #    binutils (sourceware binutils-gdb.git) but a different branch
   #    (gdb-15-branch) so a different commit.  The local recipe builds
   #    gdb by default; --with-gcc-src does not turn it off.
-  gdb-rev  = "23c84db5b3cb4e8a0d555c76e1a0ab56dc8355f3";  # 2024-09-29
-  gdb-hash = "sha256-hz0iyBCZGkSZ/eHWaPdusqlCLSHyyWDNn/ty1X4tKEE=";
+  gdb-rev  = "800169229d1c69a6d9ad4a6f7b7481aca75eeefb";  # 2025-06-10
+  gdb-hash = "sha256-6f5MTxkluKVrSO2iIuseAUUoanKc9mOZGvLtr0Fr+7A=";
 
   # We deliberately skip glibc / musl / uclibc-ng (we build
   # `riscv32-unknown-elf` with newlib, no full libc needed), llvm
