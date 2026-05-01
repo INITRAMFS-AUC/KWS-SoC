@@ -58,11 +58,8 @@ Priority ladder:
   `test/streaming_model/`).  (2) Move `third_party/nnom` to `./nnom`
   next to `busfabric/`, `peris/`, etc. — it's not really third_party.
   Atomic restructure commit, `git mv` preserves history.
-- **Gate `working-fpga-hazard3_core.patch` behind FPGA target**.
-  Patch is FPGA-only (d-port→APB-bridge HWDATA race workaround,
-  see `docs/2port_dport_bridge_bug.md`).  Empirically costs 0 cycles
-  on sim — *not* a perf issue — but cleanliness wants it gated by
-  `FPGA_PATCHES=1` so sim builds skip it.
+<!-- Done: working-fpga patch gated behind FPGA_PATCHES=1 in
+     scripts/apply_patches.sh; sim builds leave Hazard3 clean. -->
 
 ## P3 — developer velocity
 
