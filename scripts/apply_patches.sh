@@ -44,6 +44,16 @@ esac
 # peripheral is instantiated (also gated by `DEBUG_SNOOPER` in kws_soc.v).
 DEBUG_SNOOPER="${DEBUG_SNOOPER:-}"
 
+# working-fpga-hazard3_core.patch is FPGA-only (workaround for the d-port
+# → APB-bridge HWDATA corruption documented in
+# docs/2port_dport_bridge_bug.md).  On Verilator that race doesn't
+# reproduce so the patch's stall is pure sim-side overhead — and verified
+# empirically to cost 0 cycles on mel inference, so skipping it on sim is
+# pure cleanliness.  Set FPGA_PATCHES=1 (or just FPGA=1, common in our
+# Quartus targets) to apply it.  Default off keeps the Hazard3 submodule
+# clean for sim workflows.
+FPGA_PATCHES="${FPGA_PATCHES:-${FPGA:-}}"
+
 [ -d "$PATCH_DIR" ] || exit 0
 
 shopt -s nullglob
@@ -51,6 +61,12 @@ for patch in "$PATCH_DIR"/*.patch; do
     name="$(basename "$patch")"
     case "$name" in
         working-fpga-hazard3_core.patch)
+            if [ -z "$FPGA_PATCHES" ]; then
+                # Skip silently in apply mode; in revert mode we still
+                # want to revert in case the user toggled FPGA_PATCHES
+                # off after a previous FPGA build.
+                if [ $REVERT -eq 0 ]; then continue; fi
+            fi
             target="$HAZARD3"
             ;;
         debug-snooper-hazard3_taps.patch)
