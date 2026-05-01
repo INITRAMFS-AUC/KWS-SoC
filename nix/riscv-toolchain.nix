@@ -63,14 +63,17 @@ let
   riscv-gnu-toolchain-rev  = "2024.12.16";  # tag, == 43536ac
   riscv-gnu-toolchain-hash = "sha256-FZE7DIW+aP5mAmmWdgMXohOhMLngQrG2zoyF+zV97+A=";
 
-  # 2. gcc-mirror/gcc on releases/gcc-14, pinned to a SHA so we don't
-  #    drift with branch tip movement.  This is the equivalent of
-  #    `git clone --depth=1 ... -b releases/gcc-14 gcc-14` in the
-  #    local recipe.  Re-prefetch with:
-  #      nix-prefetch-git --url https://github.com/gcc-mirror/gcc \
-  #                       --rev releases/gcc-14
-  gcc-rev  = "ed10445fe222d3973ae13eda9bf211f315c5e3f9";   # 2024-05-07
-  gcc-hash = "sha256-lA/i5ceWaZhw+RzRqDZ0ch+qxomYjjEhiEovxOEJfpM=";
+  # 2. gcc-mirror/gcc on releases/gcc-14, pinned to a SHA matching the
+  #    branch tip on 2025-11-15 — the date /opt/riscv/gcc14-no-zcmp
+  #    was built (the binary's `gcc --version` says
+  #    "gcc version 14.3.1 20251115").  This is the exact commit that
+  #    `git clone --depth=1 -b releases/gcc-14 gcc-14` would have
+  #    grabbed in the local recipe.  Bump by querying:
+  #      curl https://api.github.com/repos/gcc-mirror/gcc/commits \
+  #           '?sha=releases/gcc-14&until=YYYY-MM-DDTHH:MM:SSZ&per_page=1'
+  #    then nix-prefetch-git the returned sha.
+  gcc-rev  = "399c8b359d8ed160757b20374bc8ccdbcf0fbb92";   # 2025-11-15
+  gcc-hash = "sha256-QWo4BTdWrZ+rgeGY0J2OVrP3scJmRazfjET//uqjFoE=";
 
   # 3. binutils-gdb at the SHA the meta-repo's `binutils` submodule
   #    pins (read with `git ls-tree HEAD binutils` against the meta).
