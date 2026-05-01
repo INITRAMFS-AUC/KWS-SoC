@@ -34,6 +34,14 @@ soc_conf_temp.sh
 *.fst
 *.gtkw
 
+# Sim / debug capture logs left at the project root by ad-hoc test runs
+# (mel_*.log, infer.log, sim.log, uart.log, ring_dump.hex, etc.).
+# Anchored to the root so we don't accidentally hide intentional .log /
+# .hex files inside test/ or sim/.
+/*.log
+/ring_dump.hex
+/testres.hex
+
 # Personal notes
 notes.md
 images
