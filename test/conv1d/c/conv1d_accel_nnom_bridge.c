@@ -88,6 +88,21 @@ static int is_aligned_4(const void *ptr) {
     return (((uintptr_t)ptr) & 0x3) == 0;
 }
 
+static int has_uniform_output_shift(const nnom_conv2d_layer_t *cl, int out_ch)
+{
+    int oc;
+
+    if (cl == NULL || cl->output_rshift == NULL || out_ch <= 0)
+        return 0;
+
+    for (oc = 1; oc < out_ch; oc++) {
+        if (cl->output_rshift[oc] != cl->output_rshift[0])
+            return 0;
+    }
+
+    return 1;
+}
+
 /**
  * Main accelerator control: Try to run layer on accelerator.
  */
@@ -128,10 +143,18 @@ int conv1d_accel_try_run_layer(nnom_layer_t *layer) {
         !is_aligned_4(cfg.bias))
         return 0;
 
-    /* Phase 2 & 3: Weight conversion and quantization mapping */
-    /* TODO: Implement weight transpose and quant parameter mapping */
+    /*
+     * Phase 3: the current APB wrapper exposes one output shift per run.
+     * NNoM target layers are per-axis quantized, so non-uniform output
+     * shifts must keep using software fallback until the call path can split
+     * work by output channel or the RTL grows per-channel shifts.
+     */
+    if (!has_uniform_output_shift((nnom_conv2d_layer_t *)layer, cfg.out_ch))
+        return 0;
 
-    return 0;  /* Skip acceleration for now (Phase 1) */
+    /* Phase 4: Implement APB setup and accelerator invocation. */
+
+    return 0;  /* Skip acceleration for now. */
 }
 
 /**
@@ -141,6 +164,8 @@ nnom_status_t conv1d_accel_layer_callback(
     nnom_model_t *m,
     nnom_layer_t *layer
 ) {
+    (void)m;
+
     g_conv1d_accel_stats.layer_callbacks++;
 
     if (layer->type == NNOM_CONV_2D && is_conv1d_k3(layer)) {

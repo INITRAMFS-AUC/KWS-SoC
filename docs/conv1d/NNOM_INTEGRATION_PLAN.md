@@ -1,6 +1,6 @@
 # NNoM Conv1D Accelerator Integration Plan
 
-**Status**: Design Phase - Ready for Implementation  
+**Status**: Phase 3 - Quantization Mapping Helpers Added
 **Branch**: conv1d-accelerator-integration  
 **Date**: May 2, 2026
 
@@ -49,6 +49,63 @@ All layers use int8 quantization compatible with the accelerator.
 - Input: [length, in_ch]
 - Output: [length, out_ch]  
 - Weights: [out_ch, 3, in_ch] (requires transpose)
+
+## Phase 3 Quantization Mapping
+
+### Exact NNoM Symbols
+
+The target Conv2D layers use per-axis quantization tables from
+`test/model/mel_compact_4blk_ch36/mel_compact_4blk_ch36_weights.h`:
+
+| Symbol | Values |
+|--------|--------|
+| `conv2d_1_output_shift` / `CONV2D_1_OUTPUT_RSHIFT` | `{9, 10, 11, 10, 9, 9, 9, 10, 9, 9, 9, 9, 9, 10, 9, 10, 9, 9, 10, 9, 10, 10, 9, 10, 9, 10, 9, 9, 9, 10, 10, 9, 10, 9, 10, 9}` |
+| `conv2d_1_bias_shift` / `CONV2D_1_BIAS_LSHIFT` | `{5, 5, 6, 4, 5, 4, 4, 5, 5, 4, 4, 5, 3, 2, 4, 5, 4, 2, 4, 4, 3, 3, 4, 4, 5, 6, 5, 4, 3, 2, 5, 4, 6, 5, 6, 5}` |
+| `conv2d_2_output_shift` / `CONV2D_2_OUTPUT_RSHIFT` | `{8, 8, 8, 7, 9, 7, 7, 7, 8, 8, 9, 9, 7, 10, 9, 8, 9, 7, 8, 8, 8, 8, 8, 8, 8, 9, 9, 7, 8, 9, 8, 8, 9, 8, 8, 7}` |
+| `conv2d_2_bias_shift` / `CONV2D_2_BIAS_LSHIFT` | `{4, 5, 2, 4, 0, 4, 3, 2, 4, 3, 5, 0, 3, 5, 3, 3, 4, 0, 5, 4, 3, 5, 4, 6, 4, 4, 2, 3, 5, 5, 6, 3, 5, 5, 4, 4}` |
+| `conv2d_3_output_shift` / `CONV2D_3_OUTPUT_RSHIFT` | `{6, 6, 7, 6, 6, 6, 6, 7, 6, 7, 7, 6, 7, 6, 6, 7, 6, 6, 6, 6, 7, 7, 6, 7, 6, 6, 6, 6, 7, 7, 6, 6, 6, 6, 7, 6}` |
+| `conv2d_3_bias_shift` / `CONV2D_3_BIAS_LSHIFT` | `{2, 2, 4, 3, 2, 2, 2, 5, 3, 4, 4, 0, 5, 2, 2, 3, 1, 2, 2, 3, 1, 4, 3, 3, 3, 2, 4, 3, 1, 4, 1, 1, 3, 0, 1, 4}` |
+
+### NNoM Software Formula
+
+For the HWC q7 Conv2D path, NNoM calls
+`local_convolve_HWC_q7_nonsquare()` from
+`third_party/nnom/src/backends/nnom_local.c`.
+
+The effective formula for each output channel is:
+
+```c
+acc = ((int32_t)bias[oc] << bias_shift[oc]) + NNOM_ROUND(output_shift[oc]);
+acc += sum(input * weight);
+out = saturate_int8(acc >> output_shift[oc]);
+```
+
+With the default build, `NNOM_ROUND(s)` is `1 << (s - 1)`.
+If `NNOM_TRUNCATE` is defined, the rounding term is zero. The right shift is
+an arithmetic signed shift on the host/compiler target. ReLU is not fused into
+these Conv2D layers in the generated model: `act_relu()` layers follow
+`conv2d_1`, `conv2d_2`, and `conv2d_3` separately.
+
+### Accelerator Mapping Decision
+
+- Bias must be pre-shifted before writing accelerator bias memory:
+  `accel_bias[oc] = nnom_bias[oc] << bias_shift[oc]`.
+- To match default NNoM rounding with the current RTL, add the rounding term to
+  the prepared bias: `+ (1 << (output_shift[oc] - 1))`.
+- `out_shift` maps directly to APB `CONV1D_QUANT[4:0]` when a single shift is
+  valid for the accelerator run.
+- `relu_en` should remain `0` for bit-exact replacement of the Conv2D output,
+  because NNoM applies ReLU in the following layer.
+- Negative output shifts are not present in the target Conv2D_1/2/3 tables and
+  are not supported by the accelerator QUANT field.
+
+### Remaining Limitation
+
+The target layers have non-uniform per-axis `output_shift` arrays, while the
+current APB wrapper exposes a single `out_shift` per accelerator run. The
+bridge therefore keeps software fallback for these layers until Phase 4 decides
+between splitting work by output channel/group, staging through a temporary
+output buffer, or extending the accelerator interface with per-channel shifts.
 
 ---
 
@@ -128,15 +185,16 @@ printf("CONV1D_ACCEL: %d/%d layers accelerated\n",
 - [x] Create bridge skeleton
 - [x] Basic layer type/size checks
 
-### Phase 2: Weight Handling (NEXT)
-- [ ] Implement online transpose: [1,3,in_ch,out_ch] → [out_ch,3,in_ch]
-- [ ] Test correctness vs golden model
-- [ ] Measure transpose overhead
+### Phase 2: Weight Handling ✅ DONE
+- [x] Implement online transpose: [1,3,in_ch,out_ch] → [out_ch,3,in_ch]
+- [x] Test correctness with standalone weight packing unit test
+- [x] Keep live inference unchanged
 
-### Phase 3: Quantization Integration
-- [ ] Map NNoM output_shift to APB QUANT register
-- [ ] Handle per-axis vs per-tensor shifts
-- [ ] Bit-exact output verification
+### Phase 3: Quantization Integration ✅ DONE
+- [x] Map NNoM output_shift to APB QUANT register format
+- [x] Map NNoM bias_shift to accelerator bias memory preparation
+- [x] Add reference quantization helper for unit testing
+- [x] Identify per-axis output-shift limitation in current APB wrapper
 
 ### Phase 4: Full Acceleration
 - [ ] Configure APB registers with layer parameters
@@ -216,4 +274,3 @@ printf("CONV1D_ACCEL: %d/%d layers accelerated\n",
 - Model weights: `test/model/mel_compact_4blk_ch36/mel_compact_4blk_ch36_weights.h`
 - Accelerator regs: `test/conv1d/include/conv1d_accel_regs.h`
 - Bridge API: `test/conv1d/include/conv1d_accel_nnom_bridge.h`
-
