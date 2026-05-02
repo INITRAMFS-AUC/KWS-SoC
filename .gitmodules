@@ -10,9 +10,9 @@
 [submodule "peris/i2s"]
 	path = peris/i2s
 	url = git@github.com:INITRAMFS-AUC/i2s.git
-[submodule "third_party/nnom"]
+[submodule "nnom"]
 	path = nnom
-	url = https://github.com/INITRAMFS-AUC/nnom.git
+	url = git@github.com:INITRAMFS-AUC/nnom.git
 [submodule "peris/MS_DMAC_AHBL"]
 	path = peris/MS_DMAC_AHBL
 	url = git@github.com:INITRAMFS-AUC/MS_DMAC_AHBL.git
