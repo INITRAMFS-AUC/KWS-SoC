@@ -447,8 +447,21 @@ module kws_soc #(
   wire [W_DATA-1:0] xip_hwdata;
   wire [W_DATA-1:0] xip_hrdata;
 
+  // Conv2D accelerator AHB master signals
+  wire              accel_hready;
+  wire              accel_hresp;
+  wire [W_ADDR-1:0] accel_haddr;
+  wire              accel_hwrite;
+  wire [       1:0] accel_htrans;
+  wire [       2:0] accel_hsize;
+  wire [       2:0] accel_hburst;
+  wire [       3:0] accel_hprot;
+  wire              accel_hmastlock;
+  wire [W_DATA-1:0] accel_hwdata;
+  wire [W_DATA-1:0] accel_hrdata;
+
   ahbl_crossbar #(
-      .N_MASTERS(2),
+      .N_MASTERS(3),
       .N_SLAVES (3),
       .W_ADDR   (W_ADDR),
       .W_DATA   (W_DATA),
@@ -458,18 +471,18 @@ module kws_soc #(
       .clk  (clk),
       .rst_n(rst_n),
 
-      // Masters: {d-port [MSB], i-port [LSB]}
-      .src_hready_resp({d_hready,    i_hready   }),
-      .src_hresp      ({d_hresp,     i_hresp    }),
-      .src_haddr      ({d_haddr,     i_haddr    }),
-      .src_hwrite     ({d_hwrite,    i_hwrite   }),
-      .src_htrans     ({d_htrans,    i_htrans   }),
-      .src_hsize      ({d_hsize,     i_hsize    }),
-      .src_hburst     ({d_hburst,    i_hburst   }),
-      .src_hprot      ({d_hprot,     i_hprot    }),
-      .src_hmastlock  ({d_hmastlock, i_hmastlock}),
-      .src_hwdata     ({d_hwdata,    i_hwdata   }),
-      .src_hrdata     ({d_hrdata,    i_hrdata   }),
+      // Masters: {accel [MSB], d-port, i-port [LSB]}
+      .src_hready_resp({accel_hready,    d_hready,    i_hready   }),
+      .src_hresp      ({accel_hresp,     d_hresp,     i_hresp    }),
+      .src_haddr      ({accel_haddr,     d_haddr,     i_haddr    }),
+      .src_hwrite     ({accel_hwrite,    d_hwrite,    i_hwrite   }),
+      .src_htrans     ({accel_htrans,    d_htrans,    i_htrans   }),
+      .src_hsize      ({accel_hsize,     d_hsize,     i_hsize    }),
+      .src_hburst     ({accel_hburst,    d_hburst,    i_hburst   }),
+      .src_hprot      ({accel_hprot,     d_hprot,     i_hprot    }),
+      .src_hmastlock  ({accel_hmastlock, d_hmastlock, i_hmastlock}),
+      .src_hwdata     ({accel_hwdata,    d_hwdata,    i_hwdata   }),
+      .src_hrdata     ({accel_hrdata,    d_hrdata,    i_hrdata   }),
 
       // Slaves
       .dst_hready_resp({xip_hready_resp,  bridge_hready_resp, sram0_hready_resp}),
@@ -524,6 +537,15 @@ module kws_soc #(
   wire        i2s_pready;
   wire        i2s_pslverr;
 
+  wire        accel_psel;
+  wire        accel_penable;
+  wire        accel_pwrite;
+  wire [15:0] accel_paddr;
+  wire [31:0] accel_pwdata;
+  wire [31:0] accel_prdata;
+  wire        accel_pready;
+  wire        accel_pslverr;
+
   ahbl_to_apb apb_bridge_u (
       .clk  (clk),
       .rst_n(rst_n),
@@ -551,11 +573,14 @@ module kws_soc #(
       .apbm_pslverr(bridge_pslverr)
   );
 
+  // APB address decode: bits[15:14] select peripheral:
+  //   2'b00 = 0x0000 timer, 2'b01 = 0x4000 uart,
+  //   2'b10 = 0x8000 i2s,   2'b11 = 0xC000 conv1d_accel
   apb_splitter #(
-      .N_SLAVES (3),
+      .N_SLAVES (4),
       .W_ADDR   (16),
-      .ADDR_MAP (48'h4000_8000_0000),
-      .ADDR_MASK(48'hc000_c000_c000)
+      .ADDR_MAP (64'hC000_4000_8000_0000),
+      .ADDR_MASK(64'hc000_c000_c000_c000)
   ) inst_apb_splitter (
       .apbs_paddr   (bridge_paddr),
       .apbs_psel    (bridge_psel),
@@ -566,14 +591,14 @@ module kws_soc #(
       .apbs_prdata  (bridge_prdata),
       .apbs_pslverr (bridge_pslverr),
 
-      .apbm_paddr   ({uart_paddr,   i2s_paddr,   timer_paddr  }),
-      .apbm_psel    ({uart_psel,    i2s_psel,    timer_psel   }),
-      .apbm_penable ({uart_penable, i2s_penable, timer_penable}),
-      .apbm_pwrite  ({uart_pwrite,  i2s_pwrite,  timer_pwrite }),
-      .apbm_pwdata  ({uart_pwdata,  i2s_pwdata,  timer_pwdata }),
-      .apbm_pready  ({uart_pready,  i2s_pready,  timer_pready }),
-      .apbm_prdata  ({uart_prdata,  i2s_prdata,  timer_prdata }),
-      .apbm_pslverr ({uart_pslverr, i2s_pslverr, timer_pslverr})
+      .apbm_paddr   ({accel_paddr,  uart_paddr,   i2s_paddr,   timer_paddr  }),
+      .apbm_psel    ({accel_psel,   uart_psel,    i2s_psel,    timer_psel   }),
+      .apbm_penable ({accel_penable,uart_penable, i2s_penable, timer_penable}),
+      .apbm_pwrite  ({accel_pwrite, uart_pwrite,  i2s_pwrite,  timer_pwrite }),
+      .apbm_pwdata  ({accel_pwdata, uart_pwdata,  i2s_pwdata,  timer_pwdata }),
+      .apbm_pready  ({accel_pready, uart_pready,  i2s_pready,  timer_pready }),
+      .apbm_prdata  ({accel_prdata, uart_prdata,  i2s_prdata,  timer_prdata }),
+      .apbm_pslverr ({accel_pslverr,uart_pslverr, i2s_pslverr, timer_pslverr})
   );
 
   // ----------------------------------------------------------------------------
@@ -707,6 +732,35 @@ module kws_soc #(
       .tick(timer_tick),
 
       .timer_irq(timer_irq)
+  );
+
+  // Conv1D hardware accelerator at APB 0x4000_C000, AHB master port 2
+  conv1d_accel accel_u (
+      .clk     (clk),
+      .rst_n   (rst_n),
+
+      // APB slave
+      .paddr   (accel_paddr),
+      .psel    (accel_psel),
+      .penable (accel_penable),
+      .pwrite  (accel_pwrite),
+      .pwdata  (accel_pwdata),
+      .prdata  (accel_prdata),
+      .pready  (accel_pready),
+      .pslverr (accel_pslverr),
+
+      // AHB-Lite master
+      .haddr     (accel_haddr),
+      .hburst    (accel_hburst),
+      .hsize     (accel_hsize),
+      .htrans    (accel_htrans),
+      .hwrite    (accel_hwrite),
+      .hwdata    (accel_hwdata),
+      .hprot     (accel_hprot),
+      .hmastlock (accel_hmastlock),
+      .hrdata    (accel_hrdata),
+      .hready    (accel_hready),
+      .hresp     (accel_hresp)
   );
 
 endmodule
