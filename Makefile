@@ -179,8 +179,12 @@ VERILOG_MACROS += $(UART_VERILOG_MACROS)
 # Conv1D accelerator defaults to the verified buffered mode.
 CONV1D_USE_WEIGHT_BUFFER ?= 1
 CONV1D_USE_PER_OC_SHIFT ?= 1
+# Set CONV1D_USE_SIM_SCRATCHPAD=1 for Verilator/Icarus SoC simulation to
+# instantiate the in-tree behavioral scratchpad (never set for synthesis).
+CONV1D_USE_SIM_SCRATCHPAD ?= 0
 VERILOG_MACROS += USE_WEIGHT_BUFFER=$(CONV1D_USE_WEIGHT_BUFFER)
 VERILOG_MACROS += USE_PER_OC_SHIFT=$(CONV1D_USE_PER_OC_SHIFT)
+VERILOG_MACROS += CONV1D_USE_SIM_SCRATCHPAD=$(CONV1D_USE_SIM_SCRATCHPAD)
 
 # Optional bus-snooper debug peripheral. Set DEBUG_SNOOPER=1 in the
 # environment (e.g. `make DEBUG_SNOOPER=1 sim-verilator …`) to:
