@@ -28,24 +28,6 @@ Priority ladder:
 
 ## P1 — perf / power
 
-- **DMA-direct-to-NNoM-input + LSB=oldest Q8 pack (Option 1).**
-  Eliminate `ring_buf`, `dma_batch`, the ISR byte-unpack, and the
-  end-of-clip memcpy in one pass.  Steps: (a) RTL one-line change in
-  `apb_i2s_receiver.v` to pack `{byte3, byte2, byte1, byte0}` with
-  byte0 (oldest) at LSB so DMA writes land in time order on
-  little-endian RV32; (b) point DMA `daddr` directly at
-  `nnom_input_data`; (c) ISR shrinks to `DMAC->daddr += burst*4`
-  per PIRQ.  Saves ~66K cycles/clip (ISR 290→55 cycles × 250) plus
-  8 KB SRAM (`ring_buf` gone).  Doesn't reduce IRQ count — the DMA
-  resets `CNTR` between frames so DADDR must advance per frame.
-- **Investigate Q8 ISR cycle regression** *(captured for follow-up
-  if it survives the Option 1 rewrite — likely subsumed)*.  Audit
-  (2026-05-02) found switching to HW Q8_EN packing made
-  `CYCLES_INFER` ~1.7M cycles *worse* (108.13M → 109.86M,
-  steady-state clip 2) even though IRQ count drops 4× (1000 → 250
-  per clip).  Each ISR now does 4× more byte stores per IRQ.
-  Hypothesis: store-buffer / d-port back pressure during ISR while
-  DMA is still draining the FIFO.  Re-measure after Option 1.
 - **HW skip-R-slot SCK in I2S MONO_MODE** (peris/i2s Phase B).
   Today `apb_i2s_receiver` toggles SCK during the R slot even though
   MONO_MODE discards R data.  Half of all SCK transitions burn power
@@ -54,9 +36,18 @@ Priority ladder:
   proper testbench (Phase C) — current sim has no I2S-protocol
   assertions.
 - **Merge peris/i2s `nnom-quantize` branch (HW Q7 + downsample)**.
-  Phase A done (firmware uses Q8_EN, ISR unpacks 4 samples/word
-  MSB-first, IRQ count 4× lower).  Phase B (HW skip-R-slot) and
-  Phase C (testbench) tracked separately above.
+  Done.  Phase A (firmware uses Q8_EN, IRQ count 4× lower) and
+  Option 1 (LSB-oldest pack + DMA-into-audio_ring + lean ISR +
+  sliding-window-ready main loop) both landed; CYCLES_INFER
+  109.86M → 105.0M and CYCLES_CAPTURE matches the audio rate
+  exactly.  Phase B (HW skip-R-slot) and Phase C (testbench)
+  tracked separately above.
+- **Sliding-window inference (post-accelerator).** Firmware is
+  already structured for it: set `KWS_STEP_SAMPLES` to 160-320
+  (= 20-40 ms) and bump `KWS_RING_SAMPLES` to 16384 once the
+  Conv1D accelerator drops inference into the ~100 ms window.
+  Today's defaults (STEP=8000, RING=8192) reduce to back-to-back
+  full-clip inferences with no overlap.
 - **Validate readI2s Q8 testbench end-to-end**.  Merged the NNOM
   branch's `test/i2s/c/readI2s.c` (compares HW-packed bytes against
   `sim/debug_audio.hex` via uart_printf).  Boot + banner work; the
