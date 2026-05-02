@@ -10,37 +10,37 @@
 
 #include "conv1d_accel_nnom_bridge.h"
 
-static const int conv2d_1_output_shift[36] = {
+static const int8_t conv2d_1_output_shift[36] = {
     9, 10, 11, 10, 9, 9, 9, 10, 9, 9, 9, 9,
     9, 10, 9, 10, 9, 9, 10, 9, 10, 10, 9, 10,
     9, 10, 9, 9, 9, 10, 10, 9, 10, 9, 10, 9
 };
 
-static const int conv2d_1_bias_shift[36] = {
+static const int8_t conv2d_1_bias_shift[36] = {
     5, 5, 6, 4, 5, 4, 4, 5, 5, 4, 4, 5,
     3, 2, 4, 5, 4, 2, 4, 4, 3, 3, 4, 4,
     5, 6, 5, 4, 3, 2, 5, 4, 6, 5, 6, 5
 };
 
-static const int conv2d_2_output_shift[36] = {
+static const int8_t conv2d_2_output_shift[36] = {
     8, 8, 8, 7, 9, 7, 7, 7, 8, 8, 9, 9,
     7, 10, 9, 8, 9, 7, 8, 8, 8, 8, 8, 8,
     8, 9, 9, 7, 8, 9, 8, 8, 9, 8, 8, 7
 };
 
-static const int conv2d_2_bias_shift[36] = {
+static const int8_t conv2d_2_bias_shift[36] = {
     4, 5, 2, 4, 0, 4, 3, 2, 4, 3, 5, 0,
     3, 5, 3, 3, 4, 0, 5, 4, 3, 5, 4, 6,
     4, 4, 2, 3, 5, 5, 6, 3, 5, 5, 4, 4
 };
 
-static const int conv2d_3_output_shift[36] = {
+static const int8_t conv2d_3_output_shift[36] = {
     6, 6, 7, 6, 6, 6, 6, 7, 6, 7, 7, 6,
     7, 6, 6, 7, 6, 6, 6, 6, 7, 7, 6, 7,
     6, 6, 6, 6, 7, 7, 6, 6, 6, 6, 7, 6
 };
 
-static const int conv2d_3_bias_shift[36] = {
+static const int8_t conv2d_3_bias_shift[36] = {
     2, 2, 4, 3, 2, 2, 2, 5, 3, 4, 4, 0,
     5, 2, 2, 3, 1, 2, 2, 3, 1, 4, 3, 3,
     3, 2, 4, 3, 1, 4, 1, 1, 3, 0, 1, 4
@@ -66,7 +66,7 @@ static void expect_u32(const char *name, uint32_t got, uint32_t exp)
     }
 }
 
-static int is_uniform(const int *values, int count)
+static int is_uniform(const int8_t *values, int count)
 {
     int i;
 
@@ -79,8 +79,8 @@ static int is_uniform(const int *values, int count)
 }
 
 static void test_shift_table(const char *name,
-                             const int *output_shift,
-                             const int *bias_shift,
+                             const int8_t *output_shift,
+                             const int8_t *bias_shift,
                              int count)
 {
     int i;
@@ -150,6 +150,76 @@ static void test_quant_helpers(void)
                0);
 }
 
+static int8_t nnom_reference_from_parts(int32_t bias,
+                                        int8_t bias_shift,
+                                        int32_t raw_sum,
+                                        int8_t output_shift,
+                                        int relu_en)
+{
+    int32_t prepared = conv1d_saturate_i32(
+        (int64_t)conv1d_shift_bias_value(bias, bias_shift) +
+        conv1d_nnom_round_term(output_shift));
+
+    return conv1d_quantize_prepared_acc(
+        conv1d_saturate_i32((int64_t)prepared + raw_sum),
+        output_shift,
+        relu_en);
+}
+
+static void test_per_oc_prepared_bias_and_shift(void)
+{
+    const int out_ch = 4;
+    const int32_t nnom_bias[4] = {3, -4, 5, -6};
+    const int8_t bias_shift[4] = {5, 3, 2, 4};
+    const int8_t output_shift[4] = {3, 4, 5, 6};
+    const int32_t raw_sum[4] = {512, -256, 200000, -200000};
+    int32_t accel_bias[4] = {0, 0, 0, 0};
+    uint8_t accel_shift[4] = {0, 0, 0, 0};
+    int oc;
+
+    conv1d_prepare_bias_and_shifts(nnom_bias,
+                                   bias_shift,
+                                   output_shift,
+                                   accel_bias,
+                                   accel_shift,
+                                   out_ch);
+
+    expect_i32("per-oc prepared bias ch0", accel_bias[0], (3 << 5) + 4);
+    expect_i32("per-oc prepared bias ch1", accel_bias[1], -32 + 8);
+    expect_i32("per-oc shift ch2", accel_shift[2], 5);
+    expect_i32("per-oc shift ch3", accel_shift[3], 6);
+
+    for (oc = 0; oc < out_ch; oc++) {
+        int8_t exp = nnom_reference_from_parts(nnom_bias[oc],
+                                               bias_shift[oc],
+                                               raw_sum[oc],
+                                               output_shift[oc],
+                                               0);
+        int8_t got = conv1d_quantize_prepared_acc(
+            conv1d_saturate_i32((int64_t)accel_bias[oc] + raw_sum[oc]),
+            accel_shift[oc],
+            0);
+        expect_i32("per-oc accelerator formula matches NNoM formula", got, exp);
+    }
+
+    expect_i32("per-oc positive accumulator",
+               conv1d_quantize_prepared_acc(accel_bias[0] + raw_sum[0],
+                                            accel_shift[0], 0),
+               76);
+    expect_i32("per-oc negative accumulator",
+               conv1d_quantize_prepared_acc(accel_bias[1] + raw_sum[1],
+                                            accel_shift[1], 0),
+               -18);
+    expect_i32("per-oc saturation high",
+               conv1d_quantize_prepared_acc(accel_bias[2] + raw_sum[2],
+                                            accel_shift[2], 0),
+               127);
+    expect_i32("per-oc saturation low",
+               conv1d_quantize_prepared_acc(accel_bias[3] + raw_sum[3],
+                                            accel_shift[3], 0),
+               -128);
+}
+
 int main(void)
 {
     test_shift_table("conv2d_1", conv2d_1_output_shift, conv2d_1_bias_shift, 36);
@@ -157,6 +227,7 @@ int main(void)
     test_shift_table("conv2d_3", conv2d_3_output_shift, conv2d_3_bias_shift, 36);
     test_bias_helpers();
     test_quant_helpers();
+    test_per_oc_prepared_bias_and_shift();
 
     if (failures == 0) {
         printf("PASS: Conv1D quantization mapping helpers are correct\n");

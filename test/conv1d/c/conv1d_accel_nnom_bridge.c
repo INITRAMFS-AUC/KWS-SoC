@@ -88,15 +88,18 @@ static int is_aligned_4(const void *ptr) {
     return (((uintptr_t)ptr) & 0x3) == 0;
 }
 
-static int has_uniform_output_shift(const nnom_conv2d_layer_t *cl, int out_ch)
+static int has_valid_quant_shifts(const nnom_conv2d_layer_t *cl, int out_ch)
 {
     int oc;
 
-    if (cl == NULL || cl->output_rshift == NULL || out_ch <= 0)
+    if (cl == NULL || cl->output_rshift == NULL || cl->bias_lshift == NULL ||
+        out_ch <= 0)
         return 0;
 
-    for (oc = 1; oc < out_ch; oc++) {
-        if (cl->output_rshift[oc] != cl->output_rshift[0])
+    for (oc = 0; oc < out_ch; oc++) {
+        if (cl->output_rshift[oc] < 0 || cl->output_rshift[oc] > 31)
+            return 0;
+        if (cl->bias_lshift[oc] < 0 || cl->bias_lshift[oc] > 30)
             return 0;
     }
 
@@ -144,12 +147,11 @@ int conv1d_accel_try_run_layer(nnom_layer_t *layer) {
         return 0;
 
     /*
-     * Phase 3: the current APB wrapper exposes one output shift per run.
-     * NNoM target layers are per-axis quantized, so non-uniform output
-     * shifts must keep using software fallback until the call path can split
-     * work by output channel or the RTL grows per-channel shifts.
+     * Phase 3: per-output-channel shifts are now representable in the
+     * APB/RTL interface. Live acceleration still waits for Phase 4 APB setup
+     * and memory-path wiring, so software fallback remains active.
      */
-    if (!has_uniform_output_shift((nnom_conv2d_layer_t *)layer, cfg.out_ch))
+    if (!has_valid_quant_shifts((nnom_conv2d_layer_t *)layer, cfg.out_ch))
         return 0;
 
     /* Phase 4: Implement APB setup and accelerator invocation. */

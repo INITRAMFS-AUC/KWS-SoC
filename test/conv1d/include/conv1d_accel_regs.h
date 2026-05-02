@@ -30,6 +30,9 @@
 #define CONV1D_IN_CH        0x20u   /* RW: input channels                  */
 #define CONV1D_OUT_CH       0x24u   /* RW: output channels                 */
 #define CONV1D_QUANT        0x28u   /* RW: [4:0]=out_shift, [5]=relu_en    */
+#define CONV1D_QUANT_INDEX  0x2Cu   /* RW: [7:0]=output channel index      */
+#define CONV1D_QUANT_SHIFT_DATA \
+                            0x30u   /* RW: [4:0]=shift for selected index  */
 
 /* Bit definitions */
 #define CONV1D_CTRL_START        (1u << 0)
@@ -47,13 +50,13 @@
 
 static inline void conv1d_write_reg(uint32_t offset, uint32_t value)
 {
-    volatile uint32_t *reg = (volatile uint32_t *)(CONV1D_BASE + offset);
+    volatile uint32_t *reg = (volatile uint32_t *)(uintptr_t)(CONV1D_BASE + offset);
     *reg = value;
 }
 
 static inline uint32_t conv1d_read_reg(uint32_t offset)
 {
-    volatile uint32_t *reg = (volatile uint32_t *)(CONV1D_BASE + offset);
+    volatile uint32_t *reg = (volatile uint32_t *)(uintptr_t)(CONV1D_BASE + offset);
     return *reg;
 }
 
@@ -70,6 +73,26 @@ static inline int conv1d_done(void)
 static inline int conv1d_busy(void)
 {
     return (conv1d_read_reg(CONV1D_STATUS) & CONV1D_STATUS_BUSY) ? 1 : 0;
+}
+
+static inline void conv1d_write_output_shift(int oc, uint32_t shift)
+{
+    if (oc < 0)
+        return;
+
+    conv1d_write_reg(CONV1D_QUANT_INDEX, (uint32_t)oc & 0xFFu);
+    conv1d_write_reg(CONV1D_QUANT_SHIFT_DATA, shift & CONV1D_QUANT_SHIFT_MASK);
+}
+
+static inline void conv1d_load_output_shifts(const int8_t *shifts, int out_ch)
+{
+    int oc;
+
+    if (shifts == NULL || out_ch <= 0)
+        return;
+
+    for (oc = 0; oc < out_ch; oc++)
+        conv1d_write_output_shift(oc, (uint32_t)shifts[oc]);
 }
 
 /*

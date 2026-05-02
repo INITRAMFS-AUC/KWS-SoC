@@ -4,11 +4,16 @@
 `define USE_WEIGHT_BUFFER 0
 `endif
 
+`ifndef USE_PER_OC_SHIFT
+`define USE_PER_OC_SHIFT 1
+`endif
+
 module conv1d_layer_accel #(
     parameter integer ADDR_W = 32,
     parameter integer DATA_W = 32,
     parameter integer LANES  = 4,
-    parameter integer MAX_IN_CH = 64
+    parameter integer MAX_IN_CH = 64,
+    parameter integer MAX_OUT_CH = 64
 )(
     input  wire clk,
     input  wire rst_n,
@@ -28,6 +33,10 @@ module conv1d_layer_accel #(
 
     input  wire [4:0]  out_shift,
     input  wire        relu_en,
+    input  wire        out_shift_load_all,
+    input  wire        out_shift_we,
+    input  wire [7:0]  out_shift_index,
+    input  wire [4:0]  out_shift_data,
 
     output reg                 rd0_en,
     output reg  [ADDR_W-1:0]   rd0_addr,
@@ -48,6 +57,7 @@ module conv1d_layer_accel #(
     localparam K = 3;
     localparam LG_LANES = $clog2(LANES);
     localparam integer USE_WEIGHT_BUFFER_MODE = `USE_WEIGHT_BUFFER;
+    localparam integer USE_PER_OC_SHIFT_MODE = `USE_PER_OC_SHIFT;
     localparam integer MAX_CH_GROUPS = (MAX_IN_CH + LANES - 1) / LANES;
     localparam integer WEIGHT_WORDS_PER_OC_MAX = K * MAX_CH_GROUPS;
 
@@ -82,6 +92,7 @@ module conv1d_layer_accel #(
     reg [15:0] prefetched_oc;
 
     reg [31:0] weight_buf [0:WEIGHT_WORDS_PER_OC_MAX-1];
+    reg [4:0] out_shift_buf [0:MAX_OUT_CH-1];
 
     reg [ADDR_W-1:0] in_byte_addr;
     reg [ADDR_W-1:0] wt_byte_addr;
@@ -156,7 +167,19 @@ module conv1d_layer_accel #(
         end
     endfunction
 
-    wire signed [31:0] shifted_raw = acc >>> out_shift;
+    integer shift_i;
+
+    function [4:0] effective_out_shift;
+        input [15:0] oc_idx;
+        begin
+            if (USE_PER_OC_SHIFT_MODE != 0 && oc_idx < MAX_OUT_CH)
+                effective_out_shift = out_shift_buf[oc_idx];
+            else
+                effective_out_shift = out_shift;
+        end
+    endfunction
+
+    wire signed [31:0] shifted_raw = acc >>> effective_out_shift(oc);
     wire signed [31:0] shifted_relu = (relu_en && shifted_raw < 0) ? 32'sd0 : shifted_raw;
     wire signed [7:0]  out_s8 = clamp_s8(shifted_relu);
 
@@ -223,12 +246,25 @@ module conv1d_layer_accel #(
             prefetched_t <= 0;
             prefetched_oc <= 0;
             in_byte_addr <= 0; wt_byte_addr <= 0; in_sel <= 0; wt_sel <= 0;
+            for (shift_i = 0; shift_i < MAX_OUT_CH; shift_i = shift_i + 1) begin
+                out_shift_buf[shift_i] <= 5'd0;
+            end
         end else begin
             done <= 1'b0;
             rd0_en <= 1'b0;
             rd1_en <= 1'b0;
             wr_en <= 1'b0;
             wr_strb <= 4'b0000;
+
+            if (out_shift_load_all) begin
+                for (shift_i = 0; shift_i < MAX_OUT_CH; shift_i = shift_i + 1) begin
+                    out_shift_buf[shift_i] <= out_shift_data;
+                end
+            end
+
+            if (out_shift_we && out_shift_index < MAX_OUT_CH) begin
+                out_shift_buf[out_shift_index] <= out_shift_data;
+            end
 
             if (USE_WEIGHT_BUFFER_MODE != 0) begin
                 // ============================================================

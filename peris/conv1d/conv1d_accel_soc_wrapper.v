@@ -18,6 +18,7 @@ module conv1d_accel_soc_wrapper #(
     parameter integer ADDR_W            = 32,
     parameter integer DATA_W            = 32,
     parameter integer MAX_IN_CH         = 64,
+    parameter integer MAX_OUT_CH        = 64,
     parameter integer USE_WEIGHT_BUFFER = 1
 )(
     // APB-3 slave (CPU-facing control/config)
@@ -54,15 +55,16 @@ module conv1d_accel_soc_wrapper #(
     // no functional effect.
     // synthesis translate_off
     initial begin
-        $display("[conv1d_accel_soc_wrapper] USE_WEIGHT_BUFFER param = %0d, MAX_IN_CH = %0d",
-                 USE_WEIGHT_BUFFER, MAX_IN_CH);
+        $display("[conv1d_accel_soc_wrapper] USE_WEIGHT_BUFFER param = %0d, MAX_IN_CH = %0d, MAX_OUT_CH = %0d",
+                 USE_WEIGHT_BUFFER, MAX_IN_CH, MAX_OUT_CH);
     end
     // synthesis translate_on
 
     apb_conv1d_layer_accel #(
         .ADDR_W   (ADDR_W),
         .DATA_W   (DATA_W),
-        .MAX_IN_CH(MAX_IN_CH)
+        .MAX_IN_CH(MAX_IN_CH),
+        .MAX_OUT_CH(MAX_OUT_CH)
     ) u_apb_core (
         .clk        (pclk),
         .rst_n      (presetn),

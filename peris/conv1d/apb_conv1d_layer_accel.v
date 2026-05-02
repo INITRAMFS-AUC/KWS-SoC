@@ -4,7 +4,8 @@
 module apb_conv1d_layer_accel #(
     parameter ADDR_W = 32,
     parameter DATA_W = 32,
-    parameter integer MAX_IN_CH = 64
+    parameter integer MAX_IN_CH = 64,
+    parameter integer MAX_OUT_CH = 64
 )(
     // Clock & Reset
     input  wire                  clk,
@@ -66,10 +67,16 @@ module apb_conv1d_layer_accel #(
     // 0x20: IN_CH (RW)
     // 0x24: OUT_CH (RW)
     // 0x28: QUANT (RW) - [4:0]=out_shift, [5]=relu_en
+    // 0x2C: QUANT_INDEX (RW) - [7:0]=output channel index
+    // 0x30: QUANT_SHIFT_DATA (RW) - write [4:0] to selected output channel
 
     reg [31:0] id_reg;
     reg [31:0] ctrl_reg;
     reg [31:0] status_reg;
+    reg [7:0] quant_index;
+    reg [4:0] quant_shift_data;
+    reg out_shift_load_all;
+    reg out_shift_we;
 
     wire core_busy;
     wire core_done;
@@ -95,7 +102,8 @@ module apb_conv1d_layer_accel #(
         .ADDR_W(ADDR_W),
         .DATA_W(DATA_W),
         .LANES(4),
-        .MAX_IN_CH(MAX_IN_CH)
+        .MAX_IN_CH(MAX_IN_CH),
+        .MAX_OUT_CH(MAX_OUT_CH)
     ) core (
         .clk(clk),
         .rst_n(rst_n),
@@ -111,6 +119,10 @@ module apb_conv1d_layer_accel #(
         .out_ch(out_ch),
         .out_shift(out_shift),
         .relu_en(relu_en),
+        .out_shift_load_all(out_shift_load_all),
+        .out_shift_we(out_shift_we),
+        .out_shift_index(quant_index),
+        .out_shift_data(quant_shift_data),
         .rd0_en(core_rd0_en),
         .rd0_addr(core_rd0_addr),
         .rd0_data(rd0_data),
@@ -146,9 +158,15 @@ module apb_conv1d_layer_accel #(
             out_ch <= 16'd0;
             out_shift <= 5'd0;
             relu_en <= 1'b0;
+            quant_index <= 8'd0;
+            quant_shift_data <= 5'd0;
+            out_shift_load_all <= 1'b0;
+            out_shift_we <= 1'b0;
         end else begin
             // Default: clear single-cycle signals
             start <= 1'b0;
+            out_shift_load_all <= 1'b0;
+            out_shift_we <= 1'b0;
 
             busy <= core_busy;
             if (start) begin
@@ -180,6 +198,13 @@ module apb_conv1d_layer_accel #(
                     8'h28: begin
                         out_shift <= pwdata[4:0];
                         relu_en <= pwdata[5];
+                        quant_shift_data <= pwdata[4:0];
+                        out_shift_load_all <= 1'b1;
+                    end
+                    8'h2C: quant_index <= pwdata[7:0];
+                    8'h30: begin
+                        quant_shift_data <= pwdata[4:0];
+                        out_shift_we <= 1'b1;
                     end
                     default: pslverr <= 1'b1;
                 endcase
@@ -200,6 +225,8 @@ module apb_conv1d_layer_accel #(
                     8'h20: prdata <= {{16{1'b0}}, in_ch};
                     8'h24: prdata <= {{16{1'b0}}, out_ch};
                     8'h28: prdata <= {{26{1'b0}}, relu_en, out_shift};
+                    8'h2C: prdata <= {{24{1'b0}}, quant_index};
+                    8'h30: prdata <= {{27{1'b0}}, quant_shift_data};
                     default: begin
                         prdata <= 32'd0;
                         pslverr <= 1'b1;

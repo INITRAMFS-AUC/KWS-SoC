@@ -178,7 +178,9 @@ VERILOG_MACROS += $(UART_VERILOG_MACROS)
 
 # Conv1D accelerator defaults to the verified buffered mode.
 CONV1D_USE_WEIGHT_BUFFER ?= 1
+CONV1D_USE_PER_OC_SHIFT ?= 1
 VERILOG_MACROS += USE_WEIGHT_BUFFER=$(CONV1D_USE_WEIGHT_BUFFER)
+VERILOG_MACROS += USE_PER_OC_SHIFT=$(CONV1D_USE_PER_OC_SHIFT)
 
 # Optional bus-snooper debug peripheral. Set DEBUG_SNOOPER=1 in the
 # environment (e.g. `make DEBUG_SNOOPER=1 sim-verilator …`) to:
@@ -208,9 +210,18 @@ SH  := quartus_sh
         openocd-sim openocd-hw gdb telnet gen_pll \
         clean_sim clean_yosys clean_verilator clean_test clean_quartus \
         synth_sky130 clean_sky130 \
-        gls gls_saif clean_gls
+        gls gls_saif clean_gls run-apb-per-oc-shift
 
 all: $(TBEXEC) test
+
+run-apb-per-oc-shift:
+	mkdir -p .tmp
+	iverilog -g2012 -DUSE_WEIGHT_BUFFER=$(CONV1D_USE_WEIGHT_BUFFER) -DUSE_PER_OC_SHIFT=$(CONV1D_USE_PER_OC_SHIFT) \
+		-o .tmp/tb_apb_conv1d_layer_accel \
+		tb/tb_apb_conv1d_layer_accel.v \
+		peris/conv1d/apb_conv1d_layer_accel.v \
+		peris/conv1d/conv1d_layer_accel.v
+	vvp .tmp/tb_apb_conv1d_layer_accel
 
 # Yosys synthesis command to generate CXXRTL C++ code
 YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) -DSIMULATION=1 -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(XIP_DEBUG_VFLAG) $(FILE_LIST);

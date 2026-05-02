@@ -101,10 +101,46 @@ static inline void conv1d_prepare_bias_with_rounding(const int32_t *nnom_bias,
     }
 }
 
+static inline void conv1d_prepare_bias_and_shifts(const int32_t *nnom_bias,
+                                                  const int8_t *bias_shift,
+                                                  const int8_t *output_shift,
+                                                  int32_t *accel_bias,
+                                                  uint8_t *accel_shift,
+                                                  int out_ch)
+{
+    int oc;
+
+    if (nnom_bias == NULL || bias_shift == NULL || output_shift == NULL ||
+        accel_bias == NULL || accel_shift == NULL || out_ch <= 0)
+        return;
+
+    for (oc = 0; oc < out_ch; oc++) {
+        int out_s = output_shift[oc];
+        int32_t shifted = conv1d_shift_bias_value(nnom_bias[oc], bias_shift[oc]);
+        accel_bias[oc] = conv1d_saturate_i32((int64_t)shifted +
+                                             conv1d_nnom_round_term(out_s));
+        accel_shift[oc] = (uint8_t)out_s;
+    }
+}
+
 static inline uint32_t conv1d_make_quant_reg(int output_shift, int relu_en)
 {
     return ((uint32_t)output_shift & CONV1D_QUANT_SHIFT_MASK) |
            (relu_en ? CONV1D_QUANT_RELU_EN : 0u);
+}
+
+static inline int8_t conv1d_quantize_prepared_acc(int32_t prepared_acc,
+                                                  int output_shift,
+                                                  int relu_en)
+{
+    int32_t shifted = (output_shift > 0) ?
+                      (prepared_acc >> output_shift) :
+                      prepared_acc;
+
+    if (relu_en && shifted < 0)
+        shifted = 0;
+
+    return conv1d_saturate_i8(shifted);
 }
 
 static inline int8_t conv1d_reference_quantize(int32_t acc,

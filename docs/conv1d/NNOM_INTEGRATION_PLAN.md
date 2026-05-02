@@ -92,20 +92,30 @@ these Conv2D layers in the generated model: `act_relu()` layers follow
   `accel_bias[oc] = nnom_bias[oc] << bias_shift[oc]`.
 - To match default NNoM rounding with the current RTL, add the rounding term to
   the prepared bias: `+ (1 << (output_shift[oc] - 1))`.
-- `out_shift` maps directly to APB `CONV1D_QUANT[4:0]` when a single shift is
-  valid for the accelerator run.
+- Per-output-channel `output_shift[oc]` maps to the APB-loaded shift buffer:
+  write `CONV1D_QUANT_INDEX = oc`, then `CONV1D_QUANT_SHIFT_DATA = output_shift[oc]`.
+- The scalar `CONV1D_QUANT[4:0]` path is preserved. A scalar QUANT write seeds
+  every per-channel shift slot with the same value, so old firmware still uses
+  scalar behavior unless it loads per-channel entries.
 - `relu_en` should remain `0` for bit-exact replacement of the Conv2D output,
   because NNoM applies ReLU in the following layer.
 - Negative output shifts are not present in the target Conv2D_1/2/3 tables and
   are not supported by the accelerator QUANT field.
 
+### APB Quantization Registers
+
+| Offset | Name | Purpose |
+|--------|------|---------|
+| `0x28` | `CONV1D_QUANT` | Scalar fallback: `[4:0]=out_shift`, `[5]=relu_en`; scalar writes also seed all per-OC shift slots |
+| `0x2C` | `CONV1D_QUANT_INDEX` | Select output-channel index for the next per-channel shift write |
+| `0x30` | `CONV1D_QUANT_SHIFT_DATA` | Write `[4:0]` shift into the selected output-channel slot |
+
 ### Remaining Limitation
 
-The target layers have non-uniform per-axis `output_shift` arrays, while the
-current APB wrapper exposes a single `out_shift` per accelerator run. The
-bridge therefore keeps software fallback for these layers until Phase 4 decides
-between splitting work by output channel/group, staging through a temporary
-output buffer, or extending the accelerator interface with per-channel shifts.
+Per-output-channel shifts are now representable in RTL, APB, and firmware
+helpers. Live acceleration is still disabled because Phase 4 must configure
+the APB registers for a real NNoM layer and connect the accelerator memory path
+before replacing software outputs.
 
 ---
 
@@ -194,7 +204,7 @@ printf("CONV1D_ACCEL: %d/%d layers accelerated\n",
 - [x] Map NNoM output_shift to APB QUANT register format
 - [x] Map NNoM bias_shift to accelerator bias memory preparation
 - [x] Add reference quantization helper for unit testing
-- [x] Identify per-axis output-shift limitation in current APB wrapper
+- [x] Add per-output-channel output shift support in RTL/APB/firmware helpers
 
 ### Phase 4: Full Acceleration
 - [ ] Configure APB registers with layer parameters

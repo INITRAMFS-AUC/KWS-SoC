@@ -83,7 +83,7 @@ Recommended first integration path: **APB control + local scratchpad memory wrap
 ## G. Integration milestones
 
 1. **Read ID from firmware** — confirm APB plumbing works. Read `CONV1D_ID`, expect `0x12345678`.
-2. **Write config registers** — write `INPUT_BASE`, `WEIGHT_BASE`, `BIAS_BASE`, `OUTPUT_BASE`, `INPUT_LEN`, `IN_CH`, `OUT_CH`, `QUANT`. Read back at least one to confirm.
+2. **Write config registers** — write `INPUT_BASE`, `WEIGHT_BASE`, `BIAS_BASE`, `OUTPUT_BASE`, `INPUT_LEN`, `IN_CH`, `OUT_CH`, `QUANT`. For NNoM per-axis quantized layers, also load `QUANT_INDEX`/`QUANT_SHIFT_DATA` for each output channel. Read back at least one to confirm.
 3. **Start accelerator and observe done** — write `CTRL.start`, poll `STATUS.done`. With memory ports tied off this validates only the control path; expect zero useful work.
 4. **Connect fake/local memory and run tiny layer** — wire memory ports to a scratchpad, place a small tensor (e.g. `input_len=8`, `in_ch=4`, `out_ch=2`), run, and compare the output bytes against a golden software reference.
 5. **Connect SRAM/AHB** — replace the scratchpad with the real SRAM/AHB wrapper. Re-run the tiny layer end-to-end.
@@ -98,6 +98,23 @@ Each milestone is independently verifiable; failures bisect cleanly.
 - **Full AHB/SRAM connection is future work**. The variable-latency simulation gives confidence the datapath tolerates `MEM_LATENCY=3`, but a real bus has arbitration, contention, and clock-crossing concerns not modelled here.
 - `MAX_IN_CH = 64` for the buffered mode's local weight buffer. The testbench refuses to run buffered mode beyond that.
 - The `USE_WEIGHT_BUFFER` parameter on `conv1d_accel_soc_wrapper` is documentation/metadata; the runtime mode is selected by the `\`USE_WEIGHT_BUFFER` build define on the inner core. Set both consistently in your synthesis flow.
+
+### Per-channel quantization shifts
+
+NNoM Conv2D_1/2/3 use per-output-channel `output_shift` arrays, so scalar
+`QUANT[4:0]` is not sufficient for bit-exact replacement. The accelerator now
+supports both modes:
+
+- `QUANT` at `0x28`: scalar fallback, `[4:0]=out_shift`, `[5]=relu_en`. A scalar
+  write seeds every per-channel shift slot with the same value.
+- `QUANT_INDEX` at `0x2C`: output-channel index for the next shift write.
+- `QUANT_SHIFT_DATA` at `0x30`: writes `[4:0]` into the selected per-channel
+  shift slot.
+
+For NNoM Conv2D replacement, prepare bias as
+`(bias[oc] << bias_shift[oc]) + NNOM_ROUND(output_shift[oc])`, load
+`output_shift[oc]` through the per-channel registers, and keep `relu_en = 0`
+because ReLU remains a separate NNoM layer.
 
 The correct integration claim today is:
 
