@@ -88,7 +88,6 @@ module apb_conv1d_layer_accel #(
 
     reg [31:0] id_reg;
     reg [31:0] ctrl_reg;
-    reg [31:0] status_reg;
     reg [7:0] quant_index;
     reg [4:0] quant_shift_data;
     reg out_shift_load_all;
@@ -168,7 +167,6 @@ module apb_conv1d_layer_accel #(
             ctrl_reg <= 32'd0;
             pready <= 1'b1;
             pslverr <= 1'b0;
-            prdata <= 32'd0;
             busy <= 1'b0;
             done <= 1'b0;
 
@@ -200,11 +198,6 @@ module apb_conv1d_layer_accel #(
                 done <= 1'b1;
             end
             ctrl_reg[0] <= start;
-
-            // Status register
-            status_reg[0] <= core_busy;
-            status_reg[1] <= done | core_done;
-            status_reg[31:2] <= 30'd0;
 
             // APB transaction (Write)
             if (psel && penable && pwrite) begin
@@ -239,40 +232,35 @@ module apb_conv1d_layer_accel #(
                 endcase
             end
 
-            // APB transaction (Read)
-            if (psel && penable && !pwrite) begin
-                pslverr <= 1'b0;
-                case (paddr[7:0])
-                    8'h00: prdata <= id_reg;
-                    8'h04: prdata <= ctrl_reg;
-                    8'h08: prdata <= status_reg;
-                    8'h0C: prdata <= input_base;
-                    8'h10: prdata <= weight_base;
-                    8'h14: prdata <= bias_base;
-                    8'h18: prdata <= output_base;
-                    8'h1C: prdata <= {{16{1'b0}}, input_len};
-                    8'h20: prdata <= {{16{1'b0}}, in_ch};
-                    8'h24: prdata <= {{16{1'b0}}, out_ch};
-                    8'h28: prdata <= {{26{1'b0}}, relu_en, out_shift};
-                    8'h2C: prdata <= {{24{1'b0}}, quant_index};
-                    8'h30: prdata <= {{27{1'b0}}, quant_shift_data};
-                    8'h34: prdata <= spad_addr;
-                    8'h38: prdata <= 32'd0; // SPAD_WDATA write-only
-                    8'h3C: begin
-                        prdata <= spad_lpb_rd_data; // combinatorial from scratchpad
-                        spad_addr <= spad_addr + 32'd4;
-                    end
-                    8'h40: prdata <= 32'd0;
-                    default: begin
-                        prdata <= 32'd0;
-                        pslverr <= 1'b1;
-                    end
-                endcase
-            end else if (psel && !penable) begin
-                // Setup phase: hold data
-                pslverr <= 1'b0;
-            end
+            // SPAD_RDATA read auto-increments the scratchpad pointer
+            if (psel && penable && !pwrite && paddr[7:0] == 8'h3C)
+                spad_addr <= spad_addr + 32'd4;
         end
+    end
+
+    // prdata must be valid combinatorially during the APB access phase so that
+    // the AHB-to-APB bridge can capture hrdata <= prdata at the same clock edge.
+    always @(*) begin
+        case (paddr[7:0])
+            8'h00: prdata = id_reg;
+            8'h04: prdata = ctrl_reg;
+            8'h08: prdata = {30'd0, done | core_done, core_busy};
+            8'h0C: prdata = input_base;
+            8'h10: prdata = weight_base;
+            8'h14: prdata = bias_base;
+            8'h18: prdata = output_base;
+            8'h1C: prdata = {{16{1'b0}}, input_len};
+            8'h20: prdata = {{16{1'b0}}, in_ch};
+            8'h24: prdata = {{16{1'b0}}, out_ch};
+            8'h28: prdata = {{26{1'b0}}, relu_en, out_shift};
+            8'h2C: prdata = {{24{1'b0}}, quant_index};
+            8'h30: prdata = {{27{1'b0}}, quant_shift_data};
+            8'h34: prdata = spad_addr;
+            8'h38: prdata = 32'd0;
+            8'h3C: prdata = spad_lpb_rd_data;
+            8'h40: prdata = 32'd0;
+            default: prdata = 32'd0;
+        endcase
     end
 
 endmodule

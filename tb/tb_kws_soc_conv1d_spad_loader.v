@@ -103,8 +103,11 @@ module tb_kws_soc_conv1d_spad_loader;
             psel = 1; pwrite = 0; paddr = addr; penable = 0;
             @(posedge clk); #1;
             penable = 1;
-            @(posedge clk); #1;
+            // prdata is combinatorial — sample it during the access phase
+            // (before the posedge where spad_addr auto-increments)
+            @(negedge clk);
             data = prdata;
+            @(posedge clk); #1;
             psel = 0; penable = 0;
         end
     endtask
