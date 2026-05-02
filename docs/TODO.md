@@ -162,11 +162,18 @@ Priority ladder:
      -march), and exports RV_ARCH / RV_ABI for test/Makefile to
      consume.  Flip an extension by editing hazard3_config.vh once
      and both the CPU build and the firmware compile pick it up. -->
-- **Reorganise repo layout**.  (1) Consolidate every NNoM model under
-  `test/model/<model_name>/` (today: `test/model/`, `test/mel_compact/`,
-  `test/streaming_model/`).  (2) Move `third_party/nnom` to `./nnom`
-  next to `busfabric/`, `peris/`, etc. — it's not really third_party.
-  Atomic restructure commit, `git mv` preserves history.
+<!-- Done: every NNoM model now lives under test/model/<name>/ —
+     test/model/strided_s16_nodil/, test/model/mel_compact_4blk_ch36/,
+     test/model/streaming/.  test/Makefile dir vars updated; build
+     identical (mel_compact_4blk_ch36_xip.elf same 28380/53228 size).
+     Renames done with git mv so blame/log follow.  Part (1) of
+     TODO #7. -->
+- **Move `third_party/nnom` to `./nnom`**.  NNoM is a vendored, locally
+  patched dependency we drive ourselves — it isn't really
+  "third_party" in the sit-quietly-in-the-corner sense.  Renaming it
+  to `./nnom` next to `busfabric/`, `peris/`, etc. brings the layout
+  in line with the reorg above.  `git mv third_party/nnom nnom` then
+  bulk-update `NNOM_DIR` etc. in Makefiles.  Part (2) of TODO #7.
 - **Software cache invalidation hook on firmware update** (TODO at
   `peris/xip/ro_cache.v:1`).  `ro_dmc` only invalidates a line when
   the cache controller fetches it; if the firmware ever writes new

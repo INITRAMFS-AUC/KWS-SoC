@@ -168,7 +168,7 @@ accuracy issue, not a firmware or SoC bug.
 | File | Change |
 |------|--------|
 | `hazard3_config.vh` | `CSR_COUNTER=1` (was 0) — enables `mcycle` CSR |
-| `test/mel_compact/kws_bare.c` | `I2S_CLK_DIV=35` (was 70); L/R stereo discard in IRQ; `csrw 0x320, zero` clears mcountinhibit; `csrr mcycle` before/after `model_run()` |
-| `test/mel_compact/mel_compact_4blk_ch36_weights.h` | Model weights (new file) |
+| `test/common/kws_bare_main.c` | `I2S_CLK_DIV=35` (was 70); L/R stereo discard in IRQ; `csrw 0x320, zero` clears mcountinhibit; `csrr mcycle` before/after `model_run()`.  (Was `test/mel_compact/kws_bare.c` before the unified-firmware refactor.) |
+| `test/model/mel_compact_4blk_ch36/mel_compact_4blk_ch36_weights.h` | Model weights (was `test/mel_compact/...` before the model-dir reorg.) |
 | `test/common/sbrk.c` | Bare-metal syscall stubs for newlib (new file) |
 | `test/Makefile` | `mel-compact` target added |

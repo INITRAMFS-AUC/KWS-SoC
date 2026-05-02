@@ -18,9 +18,17 @@ DMA_C_DIR    = dma/c
 
 MALLOC_C_DIR = malloc/c
 MEMCPY_C_DIR = memcpy/c
-MODEL_C_DIR  = model
-STREAMING_MODEL_C_DIR = streaming_model
-MEL_COMPACT_C_DIR = mel_compact
+# Each NNoM model lives in its own subdir under test/model/.  Per the
+# repo-reorg in TODO #7, the `test/{model,mel_compact,streaming_model}`
+# scatter was consolidated to:
+#
+#   test/model/strided_s16_nodil/      strided_s16_nodil_weights.h
+#   test/model/mel_compact_4blk_ch36/  mel_compact_4blk_ch36_weights.h + README
+#   test/model/streaming/              kws_bare_stream.c + kws_stream_b.{c,h}
+MODEL_DIR             = model
+STRIDED_MODEL_C_DIR   = $(MODEL_DIR)/strided_s16_nodil
+MEL_COMPACT_C_DIR     = $(MODEL_DIR)/mel_compact_4blk_ch36
+STREAMING_MODEL_C_DIR = $(MODEL_DIR)/streaming
 NNOM_DIR     = ../third_party/nnom
 NNOM_INC_DIR = $(NNOM_DIR)/inc
 NNOM_PORT_DIR = $(NNOM_DIR)/port
@@ -336,8 +344,6 @@ clean:
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)
 
-MEL_DIR = mel_compact
-
 # All KWS NNoM models share test/common/kws_bare_main.c.  Per-model knobs
 # (weights header, model name, NNoM activation buffer size in KB) are passed
 # via -D so the only thing changing between targets is the model itself —
@@ -366,17 +372,17 @@ MEL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
              -DNNOM_STATIC_BUF_KB=36 \
              -DKWS_WEIGHTS_HEADER='"mel_compact_4blk_ch36_weights.h"' \
              -DKWS_MODEL_NAME='"mel_compact_4blk_ch36"' \
-             -I$(MEL_DIR)
+             -I$(MEL_COMPACT_C_DIR)
 
 STRIDED_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
                  -DNNOM_STATIC_BUF_KB=52 \
                  -DKWS_WEIGHTS_HEADER='"strided_s16_nodil_weights.h"' \
                  -DKWS_MODEL_NAME='"strided_s16_nodil"' \
-                 -I$(MODEL_C_DIR)
+                 -I$(STRIDED_MODEL_C_DIR)
 
 STREAMING_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
                    -DNNOM_STATIC_BUF_KB=36 \
-                   -I$(STREAMING_MODEL_C_DIR) -I$(MODEL_C_DIR)
+                   -I$(STREAMING_MODEL_C_DIR) -I$(STRIDED_MODEL_C_DIR)
 
 $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf: \
     $(COMMON_DIR)/crt0.s \
