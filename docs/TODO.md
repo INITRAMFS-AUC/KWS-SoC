@@ -42,12 +42,29 @@ Priority ladder:
   109.86M → 105.0M and CYCLES_CAPTURE matches the audio rate
   exactly.  Phase B (HW skip-R-slot) and Phase C (testbench)
   tracked separately above.
-- **Sliding-window inference (post-accelerator).** Firmware is
-  already structured for it: set `KWS_STEP_SAMPLES` to 160-320
-  (= 20-40 ms) and bump `KWS_RING_SAMPLES` to 16384 once the
-  Conv1D accelerator drops inference into the ~100 ms window.
-  Today's defaults (STEP=8000, RING=8192) reduce to back-to-back
-  full-clip inferences with no overlap.
+- **Flip on sliding-window inference once the Conv1D accelerator
+  lands.** Trigger: a `model_run` cycle count that fits comfortably
+  inside the 20-40 ms / 720K-1.44M-cycle window we want to slide
+  by.  Action, in order:
+    1. Bump `KWS_RING_SAMPLES` from 8192 to 16384 in
+       `test/common/kws_bare_main.c` (or pass `-DKWS_RING_SAMPLES=16384`
+       from the model build) — gives the DMA 800+ samples of
+       headroom past the active inference snapshot.
+    2. Drop `KWS_STEP_SAMPLES` from `SAMPLES_PER_CLIP` (8000) to
+       160 (20 ms) or 320 (40 ms).  Pick whichever still leaves
+       slack between consecutive inferences in the new budget.
+    3. Re-run `mel_compact_4blk_ch36` on `sim/down_0000.hex` and
+       confirm: (a) DETECT is still `0,down` on the relevant
+       window(s); (b) consecutive `CYCLES_INFER` values are
+       within a few percent of each other; (c) `CYCLES_CAPTURE`
+       between inferences is roughly `KWS_STEP_SAMPLES` audio
+       periods (~20-40 ms ≈ 720K-1.44M cycles).
+    4. Add a deliberate "word straddling clip boundary" sim
+       fixture under `sim/` and verify the sliding window catches
+       it where the old non-overlapping pipeline missed it.
+  Until then, today's defaults (STEP=8000, RING=8192) reduce to
+  back-to-back full-clip inferences with no overlap, which is the
+  best you can do with a 4 s `model_run`.
 - **Validate readI2s Q8 testbench end-to-end**.  Merged the NNOM
   branch's `test/i2s/c/readI2s.c` (compares HW-packed bytes against
   `sim/debug_audio.hex` via uart_printf).  Boot + banner work; the
