@@ -211,7 +211,7 @@ SH  := quartus_sh
         clean_sim clean_yosys clean_verilator clean_test clean_quartus \
         synth_sky130 clean_sky130 \
         gls gls_saif clean_gls run-apb-per-oc-shift run-conv1d-apb-smoke \
-        run-conv1d-tiny-golden run-conv1d-spad-loader
+        run-conv1d-tiny-golden run-conv1d-spad-loader run-conv1d-tiny-fw
 
 all: $(TBEXEC) test
 
@@ -259,6 +259,11 @@ run-conv1d-spad-loader:
 		peris/conv1d/conv1d_layer_accel.v \
 		peris/conv1d/conv1d_scratchpad_mem.v
 	vvp .tmp/tb_kws_soc_conv1d_spad_loader
+
+run-conv1d-tiny-fw:
+	@echo "BLOCKED: riscv32-unknown-elf toolchain + verilator required for firmware simulation"
+	@echo "  1. Build ELF/bin: make -C test conv1d-tiny-fw"
+	@echo "  2. Run sim:       make sim-verilator NO_JTAG=1 FLASH=test/build/conv1d_tiny_golden_fw_xip.bin CYCLES=500000"
 
 # Yosys synthesis command to generate CXXRTL C++ code
 YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) -DSIMULATION=1 -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(XIP_DEBUG_VFLAG) $(FILE_LIST);

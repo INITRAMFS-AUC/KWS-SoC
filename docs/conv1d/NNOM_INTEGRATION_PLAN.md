@@ -219,6 +219,8 @@ printf("CONV1D_ACCEL: %d/%d layers accelerated\n",
 - [x] Wire Conv1D APB decode at `0x4000_C000`
 - [x] Add simulation/local scratchpad memory path
 - [x] Run tiny Conv1D golden test through SoC-level APB decode
+- [x] Add APB scratchpad loader (SPAD_ADDR/WDATA/RDATA/CTRL) for firmware preload/readback
+- [x] Add firmware tiny Conv1D golden test (`conv1d_accel_tiny_golden_fw.c`)
 - [ ] Link into kws_bare_main.c with USE_CONV1D_ACCEL
 - [ ] Run end-to-end inference
 - [ ] Verify output matches original
@@ -354,11 +356,10 @@ live `model_run()` acceleration is enabled.
 
 ## Next Steps
 
-1. Replace the simulation scratchpad with a production SRAM/AHB/DMA memory path.
-2. Build and run the firmware ID/control smoke test with the RISC-V toolchain.
-3. Add a firmware tiny Conv1D golden test against the production memory path.
-4. Only then add guarded `model_run()` / `kws_bare_main.c` integration.
-5. Run end-to-end KWS output equivalence and cycle measurement.
+1. Build firmware ELFs with the RISC-V toolchain — `make -C test conv1d-tiny-fw` (blocked on `riscv32-unknown-elf`).
+2. Add guarded `model_run()` / `kws_bare_main.c` integration behind `USE_CONV1D_ACCEL`.
+3. Run end-to-end KWS output equivalence and measure `CYCLES_INFER` improvement.
+4. Replace the simulation scratchpad with a production SRAM/AHB/DMA memory path for real hardware.
 
 ---
 

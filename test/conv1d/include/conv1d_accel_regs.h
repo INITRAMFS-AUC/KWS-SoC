@@ -13,6 +13,7 @@
 #define CONV1D_ACCEL_REGS_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #ifndef CONV1D_BASE
 #define CONV1D_BASE         0x4000C000u

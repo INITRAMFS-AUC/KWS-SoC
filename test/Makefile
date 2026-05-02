@@ -192,6 +192,8 @@ dma:    $(BUILD_DIR)/dma_test_sram.elf    $(BUILD_DIR)/dma_test_sram.dis    $(BU
         $(BUILD_DIR)/dma_test_xip.elf     $(BUILD_DIR)/dma_test_xip.dis     $(BUILD_DIR)/dma_test_xip.bin
 conv1d-smoke: $(BUILD_DIR)/conv1d_smoke_sram.elf $(BUILD_DIR)/conv1d_smoke_sram.dis $(BUILD_DIR)/conv1d_smoke_sram.bin \
               $(BUILD_DIR)/conv1d_smoke_xip.elf  $(BUILD_DIR)/conv1d_smoke_xip.dis  $(BUILD_DIR)/conv1d_smoke_xip.bin
+conv1d-tiny-fw: $(BUILD_DIR)/conv1d_tiny_golden_fw_sram.elf $(BUILD_DIR)/conv1d_tiny_golden_fw_sram.dis $(BUILD_DIR)/conv1d_tiny_golden_fw_sram.bin \
+                $(BUILD_DIR)/conv1d_tiny_golden_fw_xip.elf  $(BUILD_DIR)/conv1d_tiny_golden_fw_xip.dis  $(BUILD_DIR)/conv1d_tiny_golden_fw_xip.bin
 xip-testbench:
 	$(MAKE) -C $(XIP_DIR) run-testbench
 
@@ -224,6 +226,9 @@ $(BUILD_DIR)/dma_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dma_test.o $(BU
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/conv1d_smoke_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/conv1d_accel_smoke_test.o $(BUILD_DIR)/uart.o
+	$(LD) $(SRAM_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/conv1d_tiny_golden_fw_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/conv1d_accel_tiny_golden_fw.o $(COMMON_DIR)/uart_utils.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
 # --- XIP LINK RULES ---
@@ -278,6 +283,9 @@ $(BUILD_DIR)/dma_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dma_test.o $(BUI
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/conv1d_smoke_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/conv1d_accel_smoke_test.o $(BUILD_DIR)/uart.o
+	$(LD) $(XIP_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/conv1d_tiny_golden_fw_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/conv1d_accel_tiny_golden_fw.o $(COMMON_DIR)/uart_utils.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 # --- COMPILATION RULES ---
@@ -341,6 +349,9 @@ $(BUILD_DIR)/MS_DMAC_AHBL.o: $(DMAC_FW_DIR)/MS_DMAC_AHBL.c $(ROOT_MAKEFILE)
 $(BUILD_DIR)/conv1d_accel_smoke_test.o: $(CONV1D_C_DIR)/conv1d_accel_smoke_test.c $(CONV1D_INC_DIR)/conv1d_accel_regs.h $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -DCONV1D_SMOKE_TEST_MAIN -o $@ $<
 
+$(BUILD_DIR)/conv1d_accel_tiny_golden_fw.o: $(CONV1D_C_DIR)/conv1d_accel_tiny_golden_fw.c $(CONV1D_INC_DIR)/conv1d_accel_regs.h $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<
+
 # --- BINARY & DISASSEMBLY RULES ---
 $(BUILD_DIR)/%.dis: $(BUILD_DIR)/%.elf
 	$(OBJDUMP) -d $< > $@
@@ -353,7 +364,7 @@ clean:
 	rm -f $(COMMON_DIR)/*.d
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact dma conv1d-smoke xip-testbench
+.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact dma conv1d-smoke conv1d-tiny-fw xip-testbench
 
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)

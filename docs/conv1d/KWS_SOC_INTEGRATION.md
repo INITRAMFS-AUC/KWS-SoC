@@ -178,15 +178,19 @@ is null, a pointer is not 4-byte aligned, `input_len < 3`, `in_ch` or `out_ch`
 exceeds 64, an output shift does not fit the 5-bit hardware field, or the done
 poll exceeds `CONV1D_ACCEL_TIMEOUT` (default `1000000` iterations).
 
-The APB call path is intentionally not wired into `model_run()` yet. The next
-hardware-facing validation should use a tiny golden comparison:
+The APB call path is intentionally not wired into `model_run()` yet. The scratchpad
+loader path (`SPAD_ADDR`/`SPAD_WDATA`/`SPAD_RDATA`) provides a firmware-visible
+preload/readback route without an AHB master. The firmware test
+`test/conv1d/c/conv1d_accel_tiny_golden_fw.c` exercises this path end-to-end:
 
-- `input_len = 8`, `in_ch = 4`, `out_ch = 2`, `K = 3`
-- different per-output-channel shifts
-- prepared bias with NNoM rounding included
-- software golden output compared byte-for-byte against accelerator output
-  after the APB run
+- Preloads input, weights, and bias through APB scratchpad loader registers
+- Configures all APB control registers and per-channel output shifts
+- Fires `CTRL.start` and polls `STATUS.done`
+- Reads output through `SPAD_RDATA` and compares against the verified golden values
+
+Build with `make -C test conv1d-tiny-fw` (requires `riscv32-unknown-elf`). The
+equivalent RTL testbench runs without a toolchain: `make run-conv1d-spad-loader`.
 
 The correct integration claim today is:
 
-> The accelerator is packaged for KWS-SoC integration with a verified APB-facing wrapper and a documented memory-side integration path.
+> The accelerator is packaged for KWS-SoC integration with a verified APB-facing wrapper, an APB scratchpad loader for firmware tensor preload/readback, and a firmware tiny golden test that exercises the complete control path.
