@@ -189,6 +189,15 @@ ifneq ($(DEBUG_SNOOPER),)
   export DEBUG_SNOOPER
 endif
 
+# Critical-word-first / early-restart in the XIP cache is always
+# compiled in (see peris/xip/ro_cache.v).  Set XIP_CWF_DEBUG=1 to
+# print per-cycle MISS / HIT / DONE / SUM trace from ro_dmc — useful
+# when bisecting cache behaviour or measuring CWF effectiveness.
+XIP_CWF_DEBUG ?= 0
+ifeq ($(XIP_CWF_DEBUG),1)
+  VERILOG_MACROS += CWF_DEBUG
+endif
+
 export GLOBAL_UART_CONFIG := $(UART_CFLAGS)
 
 # important: these show be in PATH, locate your quartus installation

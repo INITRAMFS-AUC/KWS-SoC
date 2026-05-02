@@ -2,14 +2,19 @@
 // TODO: Software Cache Invalidation on firmware update (latent until OTA exists)
 // TODO: Program-aware FSM prefetch — far future, since we know the call graph
 //
-// Critical-Word-First / Early Restart: enabled by `+define+CWF (default
-// off in production builds today).  When defined, ro_dmc uses the
-// per-word `m_word_done` ready bitmap from flash_ctrl_eb to release
-// HREADYOUT to the CPU as soon as the requested word lands, instead of
-// waiting for the full line.  See the dhit_cwf logic and the
-// rising-edge-latched `fwv` register below.  Validate any change with
-//   make -C test/xip run-ro-dmc        # baseline
-//   make -C test/xip run-ro-dmc-cwf    # CWF-enabled (tighter bounds)
+// Critical-Word-First / Early Restart is always compiled in.  ro_dmc
+// uses the per-word `m_word_done` ready bitmap from flash_ctrl_eb to
+// release HREADYOUT to the CPU as soon as the requested word lands,
+// instead of waiting for the full line.  See the dhit_cwf / ahit_cwf
+// logic and the rising-edge-latched `fwv` register below.
+//
+// Set XIP_CWF_DEBUG=1 in the root Makefile to compile in the per-cycle
+// MISS / HIT / DONE / TICK / SUM $display lines (Verilog define
+// CWF_DEBUG).  Off by default — production builds get the perf logic
+// without the trace volume.
+//
+// Validate any change with
+//   make -C test/xip run-ro-dmc        # CWF self-checking TB
 module ro_dmc #(parameter LW=32*16, NL=64) (
     input  wire             clk,
     input  wire             rst_n,
@@ -18,15 +23,22 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
     input  wire             cpu_rd,
     input  wire [31:0]      cpu_aaddr,
     input  wire [31:0]      cpu_daddr,
+    // dphase_active from the wrapper.  Used by the FSM to detect a
+    // *deferred* miss: when CWF early-restart commits the master, the
+    // master may issue a new address phase mid-fetch that cpu_rd
+    // can't catch (HREADY drops as soon as the new dhit is 0).  After
+    // the current fetch completes, the cache must look at cpu_daddr
+    // and kick off the miss for that held data phase, otherwise it
+    // deadlocks (cpu_rd stays 0 because HREADY=0; HREADY=0 because no
+    // hit; no hit because we never fetched the line).
+    input  wire             cpu_dvalid,
     output wire             cpu_ahit,
     output wire             cpu_dhit,
     output wire [31:0]      cpu_data,
 
     // Slow Memory Interface.  m_word_done[K] is the per-word ready
     // bitmap from flash_ctrl_eb (level — bits stay high once set,
-    // cleared on the next `start`).  Always present in the port list
-    // even without CWF so the wrapper / SoC build doesn't have to
-    // conditionally rewire; synth prunes the wire when CWF is off.
+    // cleared on the next `start`).
     input  wire [LW-1:0]    m_data,
     input  wire [LW/32-1:0] m_word_done,
     output wire [31:0]      m_addr,
@@ -90,19 +102,45 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
             case (state)
                 ST_IDLE: begin
                     if (cpu_rd && !ahit) begin
+                        // Normal path: fresh address phase that misses.
                         state           <= ST_FETCH;
                         miss_addr_reg   <= cpu_aaddr;
                         VALID[aline_no] <= 1'b0;
                         fetch_line_reg  <= aline_no;
                         fetch_tag_reg   <= atag;
                         m_start_reg     <= 1'b1;
+                    end else if (cpu_dvalid && !dhit) begin
+                        // Deferred-miss path (CWF rescue): no fresh
+                        // address phase right now, but the data phase
+                        // is parked on a line we haven't fetched.
+                        // This happens when CWF early-restarts and the
+                        // master issues a new address mid-fetch that
+                        // the FSM couldn't queue (state was ST_FETCH).
+                        // After the current fetch completed, cpu_rd
+                        // is held low by HREADY=0 (which depends on
+                        // dhit, which depends on having the line).
+                        // Without this branch the SoC deadlocks; with
+                        // it we treat the held data phase as the next
+                        // miss.  Fetches cpu_daddr's line.
+                        state             <= ST_FETCH;
+                        miss_addr_reg     <= cpu_daddr;
+                        VALID[dline_no]   <= 1'b0;
+                        fetch_line_reg    <= dline_no;
+                        fetch_tag_reg     <= dtag;
+                        m_start_reg       <= 1'b1;
                     end
                 end
                 ST_FETCH: begin
                     m_start_reg <= 1'b0;
+                    // CWF mid-fetch fill: mirror m_data into the line
+                    // every cycle.  flash_ctrl_eb writes each byte at
+                    // its final position as it arrives, so the slot
+                    // for word K becomes correct exactly when fwv[K]
+                    // is set.  Single writer per DATA slot so the
+                    // m_done branch below can leave DATA alone.
+                    DATA[fetch_line_reg] <= m_data;
                     if (m_done) begin
                         state                         <= ST_IDLE;
-                        DATA[miss_addr_reg[LFE:LFS]]  <= m_data;
                         TAG[miss_addr_reg[LFE:LFS]]   <= miss_addr_reg[TFE:TFS];
                         VALID[miss_addr_reg[LFE:LFS]] <= 1'b1;
                     end
@@ -129,12 +167,6 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
     // m_word_done.  When fwv is fresh (post-reset and post-flash-clear),
     // every set bit corresponds to a real word arrival of the current
     // fetch, so dhit_cwf is safe.
-    //
-    // Without `+define+CWF this whole block is a no-op except for an
-    // unused fwv register that synth prunes — keeps a single source
-    // of truth for the cache module while the perf optimisation is
-    // gated.
-`ifdef CWF
     localparam NW_LOG = $clog2(LW/32);
 
     reg  [LW/32-1:0] m_word_done_d;
@@ -147,27 +179,20 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
             fwv           <= {(LW/32){1'b0}};
         end else begin
             m_word_done_d <= m_word_done;
-            if (state == ST_IDLE && cpu_rd && !ahit)
+            // Reset fwv on EITHER miss-entry path — both the normal
+            // (cpu_rd && !ahit) and the deferred (cpu_dvalid && !dhit)
+            // branches kick off a new fetch, so both must wipe the
+            // previous fetch's accumulated bits.  Missing the second
+            // case meant CWF returned stale all-1s for the line being
+            // fetched and the firmware locked up after a few cycles
+            // of executing garbage.
+            if (state == ST_IDLE && ((cpu_rd && !ahit) ||
+                                     (cpu_dvalid && !dhit)))
                 fwv <= {(LW/32){1'b0}};
             else if (state == ST_FETCH)
                 fwv <= fwv | m_word_done_rise;
         end
     end
-
-    // Mid-fetch DATA fill: drive DATA[fetch_line_reg] from m_data
-    // every cycle of ST_FETCH.  flash_ctrl_eb writes each byte at its
-    // final position as it arrives, so DATA[fetch_line_reg][K*32+:32]
-    // becomes correct exactly when fwv[K] is set — never before.
-    // After m_done the ST_FETCH branch above re-writes the full
-    // m_data into DATA, which is a no-op in steady state but keeps
-    // the array authoritative even if the caller tweaks m_data after
-    // m_done.
-    always @(posedge clk) begin
-        if (state == ST_FETCH) begin
-            DATA[fetch_line_reg] <= m_data;
-        end
-    end
-`endif
 
     // ------------------------------------------------------------------
     // Hit logic
@@ -175,7 +200,6 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
     wire ahit_full = (TAG[aline_no] == atag) & VALID[aline_no];
     wire dhit_full = (TAG[dline_no] == dtag) & VALID[dline_no];
 
-`ifdef CWF
     // CWF (early-restart) hit: mid-fetch on this exact line, the tag
     // matches what we latched at the miss, and the requested word's
     // bit is set in fwv (= rising-edge-filtered m_word_done).
@@ -185,17 +209,52 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
                     (atag == fetch_tag_reg) & fwv[aword];
     wire dhit_cwf = (state == ST_FETCH) & (dline_no == fetch_line_reg) &
                     (dtag == fetch_tag_reg) & fwv[dword];
+
     wire ahit = ahit_full | ahit_cwf;
     wire dhit = dhit_full | dhit_cwf;
-`else
-    wire ahit = ahit_full;
-    wire dhit = dhit_full;
-`endif
 
     assign cpu_ahit = ahit;
     assign cpu_dhit = dhit;
     assign m_start  = m_start_reg;
     assign m_addr   = miss_addr_reg;
+
+`ifdef CWF_DEBUG
+    integer cwf_hits = 0;
+    integer total_misses = 0;
+    integer dones = 0;
+    integer cyc = 0;
+    always @(posedge clk) begin
+        cyc = cyc + 1;
+        if (cpu_rd && !ahit && state == ST_IDLE) begin
+            total_misses = total_misses + 1;
+            if (total_misses < 30)
+                $display("[CWF_DBG MISS #%0d] cyc=%0d aaddr=%h",
+                         total_misses, cyc, cpu_aaddr);
+        end
+        if (dhit_cwf && cpu_rd) begin
+            cwf_hits = cwf_hits + 1;
+            if (cwf_hits < 30)
+                $display("[CWF_DBG HIT  #%0d] cyc=%0d daddr=%h dword=%0d fwv=%h",
+                         cwf_hits, cyc, cpu_daddr, dword, fwv);
+        end
+        if (m_done) begin
+            dones = dones + 1;
+            if (dones < 30)
+                $display("[CWF_DBG DONE #%0d] cyc=%0d fetch_line=%0d",
+                         dones, cyc, fetch_line_reg);
+        end
+        if (dones >= 1 && cyc % 100000 == 0)
+            $display("[CWF_DBG TICK] cyc=%0d state=%b cpu_rd=%b cpu_aaddr=%h cpu_dhit=%b",
+                     cyc, state, cpu_rd, cpu_aaddr, cpu_dhit);
+        // Coarse summary every 1M cycles so we can see how many CWF
+        // hits we accumulate per inference (~46M cyc) — useful for
+        // understanding why end-to-end speedup is small even when the
+        // mechanism works.
+        if (cyc % 1000000 == 0)
+            $display("[CWF_DBG SUM ] cyc=%0d misses=%0d cwf_hits=%0d dones=%0d",
+                     cyc, total_misses, cwf_hits, dones);
+    end
+`endif
 
     // --- Read Logic ---
     localparam NW = LW/32;

@@ -46,19 +46,26 @@ module ro_dmc_tb;
 
     `TB(ro_dmc_tb, clk, rst_n, 1'b0, 50_000)
 
+    // cpu_dvalid mirrors the wrapper's dphase_active.  In this TB we
+    // just tie it to cpu_rd for simplicity — every miss-detection
+    // moment is also a "data phase active" moment under our pipeline.
+    // The deferred-miss rescue branch in ro_dmc only triggers when
+    // cpu_rd is 0 AND cpu_dvalid is 1, which doesn't happen in this
+    // TB since we drop cpu_rd at the same time as the data finishes.
+    wire cpu_dvalid = cpu_rd;
+
     ro_dmc #(.LW(LW), .NL(NL)) duv (
         .clk(clk),
         .rst_n(rst_n),
         .cpu_rd(cpu_rd),
         .cpu_aaddr(cpu_aaddr),
         .cpu_daddr(cpu_daddr),
+        .cpu_dvalid(cpu_dvalid),
         .cpu_ahit(cpu_ahit),
         .cpu_dhit(cpu_dhit),
         .cpu_data(cpu_data),
         .m_data(m_data),
-`ifdef CWF
         .m_word_done(m_word_done),
-`endif
         .m_addr(m_addr),
         .m_start(m_start),
         .m_done(m_done)
@@ -117,9 +124,10 @@ module ro_dmc_tb;
     // ------------------------------------------------------------------
     // Pass / fail + perf tracking.  total_stall sums every ahb_read
     // task's stall cycles across the whole run; total_misses counts
-    // reads that stalled at all.  Running this TB once with `+CWF and
-    // once without lets us see the CWF speedup directly without
-    // having to integrate into the SoC and re-run mel_compact.
+    // reads that stalled at all.  CWF is always-on in ro_dmc, so the
+    // perf summary line at the end is a single point — change the
+    // bounds in tests 9 / 11 / 12 if you ever rework the early-restart
+    // mechanism.
     // ------------------------------------------------------------------
     integer passes       = 0;
     integer fails        = 0;
@@ -282,11 +290,7 @@ module ro_dmc_tb;
         $display("\n[9] CWF early-restart on word 0 (offset 0x00)");
         ahb_read(32'h80000800);  // fresh line, slot 0, new tag
         check_eq("data    @0x80000800", cpu_data, 32'h80000800);
-`ifdef CWF
         check_le("stall <= 4 cyc (CWF word 0)", last_stall, 4);
-`else
-        check_le("stall <= 12 cyc",             last_stall, 12);
-`endif
 
         // --- 10. CWF stale-data regression test ---
         // After a previous fetch leaves m_word_done = all-1s, the next
@@ -308,11 +312,7 @@ module ro_dmc_tb;
         $display("\n[11] CWF early-restart on word 4 (offset 0x10)");
         ahb_read(32'h80001010);  // new line, mid-line word
         check_eq("data    @0x80001010", cpu_data, 32'h80001010);
-`ifdef CWF
         check_le("stall <= 8 cyc (CWF word 4)", last_stall, 8);
-`else
-        check_le("stall <= 12 cyc",             last_stall, 12);
-`endif
 
         // --- 12. CWF on last word (word 7) ---
         // Worst case for CWF: requested word is last in the line.
@@ -321,11 +321,7 @@ module ro_dmc_tb;
         $display("\n[12] CWF — request last word (offset 0x1C)");
         ahb_read(32'h80001C1C);  // new line (slot 0, new tag), last word
         check_eq("data    @0x80001C1C", cpu_data, 32'h80001C1C);
-`ifdef CWF
         check_le("stall <= 12 cyc (CWF word 7)", last_stall, 12);
-`else
-        check_le("stall <= 12 cyc",              last_stall, 12);
-`endif
 
         // --- 13. Uniform word-offset miss sweep ---
         // 8 cold misses, one per word position (offsets 0x00, 0x04,
