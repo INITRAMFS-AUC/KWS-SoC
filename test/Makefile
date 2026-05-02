@@ -63,6 +63,9 @@ I2S_DMA_BURST_WORDS := $(shell expr $(I2S_FIFO_DEPTH) / 2)
 # RV_ARCH and RV_ABI are exported by the root Makefile and derived from
 # hazard3_config.vh — flip an EXTENSION_* there and both gcc -march and
 # the Verilog parameter elaboration update together (TODO #6 + #13).
+# Defaults allow invoking targets directly from test/ without the root Makefile.
+RV_ARCH ?= rv32imac_zicsr_zifencei
+RV_ABI  ?= ilp32
 CFLAGS  = -march=$(RV_ARCH) -mabi=$(RV_ABI) -g -c -MMD -MP
 CFLAGS += $(GLOBAL_UART_CONFIG)
 CFLAGS += -I$(I2S_REGS_DIR)
@@ -143,8 +146,10 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/memcpy_simple_test_xip.elf    $(BUILD_DIR)/memcpy_simple_test_xip.dis    $(BUILD_DIR)/memcpy_simple_test_xip.bin \
 	$(BUILD_DIR)/strided_s16_nodil_xip.elf     $(BUILD_DIR)/strided_s16_nodil_xip.dis     $(BUILD_DIR)/strided_s16_nodil_xip.bin \
 	$(BUILD_DIR)/streaming_model_xip.elf       $(BUILD_DIR)/streaming_model_xip.dis       $(BUILD_DIR)/streaming_model_xip.bin \
-	$(BUILD_DIR)/dma_test_xip.elf              $(BUILD_DIR)/dma_test_xip.dis              $(BUILD_DIR)/dma_test_xip.bin \
-	$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin
+	$(BUILD_DIR)/dma_test_xip.elf                    $(BUILD_DIR)/dma_test_xip.dis                    $(BUILD_DIR)/dma_test_xip.bin \
+	$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf       $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis       $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin \
+	$(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.bin \
+	$(BUILD_DIR)/accel_test_xip.elf                  $(BUILD_DIR)/accel_test_xip.dis                  $(BUILD_DIR)/accel_test_xip.bin
 
 ALL_TARGETS = $(SRAM_TARGETS) $(XIP_TARGETS)
 
@@ -175,6 +180,7 @@ memcpy: $(BUILD_DIR)/memcpy_simple_test_sram.elf $(BUILD_DIR)/memcpy_simple_test
 model-strided-s16-nodil: $(BUILD_DIR)/strided_s16_nodil_xip.elf  $(BUILD_DIR)/strided_s16_nodil_xip.dis  $(BUILD_DIR)/strided_s16_nodil_xip.bin
 model-streaming: $(BUILD_DIR)/streaming_model_xip.elf $(BUILD_DIR)/streaming_model_xip.dis $(BUILD_DIR)/streaming_model_xip.bin
 model-mel-compact: $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin
+model-mel-compact-accel: $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.bin
 # SRAM model artifacts intentionally disabled:
 # $(BUILD_DIR)/strided_s16_nodil_sram.elf $(BUILD_DIR)/strided_s16_nodil_sram.dis $(BUILD_DIR)/strided_s16_nodil_sram.bin
 dma:    $(BUILD_DIR)/dma_test_sram.elf    $(BUILD_DIR)/dma_test_sram.dis    $(BUILD_DIR)/dma_test_sram.bin \
@@ -261,6 +267,9 @@ $(BUILD_DIR)/streaming_model_xip.elf: \
 $(BUILD_DIR)/dma_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dma_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
+$(BUILD_DIR)/accel_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/accel_test.o $(BUILD_DIR)/uart_utils.o $(BUILD_DIR)/memset.o
+	$(LD) $(XIP_LDFLAGS) -o $@ $^
+
 # --- COMPILATION RULES ---
 $(BUILD_DIR)/crt0.o: $(COMMON_DIR)/crt0.s $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
@@ -312,6 +321,10 @@ $(BUILD_DIR)/memset.o: $(COMMON_DIR)/memset.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
 
 $(BUILD_DIR)/uart_utils.o: $(COMMON_DIR)/uart_utils.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<
+
+$(BUILD_DIR)/accel_test.o: accel/accel_test.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -I$(COMMON_DIR) -o $@ $<
 
 $(BUILD_DIR)/dma_test.o: $(DMA_C_DIR)/dma_test.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
@@ -331,7 +344,7 @@ clean:
 	rm -f $(COMMON_DIR)/*.d
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact xip-testbench
+.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact model-mel-compact-accel xip-testbench mel-compact mel-compact-accel
 
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)
@@ -390,3 +403,50 @@ $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf: \
 	$(CROSS_COMPILE)size $@
 
 mel-compact: $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf
+
+# ── mel_compact_4blk_ch36 — Conv1D hardware accelerator variant ──────────────
+#
+# Uses --wrap=conv2d_run to redirect NNoM's conv2d_run to nnom_conv1d_hw.c,
+# which calls the KWS-SoC Conv1D hardware accelerator at APB 0x4000_C000.
+# Same firmware entry point (kws_bare_main.c) as the SW baseline.
+# Build:  make mel-compact-accel   or   make model-mel-compact-accel
+
+# NNoM sources without nnom_conv2d.c (replaced by the HW shim below).
+NNOM_SRCS_MEL_ACCEL = \
+    $(NNOM_DIR)/src/core/nnom.c \
+    $(NNOM_DIR)/src/core/nnom_layers.c \
+    $(NNOM_DIR)/src/core/nnom_tensor.c \
+    $(NNOM_DIR)/src/core/nnom_utils.c \
+    $(NNOM_DIR)/src/layers/nnom_activation.c \
+    $(NNOM_DIR)/src/layers/nnom_avgpool.c \
+    $(NNOM_DIR)/src/layers/nnom_baselayer.c \
+    $(NNOM_DIR)/src/layers/nnom_dense.c \
+    $(NNOM_DIR)/src/layers/nnom_flatten.c \
+    $(NNOM_DIR)/src/layers/nnom_global_pool.c \
+    $(NNOM_DIR)/src/layers/nnom_input.c \
+    $(NNOM_DIR)/src/layers/nnom_maxpool.c \
+    $(NNOM_DIR)/src/layers/nnom_output.c \
+    $(NNOM_DIR)/src/layers/nnom_reshape.c \
+    $(NNOM_DIR)/src/layers/nnom_softmax.c \
+    $(NNOM_DIR)/src/backends/nnom_local.c \
+    $(NNOM_DIR)/src/backends/nnom_local_q15.c \
+    $(MEL_DIR)/nnom_conv1d_hw.c
+
+MEL_ACCEL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+                   -DNNOM_STATIC_BUF_KB=36 \
+                   -DKWS_WEIGHTS_HEADER='"mel_compact_4blk_ch36_weights.h"' \
+                   -DKWS_MODEL_NAME='"mel_compact_4blk_ch36_accel"' \
+                   -I$(MEL_DIR)
+
+$(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_MEL_ACCEL) | $(BUILD_DIR)
+	$(CC) $(MEL_ACCEL_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+mel-compact-accel: $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf

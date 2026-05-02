@@ -31,3 +31,7 @@ list busfabric/busfabric.f
 # IO and XIP peripherals
 
 list peris/peris.f
+
+# Conv1D hardware accelerator
+
+file peris/conv1d_accel/conv1d_accel.v
