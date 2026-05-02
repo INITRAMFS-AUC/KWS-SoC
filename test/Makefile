@@ -60,7 +60,10 @@ I2S_FIFO_DEPTH      ?= 16
 I2S_DMA_BURST_WORDS := $(shell expr $(I2S_FIFO_DEPTH) / 2)
 
 # Compiler flags
-CFLAGS  = -march=rv32i_zicsr -mabi=ilp32 -g -c -MMD -MP
+# RV_ARCH and RV_ABI are exported by the root Makefile and derived from
+# hazard3_config.vh — flip an EXTENSION_* there and both gcc -march and
+# the Verilog parameter elaboration update together (TODO #6 + #13).
+CFLAGS  = -march=$(RV_ARCH) -mabi=$(RV_ABI) -g -c -MMD -MP
 CFLAGS += $(GLOBAL_UART_CONFIG)
 CFLAGS += -I$(I2S_REGS_DIR)
 CFLAGS += -I$(UART_REGS_DIR)
@@ -80,14 +83,14 @@ XIP_LDFLAGS  = -T $(COMMON_DIR)/link.ld      --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTE
 # `-g` adds DWARF debug info to the ELF only — `objcopy -O binary` strips
 # `.debug_*` so the runtime .bin (and the SRAM image we ship to flash)
 # stays the exact same size.  Cost is purely ELF-on-disk + GDB working.
-MODEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
+MODEL_CFLAGS = -march=$(RV_ARCH) -mabi=$(RV_ABI) \
                -Os -flto -g -std=gnu99 \
                -ffunction-sections -fdata-sections \
                -falign-functions=4 \
                -DNNOM_USING_STATIC_MEMORY \
                -DNNOM_BARE_METAL \
                "-DNNOM_LOG(...)=" \
-               -DCLK_MHZ=36 -DUART_BAUD_RATE=115200 \
+               $(GLOBAL_UART_CONFIG) \
                -DI2S_DMA_BURST_WORDS=$(I2S_DMA_BURST_WORDS) \
                -I$(COMMON_DIR) \
                -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR)
@@ -105,7 +108,7 @@ MODEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
 # no sqrt/exp/etc.).
 # Net effect: minimal binary, real -mabi=ilp32 (4-byte stack alignment)
 # instead of the libgcc-imposed ilp32d (16-byte alignment).
-MODEL_LDFLAGS_COMMON = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
+MODEL_LDFLAGS_COMMON = -march=$(RV_ARCH) -mabi=$(RV_ABI) \
                        -nostdlib \
                        -Wl,--gc-sections
 MODEL_LDFLAGS_SRAM   = $(MODEL_LDFLAGS_COMMON) -Wl,-T,$(COMMON_DIR)/sram_link.ld -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)

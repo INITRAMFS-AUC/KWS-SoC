@@ -105,6 +105,55 @@ UART_VERILOG_MACROS := CLK_MHZ=$(CLK_MHZ) \
                        UART_STOP_BITS=$(UART_STOP_BITS) \
                        I2S_FIFO_DEPTH=$(I2S_FIFO_DEPTH)
 
+# ─── RISC-V ISA extensions: hazard3_config.vh is the single source of truth ──
+# The CPU's `parameter EXTENSION_* = 0|1,` lines in hazard3_config.vh
+# decide what hardware is built.  We grep the same file here so the gcc
+# -march string compiled into the firmware and the Verilog parameters
+# elaborated into Hazard3 cannot drift apart: enable / disable an
+# extension by editing hazard3_config.vh, run a clean build, done.
+#
+# rv_ext(NAME) returns 1 / 0 by reading `parameter NAME = N,` from the
+# config file.  Empty string if the line is missing — caught by the
+# canonical-order assembly below.
+HAZARD3_CONFIG_FILE := $(ROOT_DIR)/hazard3_config.vh
+rv_ext = $(shell sed -nE 's/^[[:space:]]*parameter[[:space:]]+$(1)[[:space:]]*=[[:space:]]*([01])[[:space:]]*,.*/\1/p' $(HAZARD3_CONFIG_FILE))
+
+RV_HAS_M        := $(call rv_ext,EXTENSION_M)
+RV_HAS_A        := $(call rv_ext,EXTENSION_A)
+RV_HAS_C        := $(call rv_ext,EXTENSION_C)
+RV_HAS_ZIFENCEI := $(call rv_ext,EXTENSION_ZIFENCEI)
+RV_HAS_ZBA      := $(call rv_ext,EXTENSION_ZBA)
+RV_HAS_ZBB      := $(call rv_ext,EXTENSION_ZBB)
+
+# Compose the gcc -march string in the canonical extension order that
+# binutils expects (base, then M / A / C, then _zicsr / _zifencei,
+# then Z extensions alphabetically).  Zicsr is unconditional — every
+# Hazard3 build has the M-mode CSRs.
+RV_ARCH := rv32i
+ifeq ($(RV_HAS_M),1)
+  RV_ARCH := $(RV_ARCH)m
+endif
+ifeq ($(RV_HAS_A),1)
+  RV_ARCH := $(RV_ARCH)a
+endif
+ifeq ($(RV_HAS_C),1)
+  RV_ARCH := $(RV_ARCH)c
+endif
+RV_ARCH := $(RV_ARCH)_zicsr
+ifeq ($(RV_HAS_ZIFENCEI),1)
+  RV_ARCH := $(RV_ARCH)_zifencei
+endif
+ifeq ($(RV_HAS_ZBA),1)
+  RV_ARCH := $(RV_ARCH)_zba
+endif
+ifeq ($(RV_HAS_ZBB),1)
+  RV_ARCH := $(RV_ARCH)_zbb
+endif
+
+RV_ABI := ilp32
+
+export RV_ARCH RV_ABI
+
 # Parity
 ifeq ($(UART_PARITY), N)
     UART_VERILOG_MACROS += UART_PARITY_NONE

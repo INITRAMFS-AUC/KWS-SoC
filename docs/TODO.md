@@ -108,11 +108,17 @@ Priority ladder:
 
 ## P2 — cleanup
 
-- **Single source of truth for I2S FIFO depth + DMA burst**.
-  `I2S_FIFO_DEPTH` lives in `kws_soc.v` *and* `test/Makefile`; drift
-  silently corrupts ring_buf.  Half-fixed (Makefile derives burst);
-  finish by driving the Verilog parameter from the same root-Makefile
-  variable via VERILOG_MACROS.
+<!-- Done: I2S_FIFO_DEPTH lives in the root Makefile, exported to
+     test/Makefile (?=) and pushed into the Verilog elaboration via
+     UART_VERILOG_MACROS / VERILOG_MACROS so kws_soc.v's
+     `apb_i2s_receiver` instance reads it through `I2S_FIFO_DEPTH.
+     Same source drives I2S_DMA_BURST_WORDS in test/Makefile. -->
+<!-- Done: hazard3_config.vh is the single source of truth for the
+     RV32 ISA and enabled extensions; the root Makefile greps the
+     EXTENSION_* parameters out of it to compose RV_ARCH (= gcc
+     -march), and exports RV_ARCH / RV_ABI for test/Makefile to
+     consume.  Flip an extension by editing hazard3_config.vh once
+     and both the CPU build and the firmware compile pick it up. -->
 - **Reorganise repo layout**.  (1) Consolidate every NNoM model under
   `test/model/<model_name>/` (today: `test/model/`, `test/mel_compact/`,
   `test/streaming_model/`).  (2) Move `third_party/nnom` to `./nnom`
@@ -123,10 +129,10 @@ Priority ladder:
 
 ## P3 — developer velocity
 
-- **Pipe root Makefile values into test/Makefile**.  `test/Makefile`
-  hardcodes `CLK_MHZ=36`, `UART_BAUD_RATE=115200`.  Root Makefile
-  already exports `GLOBAL_UART_CONFIG`; have test/Makefile inherit so
-  one change propagates.
+<!-- Done: test/Makefile MODEL_CFLAGS now picks up CLK_MHZ /
+     UART_BAUD_RATE via $(GLOBAL_UART_CONFIG) instead of hardcoded
+     `-DCLK_MHZ=36 -DUART_BAUD_RATE=115200`.  Same source as the
+     non-model CFLAGS already used. -->
 - **VPI cycle counter halt-on-ebreak**.  Hazard3's `mcycle` CSR pauses
   on debug halt; the Verilator VPI's wallclock counter does not, so
   any measurement bracketing a debug halt is inflated by GDB time.
