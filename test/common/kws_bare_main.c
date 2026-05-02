@@ -168,7 +168,7 @@ typedef struct {
  * 1 sec of audio took 2 sec of sim time.  Don't repeat that mistake.
  * Override on the make line (e.g. -DI2S_CLK_DIV=11 for 12 MHz sim). */
 #ifndef I2S_CLK_DIV
-#define I2S_CLK_DIV  35
+#define I2S_CLK_DIV  17
 #endif
 
 /* I2S_CONF bit masks — match peris/i2s/i2s_apb/i2s_itr2/i2s_regs.h */
@@ -189,9 +189,10 @@ static void i2s_init(uint32_t clk_div) {
      * DS_EN: not enabled — would halve the audio rate to 4 kHz, which
      *        the model isn't trained for.  Keep cfg_div=35 → 8 kHz. */
     I2S->conf = ((clk_div & 0xFFFFFFu) << 8)
-              | I2S_CONF_SKIP_R_EN
+              | I2S_CONF_IRQ_EN
+              | I2S_CONF_DS_EN
               | I2S_CONF_Q8_EN
-              | I2S_CONF_IRQ_EN;
+              | I2S_CONF_SKIP_R_EN;
 }
 
 /* ── MS_DMAC_AHBL (0x6000_0000) ─────────────────────────────────────────── */
