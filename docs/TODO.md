@@ -119,6 +119,35 @@ Priority ladder:
   Subsumed by the autonomous-drain task; keep separate so a faster
   power-gate fix (gate `dst_hwdata` toggling on `fifo_empty`) doesn't
   block on the bigger redesign.
+- **XIP cache: next-line prefetch + critical-word-first / early
+  restart** (TODO at `peris/xip/ro_cache.v:1`).  At NL=256 the miss
+  rate is already 0.09 % and CYCLES_INFER is 45.8M, but the
+  remaining 61K misses still each pay one full QSPI line fetch.
+  Next-line prefetch hides that latency for sequential code paths;
+  critical-word-first lets the CPU resume on the requested word
+  before the rest of the line lands.  Either alone should chip
+  another few percent off CYCLES_INFER.  Combine with the FSM
+  oracle below for the full win.
+- **XIP cache: program-aware FSM prefetch** (TODO at
+  `peris/xip/ro_cache.v:2`, also raised in conversation 2026-05-02).
+  The firmware code is fixed and known at flash-program time, so
+  the cache doesn't need to be a generic adaptive structure — a
+  small FSM that knows the call graph (or just walks flash
+  sequentially at boot to warm the cache) can drive miss rate to
+  the compulsory floor.  At NL=1024 (32 KB, fits all .text) we
+  already measure 0 % miss rate and 41M CYCLES_INFER, so this is
+  effectively "right-size the cache to the program" — the FSM
+  variant matters when BRAM budget can't grow that far on ASIC.
+  Pair with the cache invalidation P2 entry below if the firmware
+  is ever updated in-place.
+- **AHB burst support in `ahbl_splitter` and `ahbl_arbiter`** (TODOs
+  at `busfabric/ahbl_splitter.v:26` and `busfabric/ahbl_arbiter.v:29`).
+  Today both modules treat each beat as an independent transaction.
+  HBURST=INCRx would let the QSPI cache fetch a full 32 B line as a
+  single bus transaction (vs 8 single-beat reads today) — measurable
+  saving on miss penalty (~155 cyc → ~50 cyc per miss) and bus
+  arbitration churn.  Pair with the cache improvements above; both
+  attack the same bottleneck from different sides.
 
 ## P2 — cleanup
 
@@ -138,6 +167,38 @@ Priority ladder:
   `test/streaming_model/`).  (2) Move `third_party/nnom` to `./nnom`
   next to `busfabric/`, `peris/`, etc. — it's not really third_party.
   Atomic restructure commit, `git mv` preserves history.
+- **Software cache invalidation hook on firmware update** (TODO at
+  `peris/xip/ro_cache.v:1`).  `ro_dmc` only invalidates a line when
+  the cache controller fetches it; if the firmware ever writes new
+  bytes to the flash region currently mirrored in the cache,
+  subsequent fetches return stale data.  Today nobody writes flash
+  at runtime, so it's latent — but the bootloader / OTA path will
+  expose it.  Add a write-1-to-clear "invalidate-all" CSR (or a
+  per-line invalidate range) in the cache and call it after any
+  flash write from firmware.
+- **`ahbl_flash_ctrl_eb_cache` parameters config-dependent** (TODO
+  at `kws_soc.v:668`).  The `LW(32*8) NL(256)` literal in the
+  instantiation should come from the same `kws_soc_config.vh` /
+  Verilog macros pipeline that already drives `SRAM_DEPTH`,
+  `CLK_MHZ`, `I2S_FIFO_DEPTH` etc., so an FPGA build can opt into
+  NL=1024 (32 KB, fits all .text) and an ASIC build can dial back
+  to NL=128 (4 KB) without editing the source.  See the existing
+  `RV_ARCH` plumbing for the pattern.
+- **Drop the `xip_hsel_internal` splitter workaround** (TODO at
+  `kws_soc.v:676`).  The XIP slave currently re-derives its own
+  HSEL from the AHB address because the splitter doesn't honour the
+  master's HSEL cleanly.  Fix the splitter to pass HSEL through and
+  remove the workaround wire.
+- **`fpga_top.v` CLK_MHZ duplication** (TODO at `quartus/fpga_top.v:60`).
+  The `CLK_MHZ` parameter on the `kws_soc` instantiation is a magic
+  number that has to track the PLL.  Wire it from the same root
+  Makefile knob that already drives `\`CLK_MHZ` in
+  `UART_VERILOG_MACROS` and feeds the kws_soc parameter elsewhere.
+- **Drop the `kws_soc_tb.cpp` "delete TODO" comment** (TODO at
+  `kws_soc_tb.cpp:25`).  Either delete the comment if the
+  surrounding code is fine, or convert to an `#error` if the macro
+  it references really must be defined.  Whichever way, no more
+  `// TODO: Delete todo`.
 <!-- Done: working-fpga patch gated behind FPGA_PATCHES=1 in
      scripts/apply_patches.sh; sim builds leave Hazard3 clean. -->
 
@@ -158,3 +219,38 @@ Priority ladder:
   parallelism; parallelise corner runs (tt/ss/ff) in separate
   processes; batch SDC checks per session.  Low priority — only
   matters for long ASIC iteration loops.
+- **`flashsim` — handle reset commands** (TODO at
+  `sim/flashsim.cpp:446`).  The simulated QSPI flash currently
+  ignores reset commands.  Real GD25 / W25 parts respect them, so
+  any firmware flow that resets the flash mid-test (e.g. OTA path
+  validation) silently diverges from real hardware.  Implement
+  the reset cmd; ~10 lines.
+- **Adaptive QSPI SCK divider** (TODO at
+  `peris/xip/flash_ctrl_eb.v:1`).  Today the divider is fixed at /2
+  of the system clock.  At 36 MHz that gives 18 MHz SCK — within
+  GD25 spec.  At higher system clocks (FPGA can run >100 MHz with
+  smaller models) the SCK exceeds flash spec and reads silently
+  corrupt.  Make the divider a parameter driven by the same root
+  Makefile that exports `CLK_MHZ`, with a runtime sanity check
+  against the configured flash part's max SCK.
+- **CRM 2-cycle XIP read** (TODO at `peris/xip/flash_ctrl_eb.v:67`).
+  Continuous Read Mode lets a flash respond in 2 dummy cycles
+  instead of the full 8, doubling sustained read throughput.  The
+  controller assumes CRM but the GD25 part on the DE10 doesn't
+  support the truncated form, so we run with the long path.  Add a
+  parameter to select the timing per-part; will pay back roughly
+  half the per-miss QSPI cost (~155 cyc → ~80 cyc on miss).
+- **JTAG-driven flash reset reaches external pin** (TODO at
+  `quartus/fpga_top.v:4`).  Today a `dmihardreset_req` from JTAG
+  resets the SoC but doesn't toggle the flash CSn / RESETn pin, so
+  the QSPI part can be left in an indeterminate state across
+  debug halts.  Wire the SoC-level reset out to the flash reset
+  pin (via Quartus IO assignment).
+- **Pythonic testbench harness** (TODO at `Makefile:603`).  The
+  `xip-testbench` target runs Verilog testbenches via vvp and
+  prints raw output; needs a wrapper that runs them all, parses
+  PASS/FAIL, and emits a single report.  Low priority — current
+  workflow inspects each TB by hand.
+- **`asm` target dependency tracking** (TODO at `Makefile:613`).
+  The `asm` target sometimes misses recompilation order — needs a
+  proper dependency graph between Quartus stages.
