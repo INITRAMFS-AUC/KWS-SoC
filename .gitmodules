@@ -1,15 +1,15 @@
 [submodule "Hazard3"]
 	path = Hazard3
-	url = git@github.com:INITRAMFS-AUC/Hazard3.git
+	url = https://github.com/INITRAMFS-AUC/Hazard3.git
 [submodule "scripts"]
 	path = Hazard3/scripts
-	url = git@github.com:Wren6991/fpgascripts.git
+	url = https://github.com/Wren6991/fpgascripts.git
 [submodule "example_soc/libfpga"]
 	path = Hazard3/example_soc/libfpga
-	url = git@github.com:Wren6991/libfpga.git
+	url = https://github.com/Wren6991/libfpga.git
 [submodule "peris/i2s"]
 	path = peris/i2s
-	url = git@github.com:INITRAMFS-AUC/i2s.git
+	url = https://github.com/INITRAMFS-AUC/i2s.git
 [submodule "third_party/nnom"]
 	path = third_party/nnom
 	url = https://github.com/INITRAMFS-AUC/nnom.git
