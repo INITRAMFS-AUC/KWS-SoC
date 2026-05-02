@@ -1,0 +1,127 @@
+diff --git a/kws_soc.v b/kws_soc.v
+index 3edaafc..7fe48d5 100644
+--- a/kws_soc.v
++++ b/kws_soc.v
+@@ -39,7 +39,13 @@ module kws_soc #(
+     output wire              xip_sck,
+     output wire [3:0]        xip_doe,
+     output wire [3:0]        xip_do,
+-    input  wire [3:0]        flash_di
++    input  wire [3:0]        flash_di,
++
++    // XIP cache hit/miss counters — Verilator-visible debug taps so the
++    // VPI testbench can compute the cache hit rate at end of run.  Free
++    // on FPGA (synthesis prunes unconnected outputs).
++    output wire [31:0]       dbg_xip_cache_hits   /*verilator public_flat_rd*/,
++    output wire [31:0]       dbg_xip_cache_misses /*verilator public_flat_rd*/
+ );
+   // ----------------------------------------------------------------------------
+   // Processor debug
+@@ -687,7 +693,10 @@ module kws_soc #(
+       .sck                  (xip_sck),
+       .doe                  (xip_doe),
+       .spi_do               (xip_do),
+-      .di                   (flash_di)
++      .di                   (flash_di),
++
++      .dbg_cache_hits       (dbg_xip_cache_hits),
++      .dbg_cache_misses     (dbg_xip_cache_misses)
+   );
+ 
+   wire dmac_hsel_internal = (dmac_haddr[31:29] == 3'b011);
+diff --git a/kws_soc_vpi.cpp b/kws_soc_vpi.cpp
+index 027a4d4..f4d6d53 100644
+--- a/kws_soc_vpi.cpp
++++ b/kws_soc_vpi.cpp
+@@ -811,6 +811,18 @@ int main(int argc, char **argv) {
+     // -----------------------------------------------------------------------
+     // Teardown
+     // -----------------------------------------------------------------------
++    // XIP cache stats — dump before final() so they show next to the
++    // firmware's CYCLES_INFER / IRQS lines in the run log.  These come
++    // from counters inside ro_dmc; see peris/xip/ro_cache.v.
++    {
++        uint32_t hits   = top->dbg_xip_cache_hits;
++        uint32_t misses = top->dbg_xip_cache_misses;
++        uint32_t total  = hits + misses;
++        double miss_rate = total ? (100.0 * misses) / total : 0.0;
++        printf("XIP_CACHE_HITS:%u\n",   hits);
++        printf("XIP_CACHE_MISSES:%u\n", misses);
++        printf("XIP_CACHE_MISS_RATE:%.2f%%\n", miss_rate);
++    }
+     fflush(stdout);
+     top->final();
+ 
+diff --git a/peris/xip/ahbl_flash_ctrl_eb_cache.v b/peris/xip/ahbl_flash_ctrl_eb_cache.v
+index 7a4834c..5d79011 100644
+--- a/peris/xip/ahbl_flash_ctrl_eb_cache.v
++++ b/peris/xip/ahbl_flash_ctrl_eb_cache.v
+@@ -17,7 +17,13 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
+     output wire                 sck,
+     output wire [3:0]           doe,
+     output wire [3:0]           spi_do,
+-    input  wire [3:0]           di
++    input  wire [3:0]           di,
++
++    // Cache hit/miss debug counters (passthrough from ro_dmc) — used by
++    // the VPI testbench to measure cache effectiveness; left dangling on
++    // FPGA (synthesis prunes the unconnected outputs).
++    output wire [31:0]          dbg_cache_hits,
++    output wire [31:0]          dbg_cache_misses
+ );
+ 
+     assign HRESP = 1'b0; // Always OKAY
+@@ -65,7 +71,10 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
+         .m_data(flash_data_bus),
+         .m_addr(m_addr),
+         .m_start(m_start),
+-        .m_done(m_done_reg)
++        .m_done(m_done_reg),
++
++        .dbg_hits(dbg_cache_hits),
++        .dbg_misses(dbg_cache_misses)
+     );
+ 
+     // --- AHB Output Logic ---
+diff --git a/peris/xip/ro_cache.v b/peris/xip/ro_cache.v
+index 27af26d..0e60631 100644
+--- a/peris/xip/ro_cache.v
++++ b/peris/xip/ro_cache.v
+@@ -16,7 +16,15 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
+     input  wire [LW-1:0]    m_data,
+     output wire [31:0]      m_addr,
+     output wire             m_start,
+-    input  wire             m_done
++    input  wire             m_done,
++
++    // Debug counters — incremented on every CPU read transaction so the
++    // VPI testbench can compute the cache hit rate at end of run.  Wraps
++    // at 2^32 (~4G transactions); inference is well under that.  Free in
++    // sim, ~64 flops on FPGA — keep them so an FPGA build can also probe
++    // the cache via a future debug register.
++    output reg [31:0]       dbg_hits,
++    output reg [31:0]       dbg_misses
+ );
+ 
+     localparam      LWB = LW/8;
+@@ -97,6 +105,20 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
+     assign m_start  = m_start_reg; // Driven by flip-flop now
+     assign m_addr   = miss_addr_reg;
+ 
++    // Hit / miss counters — sample on the address phase (cpu_rd is a
++    // 1-cycle pulse per AHB read transaction, so each transaction is
++    // counted exactly once).  Bus stalls during a fetch hold cpu_rd
++    // low so we never double-count.
++    always @(posedge clk or negedge rst_n) begin
++        if (!rst_n) begin
++            dbg_hits   <= 32'b0;
++            dbg_misses <= 32'b0;
++        end else if (cpu_rd) begin
++            if (ahit) dbg_hits   <= dbg_hits   + 1'b1;
++            else      dbg_misses <= dbg_misses + 1'b1;
++        end
++    end
++
+     // --- Read Logic ---
+     localparam NW = LW/32;
+     wire [31:0] words [NW-1:0];

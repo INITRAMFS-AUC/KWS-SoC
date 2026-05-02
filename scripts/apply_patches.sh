@@ -29,6 +29,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PATCH_DIR="$ROOT/patches"
 HAZARD3="$ROOT/Hazard3"
 LIBFPGA="$ROOT/Hazard3/example_soc/libfpga"
+# Some patches touch the parent repo itself (kws_soc.v, kws_soc_vpi.cpp,
+# peris/xip/*.v) — apply them with $ROOT as the git target.
+PARENT="$ROOT"
 
 REVERT=0
 case "${1:-}" in
@@ -53,6 +56,14 @@ DEBUG_SNOOPER="${DEBUG_SNOOPER:-}"
 # Quartus targets) to apply it.  Default off keeps the Hazard3 submodule
 # clean for sim workflows.
 FPGA_PATCHES="${FPGA_PATCHES:-${FPGA:-}}"
+
+# xip-cache-debug.patch adds hit/miss counters in ro_dmc, plumbs them
+# through ahbl_flash_ctrl_eb_cache to top-level kws_soc outputs marked
+# `verilator public_flat_rd`, and dumps them from kws_soc_vpi.cpp at
+# sim teardown as XIP_CACHE_HITS / XIP_CACHE_MISSES / XIP_CACHE_MISS_RATE.
+# Useful for sizing the XIP cache (1 KB direct-mapped today) — opt in
+# via XIP_CACHE_DEBUG=1.
+XIP_CACHE_DEBUG="${XIP_CACHE_DEBUG:-}"
 
 [ -d "$PATCH_DIR" ] || exit 0
 
@@ -83,6 +94,12 @@ for patch in "$PATCH_DIR"/*.patch; do
             fi
             # libfpga is a nested submodule of Hazard3, with its own git tree
             target="$LIBFPGA"
+            ;;
+        xip-cache-debug.patch)
+            if [ -z "$XIP_CACHE_DEBUG" ]; then
+                if [ $REVERT -eq 0 ]; then continue; fi
+            fi
+            target="$PARENT"
             ;;
         *)
             echo "[patches] $name has no known target, skipping" >&2
