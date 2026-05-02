@@ -64,7 +64,7 @@ The accelerator presents itself to the SoC as one more APB-3 peripheral, equival
 
 This guide does not claim exact signal packing for KWS-SoC's mux/splitter source, since that depends on the version of the SoC RTL you have in front of you. Wire the eight APB signals plus clock/reset using the same convention as your existing slaves.
 
-### KWS-SoC Phase 5A wiring status
+### KWS-SoC Phase 5A/5B wiring status
 
 The integration branch wires `conv1d_accel_soc_wrapper` into `kws_soc.v` as
 the fourth APB splitter slave:
@@ -78,6 +78,36 @@ For APB-only bring-up, the accelerator memory-side ports are connected to a
 safe zero-data stub: read-valid follows read-enable by one clock, read data is
 zero, and writes are consumed/ignored. This supports ID/config readback smoke
 tests only. It is not the final scratchpad or AHB/SRAM memory path.
+
+For simulation/local bring-up, define `CONV1D_USE_SIM_SCRATCHPAD` to replace
+that stub with `conv1d_scratchpad_mem`. The scratchpad is 32-bit
+word-addressable, uses byte addresses on the accelerator side, has two
+one-cycle read ports, and applies byte strobes on writes. This is a tiny-layer
+validation path, not the production SoC memory wrapper.
+
+`make run-conv1d-tiny-golden` preloads the scratchpad with:
+
+- `INPUT_BASE = 0x0000_0000`
+- `WEIGHT_BASE = 0x0000_0100`
+- `BIAS_BASE = 0x0000_0200`
+- `OUTPUT_BASE = 0x0000_0300`
+- `input_len = 8`, `in_ch = 4`, `out_ch = 2`, `K = 3`
+- `output_shift[0] = 0`, `output_shift[1] = 1`
+
+Expected output bytes are:
+
+| t | oc0 | oc1 |
+|---|-----|-----|
+| 0 | 10  | 4   |
+| 1 | -2  | 4   |
+| 2 | 0   | -3  |
+| 3 | 1   | 7   |
+| 4 | 12  | -2  |
+| 5 | 5   | 0   |
+
+Passing this test proves APB decode plus memory-side reads/writes plus Conv1D
+datapath operation through the SoC-level integration path. It still does not
+claim live KWS `model_run()` acceleration.
 
 ## F. Memory-side integration options
 

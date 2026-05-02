@@ -212,10 +212,13 @@ printf("CONV1D_ACCEL: %d/%d layers accelerated\n",
 - [x] Load per-output-channel shifts through `QUANT_INDEX`/`QUANT_SHIFT_DATA`
 - [x] Start accelerator and poll done with timeout
 - [x] Add host-stub API compile/runtime test
-- [ ] Verify output correctness on live SoC memory path
+- [x] Verify tiny-layer output correctness on local scratchpad memory path
 - [ ] Measure performance gain
 
 ### Phase 5: Integration Testing
+- [x] Wire Conv1D APB decode at `0x4000_C000`
+- [x] Add simulation/local scratchpad memory path
+- [x] Run tiny Conv1D golden test through SoC-level APB decode
 - [ ] Link into kws_bare_main.c with USE_CONV1D_ACCEL
 - [ ] Run end-to-end inference
 - [ ] Verify output matches original
@@ -282,18 +285,43 @@ The per-output-channel `output_shift[oc]` table is loaded through the APB
 per-channel shift registers. `relu_en` stays disabled for bit-exact Conv2D
 replacement because the generated NNoM model keeps ReLU as a separate layer.
 
-### Future Tiny Golden Test
+## Phase 5A/5B SoC Bring-Up
 
-Before wiring the bridge into `model_run()`, run a live APB memory-path test:
+Phase 5A wires the Conv1D APB wrapper into the KWS-SoC peripheral map as the
+fourth APB splitter slave at `0x4000_C000`. `make run-conv1d-apb-smoke`
+exercises the ID/config path through that decode.
+
+Phase 5B adds `conv1d_scratchpad_mem`, a simulation/local bring-up memory with
+two one-cycle read ports and one byte-strobed write port. It is enabled in the
+SoC only with `CONV1D_USE_SIM_SCRATCHPAD`; otherwise the APB-only zero-data
+stub remains in place until a production SRAM/AHB/DMA path is added.
+
+`make run-conv1d-tiny-golden` runs a deterministic K=3 layer:
 
 - `input_len = 8`
 - `in_ch = 4`
 - `out_ch = 2`
 - `K = 3`
-- per-channel shifts intentionally different
-- prepared bias includes NNoM rounding
-- expected output is computed by the software reference
-- accelerator output is compared byte-for-byte after the APB run
+- `output_shift[0] = 0`, `output_shift[1] = 1`
+- `INPUT_BASE = 0x0000_0000`
+- `WEIGHT_BASE = 0x0000_0100`
+- `BIAS_BASE = 0x0000_0200`
+- `OUTPUT_BASE = 0x0000_0300`
+
+Expected output table:
+
+| t | oc0 | oc1 |
+|---|-----|-----|
+| 0 | 10  | 4   |
+| 1 | -2  | 4   |
+| 2 | 0   | -3  |
+| 3 | 1   | 7   |
+| 4 | 12  | -2  |
+| 5 | 5   | 0   |
+
+This proves APB decode, memory reads/writes, per-channel shifts, and the
+accelerator datapath through the SoC-level integration path. It does not mean
+live `model_run()` acceleration is enabled.
 
 ---
 
@@ -326,13 +354,11 @@ Before wiring the bridge into `model_run()`, run a live APB memory-path test:
 
 ## Next Steps
 
-1. Review integration plan (this document)
-2. Understand bridge header/implementation structure
-3. Implement Phase 2 (weight transpose)
-4. Test Phase 2 offline (unit test)
-5. Implement Phase 3 (quantization mapping)
-6. Integrate into kws_bare_main.c
-7. Run end-to-end test with CYCLES measurement
+1. Replace the simulation scratchpad with a production SRAM/AHB/DMA memory path.
+2. Build and run the firmware ID/control smoke test with the RISC-V toolchain.
+3. Add a firmware tiny Conv1D golden test against the production memory path.
+4. Only then add guarded `model_run()` / `kws_bare_main.c` integration.
+5. Run end-to-end KWS output equivalence and cycle measurement.
 
 ---
 

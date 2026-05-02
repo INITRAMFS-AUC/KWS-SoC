@@ -210,7 +210,8 @@ SH  := quartus_sh
         openocd-sim openocd-hw gdb telnet gen_pll \
         clean_sim clean_yosys clean_verilator clean_test clean_quartus \
         synth_sky130 clean_sky130 \
-        gls gls_saif clean_gls run-apb-per-oc-shift run-conv1d-apb-smoke
+        gls gls_saif clean_gls run-apb-per-oc-shift run-conv1d-apb-smoke \
+        run-conv1d-tiny-golden
 
 all: $(TBEXEC) test
 
@@ -234,6 +235,19 @@ run-conv1d-apb-smoke:
 		peris/conv1d/apb_conv1d_layer_accel.v \
 		peris/conv1d/conv1d_layer_accel.v
 	vvp .tmp/tb_kws_soc_conv1d_apb_decode
+
+run-conv1d-tiny-golden:
+	mkdir -p .tmp
+	iverilog -g2012 -DSIM -DUSE_WEIGHT_BUFFER=$(CONV1D_USE_WEIGHT_BUFFER) -DUSE_PER_OC_SHIFT=$(CONV1D_USE_PER_OC_SHIFT) -DCONV1D_USE_SIM_SCRATCHPAD=1 \
+		-o .tmp/tb_kws_soc_conv1d_tiny_golden \
+		tb/tb_kws_soc_conv1d_tiny_golden.v \
+		busfabric/apb_splitter.v \
+		common/onehot_mux.v \
+		peris/conv1d/conv1d_accel_soc_wrapper.v \
+		peris/conv1d/apb_conv1d_layer_accel.v \
+		peris/conv1d/conv1d_layer_accel.v \
+		peris/conv1d/conv1d_scratchpad_mem.v
+	vvp .tmp/tb_kws_soc_conv1d_tiny_golden
 
 # Yosys synthesis command to generate CXXRTL C++ code
 YOSYS_SYNTH_CMD += read_verilog -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) -DSIMULATION=1 -DCONFIG_HEADER="config_$(YOSYS_CONFIG).vh" $(XIP_DEBUG_VFLAG) $(FILE_LIST);

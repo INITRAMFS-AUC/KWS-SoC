@@ -18,3 +18,4 @@ file snooper/bus_snooper.v
 file conv1d/conv1d_layer_accel.v
 file conv1d/apb_conv1d_layer_accel.v
 file conv1d/conv1d_accel_soc_wrapper.v
+file conv1d/conv1d_scratchpad_mem.v

@@ -778,27 +778,57 @@ module kws_soc #(
       .i2s_irq      (i2s_irq)
   );
 
-  // Phase 5A APB reachability path for the Conv1D accelerator. The memory
-  // side is a safe zero-data stub so ID/config smoke tests can run before the
-  // scratchpad or AHB/SRAM wrapper is implemented.
+  // Conv1D accelerator memory-side bring-up path. Simulation can use a local
+  // scratchpad for tiny golden tests; production builds keep the Phase 5A
+  // zero-data APB-only stub until a real SRAM/AHB wrapper replaces it.
   wire        conv1d_rd0_en;
   wire [31:0] conv1d_rd0_addr;
-  reg         conv1d_rd0_valid;
+  wire [31:0] conv1d_rd0_data;
+  wire        conv1d_rd0_valid;
   wire        conv1d_rd1_en;
   wire [31:0] conv1d_rd1_addr;
-  reg         conv1d_rd1_valid;
+  wire [31:0] conv1d_rd1_data;
+  wire        conv1d_rd1_valid;
   wire        conv1d_wr_en;
   wire [31:0] conv1d_wr_addr;
   wire [31:0] conv1d_wr_data;
   wire [3:0]  conv1d_wr_strb;
 
+`ifdef CONV1D_USE_SIM_SCRATCHPAD
+  conv1d_scratchpad_mem #(
+      .MEM_BYTES(8192)
+  ) conv1d_scratchpad_u (
+      .clk      (clk),
+      .rst_n    (rst_n),
+      .rd0_en   (conv1d_rd0_en),
+      .rd0_addr (conv1d_rd0_addr),
+      .rd0_data (conv1d_rd0_data),
+      .rd0_valid(conv1d_rd0_valid),
+      .rd1_en   (conv1d_rd1_en),
+      .rd1_addr (conv1d_rd1_addr),
+      .rd1_data (conv1d_rd1_data),
+      .rd1_valid(conv1d_rd1_valid),
+      .wr_en    (conv1d_wr_en),
+      .wr_addr  (conv1d_wr_addr),
+      .wr_data  (conv1d_wr_data),
+      .wr_strb  (conv1d_wr_strb)
+  );
+`else
+  reg conv1d_rd0_valid_stub;
+  reg conv1d_rd1_valid_stub;
+
+  assign conv1d_rd0_data = 32'd0;
+  assign conv1d_rd1_data = 32'd0;
+  assign conv1d_rd0_valid = conv1d_rd0_valid_stub;
+  assign conv1d_rd1_valid = conv1d_rd1_valid_stub;
+
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      conv1d_rd0_valid <= 1'b0;
-      conv1d_rd1_valid <= 1'b0;
+      conv1d_rd0_valid_stub <= 1'b0;
+      conv1d_rd1_valid_stub <= 1'b0;
     end else begin
-      conv1d_rd0_valid <= conv1d_rd0_en;
-      conv1d_rd1_valid <= conv1d_rd1_en;
+      conv1d_rd0_valid_stub <= conv1d_rd0_en;
+      conv1d_rd1_valid_stub <= conv1d_rd1_en;
     end
   end
 
@@ -810,6 +840,7 @@ module kws_soc #(
                               | ^conv1d_rd1_addr
                               | ^conv1d_wr_addr
                               | ^conv1d_wr_data;
+`endif
 
   conv1d_accel_soc_wrapper #(
       .ADDR_W           (32),
@@ -831,12 +862,12 @@ module kws_soc #(
 
       .rd0_en   (conv1d_rd0_en),
       .rd0_addr (conv1d_rd0_addr),
-      .rd0_data (32'd0),
+      .rd0_data (conv1d_rd0_data),
       .rd0_valid(conv1d_rd0_valid),
 
       .rd1_en   (conv1d_rd1_en),
       .rd1_addr (conv1d_rd1_addr),
-      .rd1_data (32'd0),
+      .rd1_data (conv1d_rd1_data),
       .rd1_valid(conv1d_rd1_valid),
 
       .wr_en  (conv1d_wr_en),
