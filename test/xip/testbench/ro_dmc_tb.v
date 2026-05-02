@@ -36,7 +36,10 @@ module ro_dmc_tb;
     wire            cpu_dhit;
     wire [31:0]     cpu_data;
 
+    localparam NW = LW/32;     // words per line
+
     reg [LW-1:0]    m_data;
+    reg [NW-1:0]    m_word_done;
     wire [31:0]     m_addr;
     wire            m_start;
     reg             m_done;
@@ -53,38 +56,60 @@ module ro_dmc_tb;
         .cpu_dhit(cpu_dhit),
         .cpu_data(cpu_data),
         .m_data(m_data),
+`ifdef CWF
+        .m_word_done(m_word_done),
+`endif
         .m_addr(m_addr),
         .m_start(m_start),
         .m_done(m_done)
     );
 
     // ------------------------------------------------------------------
-    // Mock flash: 5-cycle latency per line, returns address-as-data so
-    // the expected word value is just the address itself.
+    // Mock flash.  Models a QSPI line fetch where individual words
+    // arrive one at a time over 8 clock cycles (one word per cycle —
+    // matches the real flash_ctrl_eb's behaviour after the position-
+    // based byte refactor, modulo the per-word latency).  m_data has
+    // each word slotted into its final position as it arrives, and
+    // m_word_done[K] goes high (and stays high until the next start)
+    // when word K has landed.  m_done pulses after the last word.
+    //
+    // Returns address-as-data so the expected value of any read is
+    // just the address itself.
     // ------------------------------------------------------------------
-    reg [3:0] flash_delay;
+    reg [3:0] flash_phase;       // 0 = idle, 1..NW = next word index, NW+1 = done
+
+    function [31:0] expected_word(input [31:0] base, input integer k);
+        // Words come back at the line-aligned base, not the byte-exact
+        // miss address — matches the real flash_ctrl_eb which masks
+        // m_addr[4:0] off when sending the QSPI address.
+        expected_word = (base & 32'hffffffe0) + (k << 2);
+    endfunction
+
+    integer fpi;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             m_done      <= 1'b0;
             m_data      <= {LW{1'b0}};
-            flash_delay <= 4'd0;
+            m_word_done <= {NW{1'b0}};
+            flash_phase <= 4'd0;
         end else begin
-            if (m_start && flash_delay == 0) begin
-                flash_delay <= 4'd5;
-                m_done      <= 1'b0;
-            end else if (flash_delay > 1) begin
-                flash_delay <= flash_delay - 1'b1;
-                m_done      <= 1'b0;
-            end else if (flash_delay == 1) begin
-                flash_delay <= 4'd0;
-                m_done      <= 1'b1;
-                // 8 words: the line's base address through base + 0x1c.
-                m_data      <= { m_addr + 32'h1c, m_addr + 32'h18,
-                                 m_addr + 32'h14, m_addr + 32'h10,
-                                 m_addr + 32'h0c, m_addr + 32'h08,
-                                 m_addr + 32'h04, m_addr };
-            end else begin
-                m_done <= 1'b0;
+            m_done <= 1'b0;
+            if (m_start && flash_phase == 0) begin
+                // Start of a new fetch: clear word-done bitmap, but
+                // keep m_data (per-word writes will overwrite it as
+                // words land).
+                m_word_done <= {NW{1'b0}};
+                flash_phase <= 4'd1;
+            end else if (flash_phase > 0 && flash_phase <= NW) begin
+                // Word at index (flash_phase - 1) arrives this cycle.
+                m_data[((flash_phase - 1) << 5) +: 32] <= expected_word(m_addr, flash_phase - 1);
+                m_word_done[flash_phase - 1]            <= 1'b1;
+                if (flash_phase == NW) begin
+                    m_done      <= 1'b1;   // last word — pulse done
+                    flash_phase <= 4'd0;
+                end else begin
+                    flash_phase <= flash_phase + 4'd1;
+                end
             end
         end
     end
@@ -226,6 +251,45 @@ module ro_dmc_tb;
                                  check_le("stall == 0 cyc",     last_stall, 0);
         ahb_read(32'h80000020);  check_eq("data #3 @0x80000020", cpu_data, 32'h80000020);
                                  check_le("stall == 0 cyc",     last_stall, 0);
+
+        // --- 9. CWF early restart on word 0 ---
+        // The fetch returns word 0 first (per the mock flash model),
+        // so a CWF-enabled cache should release HREADYOUT in ~1-2
+        // cycles, not after all 8 words land.  Without CWF, stall
+        // is ~9-10.  Use the 12-cyc loose bound today; tighten to
+        // <= 4 once `CWF is defined.
+        $display("\n[9] CWF early-restart on word 0 (offset 0x00)");
+        ahb_read(32'h80000800);  // fresh line, slot 0, new tag
+        check_eq("data    @0x80000800", cpu_data, 32'h80000800);
+`ifdef CWF
+        check_le("stall <= 4 cyc (CWF early)", last_stall, 4);
+`else
+        check_le("stall <= 12 cyc",            last_stall, 12);
+`endif
+
+        // --- 10. CWF stale-data regression test ---
+        // After a previous fetch leaves m_word_done = all-1s, the next
+        // miss must not publish data from those stale bits before the
+        // new line actually fills.  My first CWF attempt hit exactly
+        // this bug — the CPU looped on garbage after 3 misses.  The
+        // test asserts the data returned is the NEW line's, not the
+        // previous fetch's leftover.
+        $display("\n[10] CWF stale-bit regression — back-to-back miss to new line");
+        ahb_read(32'h80000C00);  // slot 0, yet another tag — must miss
+        check_eq("data    @0x80000C00", cpu_data, 32'h80000C00);
+
+        // --- 11. CWF mid-line restart (word 4) ---
+        // With CWF, requesting offset 0x10 (word 4) should resume
+        // when word 4 lands at flash_phase==5 (~5 cycles).  Without
+        // CWF, still 9-10 cycles.
+        $display("\n[11] CWF early-restart on word 4 (offset 0x10)");
+        ahb_read(32'h80001010);  // new line, mid-line word
+        check_eq("data    @0x80001010", cpu_data, 32'h80001010);
+`ifdef CWF
+        check_le("stall <= 7 cyc (CWF mid-line)", last_stall, 7);
+`else
+        check_le("stall <= 12 cyc",               last_stall, 12);
+`endif
 
         // --- summary ---
         $display("\n=== ro_dmc_tb summary: %0d PASS  %0d FAIL ===", passes, fails);
