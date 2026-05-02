@@ -157,6 +157,16 @@ module ro_dmc_tb;
     integer last_stall;
     task ahb_read(input [31:0] addr);
     begin
+        // Quiesce: with CWF, the previous test may have exited as soon
+        // as its requested word landed, leaving the rest of the line
+        // still arriving from flash.  Wait for the mock to return to
+        // idle before starting a new miss so this test's stall
+        // measurement reflects only this test's fetch.
+        while (flash_phase != 0) begin
+            @(posedge clk);
+            #1;
+        end
+
         last_stall = 0;
         cpu_rd    = 1'b1;
         cpu_aaddr = addr;
@@ -253,18 +263,18 @@ module ro_dmc_tb;
                                  check_le("stall == 0 cyc",     last_stall, 0);
 
         // --- 9. CWF early restart on word 0 ---
-        // The fetch returns word 0 first (per the mock flash model),
-        // so a CWF-enabled cache should release HREADYOUT in ~1-2
-        // cycles, not after all 8 words land.  Without CWF, stall
-        // is ~9-10.  Use the 12-cyc loose bound today; tighten to
-        // <= 4 once `CWF is defined.
+        // With this mock flash a fetch produces word K at internal
+        // phase K+1 and the cache surfaces dhit at sim cycle K+4 from
+        // the miss start (1 for state→ST_FETCH, 1 for clear-stale,
+        // 1 for word arrival, 1 for fwv rising-edge latch).  Without
+        // CWF every miss is ~10.  Asserts: word-0 stall <= 4.
         $display("\n[9] CWF early-restart on word 0 (offset 0x00)");
         ahb_read(32'h80000800);  // fresh line, slot 0, new tag
         check_eq("data    @0x80000800", cpu_data, 32'h80000800);
 `ifdef CWF
-        check_le("stall <= 4 cyc (CWF early)", last_stall, 4);
+        check_le("stall <= 4 cyc (CWF word 0)", last_stall, 4);
 `else
-        check_le("stall <= 12 cyc",            last_stall, 12);
+        check_le("stall <= 12 cyc",             last_stall, 12);
 `endif
 
         // --- 10. CWF stale-data regression test ---
@@ -279,16 +289,31 @@ module ro_dmc_tb;
         check_eq("data    @0x80000C00", cpu_data, 32'h80000C00);
 
         // --- 11. CWF mid-line restart (word 4) ---
-        // With CWF, requesting offset 0x10 (word 4) should resume
-        // when word 4 lands at flash_phase==5 (~5 cycles).  Without
-        // CWF, still 9-10 cycles.
+        // Stall formula K+4 (see test 9) gives 8 for word 4.  Without
+        // CWF it's still ~10.  CWF wins by 2 here; the win grows for
+        // earlier words and shrinks toward last word (word 7 ≈ 11
+        // cycles, slightly worse than no-CWF — that's the tradeoff
+        // when the requested word happens to be last in the line).
         $display("\n[11] CWF early-restart on word 4 (offset 0x10)");
         ahb_read(32'h80001010);  // new line, mid-line word
         check_eq("data    @0x80001010", cpu_data, 32'h80001010);
 `ifdef CWF
-        check_le("stall <= 7 cyc (CWF mid-line)", last_stall, 7);
+        check_le("stall <= 8 cyc (CWF word 4)", last_stall, 8);
 `else
-        check_le("stall <= 12 cyc",               last_stall, 12);
+        check_le("stall <= 12 cyc",             last_stall, 12);
+`endif
+
+        // --- 12. CWF on last word (word 7) ---
+        // Worst case for CWF: requested word is last in the line.
+        // Stall ~K+4 = 11 cycles, marginally worse than no-CWF's ~10.
+        // Expected, just verify correctness + bound.
+        $display("\n[12] CWF — request last word (offset 0x1C)");
+        ahb_read(32'h80001C1C);  // new line (slot 0, new tag), last word
+        check_eq("data    @0x80001C1C", cpu_data, 32'h80001C1C);
+`ifdef CWF
+        check_le("stall <= 12 cyc (CWF word 7)", last_stall, 12);
+`else
+        check_le("stall <= 12 cyc",              last_stall, 12);
 `endif
 
         // --- summary ---
