@@ -133,11 +133,17 @@ SRAM_TARGETS = \
 	$(BUILD_DIR)/malloc_simple_test_sram.elf  $(BUILD_DIR)/malloc_simple_test_sram.dis  $(BUILD_DIR)/malloc_simple_test_sram.bin \
 	$(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_torture_test_sram.dis $(BUILD_DIR)/malloc_torture_test_sram.bin \
 	$(BUILD_DIR)/memcpy_simple_test_sram.elf  $(BUILD_DIR)/memcpy_simple_test_sram.dis  $(BUILD_DIR)/memcpy_simple_test_sram.bin \
-	$(BUILD_DIR)/dma_test_sram.elf            $(BUILD_DIR)/dma_test_sram.dis            $(BUILD_DIR)/dma_test_sram.bin
-# SRAM model artifacts intentionally disabled:
-# $(BUILD_DIR)/strided_s16_nodil_sram.elf $(BUILD_DIR)/strided_s16_nodil_sram.dis $(BUILD_DIR)/strided_s16_nodil_sram.bin
-# $(BUILD_DIR)/streaming_model_sram.elf $(BUILD_DIR)/streaming_model_sram.dis $(BUILD_DIR)/streaming_model_sram.bin
-# $(BUILD_DIR)/mel_compact_sram.elf $(BUILD_DIR)/mel_compact_sram.dis $(BUILD_DIR)/mel_compact_sram.bin
+	$(BUILD_DIR)/dma_test_sram.elf            $(BUILD_DIR)/dma_test_sram.dis            $(BUILD_DIR)/dma_test_sram.bin \
+	$(BUILD_DIR)/strided_s16_nodil_sram.elf   $(BUILD_DIR)/strided_s16_nodil_sram.dis   $(BUILD_DIR)/strided_s16_nodil_sram.bin \
+	$(BUILD_DIR)/streaming_model_sram.elf     $(BUILD_DIR)/streaming_model_sram.dis     $(BUILD_DIR)/streaming_model_sram.bin \
+	$(BUILD_DIR)/mel_compact_4blk_ch36_sram.elf $(BUILD_DIR)/mel_compact_4blk_ch36_sram.dis $(BUILD_DIR)/mel_compact_4blk_ch36_sram.bin
+# Model SRAM artifacts: same source set as their _xip siblings, linked
+# with sram_link.ld (everything in SRAM at 0x00000000).  Useful as a
+# zero-XIP-latency baseline — the difference vs the _xip CYCLES_INFER
+# is a clean lower bound on what cache / prefetch work can recover.
+# Whether these fit at SRAM_DEPTH=$(SRAM_DEPTH) words depends on the
+# model: mel_compact_4blk_ch36 (~28 KB text + ~53 KB bss) fits comfortably
+# at the default 128 KB; larger weights may overflow — check `size` output.
 
 # *_xip: standalone workflow — `NO_JTAG=1 make sim FLASH=test/build/<test>_xip.bin`
 XIP_TARGETS = \
@@ -180,11 +186,15 @@ malloc-torture: $(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_to
 		$(BUILD_DIR)/malloc_torture_test_xip.elf  $(BUILD_DIR)/malloc_torture_test_xip.dis  $(BUILD_DIR)/malloc_torture_test_xip.bin
 memcpy: $(BUILD_DIR)/memcpy_simple_test_sram.elf $(BUILD_DIR)/memcpy_simple_test_sram.dis $(BUILD_DIR)/memcpy_simple_test_sram.bin \
 	$(BUILD_DIR)/memcpy_simple_test_xip.elf  $(BUILD_DIR)/memcpy_simple_test_xip.dis  $(BUILD_DIR)/memcpy_simple_test_xip.bin
-model-strided-s16-nodil: $(BUILD_DIR)/strided_s16_nodil_xip.elf  $(BUILD_DIR)/strided_s16_nodil_xip.dis  $(BUILD_DIR)/strided_s16_nodil_xip.bin
-model-streaming: $(BUILD_DIR)/streaming_model_xip.elf $(BUILD_DIR)/streaming_model_xip.dis $(BUILD_DIR)/streaming_model_xip.bin
-model-mel-compact: $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin
-# SRAM model artifacts intentionally disabled:
-# $(BUILD_DIR)/strided_s16_nodil_sram.elf $(BUILD_DIR)/strided_s16_nodil_sram.dis $(BUILD_DIR)/strided_s16_nodil_sram.bin
+model-strided-s16-nodil: \
+	$(BUILD_DIR)/strided_s16_nodil_xip.elf  $(BUILD_DIR)/strided_s16_nodil_xip.dis  $(BUILD_DIR)/strided_s16_nodil_xip.bin \
+	$(BUILD_DIR)/strided_s16_nodil_sram.elf $(BUILD_DIR)/strided_s16_nodil_sram.dis $(BUILD_DIR)/strided_s16_nodil_sram.bin
+model-streaming: \
+	$(BUILD_DIR)/streaming_model_xip.elf  $(BUILD_DIR)/streaming_model_xip.dis  $(BUILD_DIR)/streaming_model_xip.bin \
+	$(BUILD_DIR)/streaming_model_sram.elf $(BUILD_DIR)/streaming_model_sram.dis $(BUILD_DIR)/streaming_model_sram.bin
+model-mel-compact: \
+	$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf  $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis  $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin \
+	$(BUILD_DIR)/mel_compact_4blk_ch36_sram.elf $(BUILD_DIR)/mel_compact_4blk_ch36_sram.dis $(BUILD_DIR)/mel_compact_4blk_ch36_sram.bin
 dma:    $(BUILD_DIR)/dma_test_sram.elf    $(BUILD_DIR)/dma_test_sram.dis    $(BUILD_DIR)/dma_test_sram.bin \
         $(BUILD_DIR)/dma_test_xip.elf     $(BUILD_DIR)/dma_test_xip.dis     $(BUILD_DIR)/dma_test_xip.bin
 xip-testbench:
@@ -254,6 +264,17 @@ $(BUILD_DIR)/strided_s16_nodil_xip.elf: \
 	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/strided_s16_nodil_xip.bin
 	$(CROSS_COMPILE)size $@
 
+$(BUILD_DIR)/strided_s16_nodil_sram.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
+	$(CC) $(STRIDED_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_SRAM)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/strided_s16_nodil_sram.bin
+	$(CROSS_COMPILE)size $@
+
 $(BUILD_DIR)/streaming_model_xip.elf: \
     $(COMMON_DIR)/crt0.s \
     $(COMMON_DIR)/memcpy.c \
@@ -264,6 +285,18 @@ $(BUILD_DIR)/streaming_model_xip.elf: \
     $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
 	$(CC) $(STREAMING_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
 	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/streaming_model_xip.bin
+	$(CROSS_COMPILE)size $@
+
+$(BUILD_DIR)/streaming_model_sram.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(STREAMING_MODEL_C_DIR)/kws_bare_stream.c \
+    $(STREAMING_MODEL_C_DIR)/kws_stream_b.c \
+    $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
+	$(CC) $(STREAMING_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_SRAM)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/streaming_model_sram.bin
 	$(CROSS_COMPILE)size $@
 
 $(BUILD_DIR)/dma_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dma_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
@@ -395,4 +428,17 @@ $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf: \
 	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin
 	$(CROSS_COMPILE)size $@
 
-mel-compact: $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf
+$(BUILD_DIR)/mel_compact_4blk_ch36_sram.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
+	$(CC) $(MEL_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_SRAM)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_4blk_ch36_sram.bin
+	$(CROSS_COMPILE)size $@
+
+mel-compact: \
+	$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf \
+	$(BUILD_DIR)/mel_compact_4blk_ch36_sram.elf
