@@ -461,7 +461,7 @@ $(VERILATOR_BUILD_DIR)/Vkws_soc: $(FILE_LIST) kws_soc_vpi.cpp sim/flashsim.cpp s
 		--Mdir $(VERILATOR_BUILD_DIR) \
 		-CFLAGS "-I$(ROOT_DIR) -march=native" \
 		--exe $(ROOT_DIR)/kws_soc_vpi.cpp $(ROOT_DIR)/sim/flashsim.cpp $(ROOT_DIR)/sim/i2s_mic_sim.cpp \
-		$(FILE_LIST) -I$(ROOT_DIR) -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) $(XIP_DEBUG_VFLAG)
+		$(FILE_LIST) -I$(ROOT_DIR) -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) $(XIP_DEBUG_VFLAG) $(ACCEL_DEBUG_VFLAG)
 	$(MAKE) -C $(VERILATOR_BUILD_DIR) -j -f V$(TOP).mk \
 		CXXFLAGS='$(VERILATOR_CXXFLAGS)' V$(TOP)
 
@@ -477,7 +477,7 @@ sim-verilator-vcd: $(VERILATOR_BUILD_DIR)/Vkws_soc test
 	./$(VERILATOR_BUILD_DIR)/Vkws_soc $(SIM_PORT_ARG) $(NO_JTAG_ARG) --waves waves.$(TRACE_EXT) $(FLASH_ARG) $(MIC_ARG) $(XIP_DEBUG_ARG) $(I2S_DEBUG_ARG) $(UART_DEBUG_ARG) $(CYCLES_ARG) $(EXTRA_ARGS)
 
 lint:
-	verilator --lint-only -Wno-fatal --top-module $(TOP) -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) $(FILE_LIST)
+	verilator --lint-only -Wno-fatal --top-module $(TOP) -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) $(XIP_DEBUG_VFLAG) $(ACCEL_DEBUG_VFLAG) $(FILE_LIST)
 
 lint_fpga:
 	verilator --lint-only -Wno-fatal --top-module $(TOP_FPGA) -I$(HDL) -I$(DMAC_RTL_DIR) -DSRAM_DEPTH=$(SRAM_DEPTH) $(foreach m,$(VERILOG_MACROS),-D$(m)) $(FILE_LIST)
@@ -509,6 +509,14 @@ ifeq ($(I2S_DEBUG),1)
   I2S_DEBUG_ARG := --i2s-debug
 else
   I2S_DEBUG_ARG :=
+endif
+
+ACCEL_DEBUG ?= 0
+
+ifeq ($(ACCEL_DEBUG),1)
+  ACCEL_DEBUG_VFLAG := -DACCEL_DEBUG
+else
+  ACCEL_DEBUG_VFLAG :=
 endif
 
 UART_DEBUG ?= 0

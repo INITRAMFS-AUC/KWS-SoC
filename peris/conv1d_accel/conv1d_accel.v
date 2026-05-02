@@ -225,9 +225,11 @@ module conv1d_accel (
                     r_done <= 1'b0;
                     r_busy <= 1'b1;
                     state  <= S_INIT;
+`ifdef ACCEL_DEBUG
                     $display("[ACCEL] START c_in=%0d c_out=%0d k_w=%0d stride=%0d w_in=%0d src=%08x wt=%08x dst=%08x bs=%08x sh=%08x",
                         r_c_in, r_c_out, r_k_w, r_stride, r_w_in,
                         r_src_addr, r_wt_addr, r_dst_addr, r_bs_addr, r_shift_addr);
+`endif
                 end
             end
 
@@ -281,9 +283,11 @@ module conv1d_accel (
                                 2'b10: wt_buf[buf_idx[6:2]][23:16] <= rdbyte;
                                 2'b11: wt_buf[buf_idx[6:2]][31:24] <= rdbyte;
                             endcase
-                            if (w_pos == 0 && c_pos < 2 && buf_idx < 4)
+    `ifdef ACCEL_DEBUG
+                        if (w_pos == 0 && c_pos < 2 && buf_idx < 4)
                                 $display("[WT] c_pos=%0d byte[%0d]=0x%02x lane=%0d hrdata=0x%08x",
                                     c_pos, buf_idx, rdbyte, cur_lane, hrdata);
+`endif
                         end
                         if (buf_idx == patch_bytes - 7'd1) begin
                             htrans <= HTRANS_IDLE;
@@ -402,9 +406,11 @@ module conv1d_accel (
             // -----------------------------------------------------------------
             // Write 1-byte int8 result to dst[w_pos*C_out + c_pos].
             S_WRITE_ADDR: begin
+`ifdef ACCEL_DEBUG
                 if (w_pos < 2 && c_pos < 4)
                     $display("[ACCEL] w_pos=%0d c_pos=%0d acc=%0d bias=%0d shift=%0d clipped=%0d",
                         w_pos, c_pos, acc, bias_val, cur_shift, clipped);
+`endif
                 result_byte <= clipped;
                 hwdata <= {4{clipped}};
                 haddr  <= r_dst_addr + (w_pos * r_c_out) + c_pos;
@@ -451,7 +457,9 @@ module conv1d_accel (
                 r_busy <= 1'b0;
                 r_done <= 1'b1;
                 state  <= S_IDLE;
+`ifdef ACCEL_DEBUG
                 $display("[ACCEL] DONE");
+`endif
             end
 
             default: state <= S_IDLE;
@@ -459,7 +467,7 @@ module conv1d_accel (
         end
     end
 
-    // Debug: print state every 2M cycles while busy
+`ifdef ACCEL_DEBUG
     reg [20:0] dbg_ctr;
     always @(posedge clk) begin
         if (!r_busy) dbg_ctr <= 21'b0;
@@ -470,6 +478,7 @@ module conv1d_accel (
                     state, w_pos, c_pos, buf_idx, mac_idx, haddr, htrans, hready, r_wait);
         end
     end
+`endif
 
 endmodule
 `default_nettype wire
