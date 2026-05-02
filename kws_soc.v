@@ -275,8 +275,14 @@ module kws_soc #(
 
   hazard3_cpu_2port #(
       // These must have the values given here for you to end up with a useful SoC:
+`ifdef SRAM_PRELOAD_HEX
+      // SRAM preload boots the CPU from SRAM (link.ld VMA = 0x0).
+      .RESET_VECTOR       (32'h0000_0000),
+      .MTVEC_INIT         (32'h0000_0000),
+`else
       .RESET_VECTOR       (RESET_VECTOR),
       .MTVEC_INIT         (MTVEC_INIT),
+`endif
       .CSR_M_MANDATORY    (1),
       .CSR_M_TRAP         (1),
       .DEBUG_SUPPORT      (1),
@@ -644,8 +650,15 @@ module kws_soc #(
   // actually enter an infinite crash loop after reset if memory is
   // zero-initialised so don't leave the little guy hanging too long)
 
+  // SRAM_PRELOAD_HEX: sim-only knob to pre-fill SRAM with a hex image
+  // at elaboration via $readmemh.  Pair with the RESET_VECTOR override
+  // below to boot directly out of SRAM — used to measure a zero-XIP-time
+  // lower bound on inference cycles for SRAM-linked NNoM models.
   ahb_sync_sram #(
       .DEPTH(SRAM_DEPTH)
+`ifdef SRAM_PRELOAD_HEX
+      , .PRELOAD_FILE("sim/sram_preload.hex")
+`endif
   ) sram0 (
       .clk  (clk),
       .rst_n(rst_n),

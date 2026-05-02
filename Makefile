@@ -198,6 +198,33 @@ ifeq ($(XIP_CWF_DEBUG),1)
   VERILOG_MACROS += CWF_DEBUG
 endif
 
+# SRAM_PRELOAD=<path-to-sram.bin>: sim-only knob to boot the CPU out
+# of SRAM.  Setting it does three things automatically:
+#   1. converts the .bin to sim/sram_preload.hex (one 32-bit word per
+#      line, little-endian) at build time
+#   2. elaborates sram0 with PRELOAD_FILE pointing at that hex file
+#   3. overrides Hazard3's RESET_VECTOR to 0x00000000
+# Pair with NO_JTAG=1 — no flash is needed.  Used to measure a
+# zero-XIP-time baseline for an SRAM-linked NNoM model:
+#   make sim-verilator NO_JTAG=1 USE_MCYCLE_CSR=1 \
+#        SRAM_PRELOAD=test/build/mel_compact_4blk_ch36_sram.bin \
+#        MIC=sim/debug_audio.hex CYCLES=200000000
+SRAM_PRELOAD ?=
+SRAM_PRELOAD_HEX_PATH := sim/sram_preload.hex
+ifneq ($(SRAM_PRELOAD),)
+  VERILOG_MACROS += SRAM_PRELOAD_HEX
+  SRAM_PRELOAD_DEPS := $(SRAM_PRELOAD_HEX_PATH)
+else
+  SRAM_PRELOAD_DEPS :=
+endif
+
+# Convert an SRAM-linked .bin into the $readmemh-compatible hex file
+# the SRAM_PRELOAD knob expects.  One 32-bit word per line, little
+# endian, no addresses or comments — ahb_sync_sram's PRELOAD_FILE
+# is consumed verbatim by sram_sync's $readmemh.
+$(SRAM_PRELOAD_HEX_PATH): $(SRAM_PRELOAD) scripts/bin2hex.py
+	@python3 scripts/bin2hex.py $< $@
+
 export GLOBAL_UART_CONFIG := $(UART_CFLAGS)
 
 # important: these show be in PATH, locate your quartus installation
@@ -352,7 +379,7 @@ $(YOSYS_BUILD_DIR)/dut.cpp: $(FILE_LIST) $(wildcard *.vh) $(DOTF) $(GEN_PARAMS_V
 
 
 # Build the cxxrtl testbench: links both the flash simulator and the I2S mic simulator
-$(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp sim/flashsim.cpp sim/flashsim.h sim/i2s_mic_sim.cpp
+$(TBEXEC): $(YOSYS_BUILD_DIR)/dut.cpp kws_soc_tb.cpp sim/flashsim.cpp sim/flashsim.h sim/i2s_mic_sim.cpp $(SRAM_PRELOAD_DEPS)
 	$(CLANGXX) -O3 -std=c++14 $(addprefix -D,$(CDEFINES)) $(UART_CFLAGS) \
 		-I$(shell yosys-config --datdir)/include/backends/cxxrtl/runtime \
 		-I$(YOSYS_BUILD_DIR) \
@@ -463,7 +490,7 @@ VERILATOR_CXXFLAGS := $(UART_CFLAGS) $(TRACE_CFLAGS) -std=c++14 -O3 -march=nativ
 #                     -I$(ROOT_DIR) here covers the verilator-invocation phase.
 #                     -march=native here covers the generated model itself.
 # ---------------------------------------------------------------------------
-$(VERILATOR_BUILD_DIR)/Vkws_soc: $(FILE_LIST) kws_soc_vpi.cpp sim/flashsim.cpp sim/flashsim.h sim/i2s_mic_sim.cpp $(wildcard *.vh) $(DOTF)
+$(VERILATOR_BUILD_DIR)/Vkws_soc: $(FILE_LIST) kws_soc_vpi.cpp sim/flashsim.cpp sim/flashsim.h sim/i2s_mic_sim.cpp $(wildcard *.vh) $(DOTF) $(SRAM_PRELOAD_DEPS)
 	mkdir -p $(VERILATOR_BUILD_DIR)
 	$(VERILATOR) $(VERILATOR_FLAGS) \
 		--top-module $(TOP) \
