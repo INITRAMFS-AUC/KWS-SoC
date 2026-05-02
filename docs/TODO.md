@@ -28,13 +28,43 @@ Priority ladder:
 
 ## P1 — perf / power
 
+- **DMA-direct-to-NNoM-input + LSB=oldest Q8 pack (Option 1).**
+  Eliminate `ring_buf`, `dma_batch`, the ISR byte-unpack, and the
+  end-of-clip memcpy in one pass.  Steps: (a) RTL one-line change in
+  `apb_i2s_receiver.v` to pack `{byte3, byte2, byte1, byte0}` with
+  byte0 (oldest) at LSB so DMA writes land in time order on
+  little-endian RV32; (b) point DMA `daddr` directly at
+  `nnom_input_data`; (c) ISR shrinks to `DMAC->daddr += burst*4`
+  per PIRQ.  Saves ~66K cycles/clip (ISR 290→55 cycles × 250) plus
+  8 KB SRAM (`ring_buf` gone).  Doesn't reduce IRQ count — the DMA
+  resets `CNTR` between frames so DADDR must advance per frame.
+- **Investigate Q8 ISR cycle regression** *(captured for follow-up
+  if it survives the Option 1 rewrite — likely subsumed)*.  Audit
+  (2026-05-02) found switching to HW Q8_EN packing made
+  `CYCLES_INFER` ~1.7M cycles *worse* (108.13M → 109.86M,
+  steady-state clip 2) even though IRQ count drops 4× (1000 → 250
+  per clip).  Each ISR now does 4× more byte stores per IRQ.
+  Hypothesis: store-buffer / d-port back pressure during ISR while
+  DMA is still draining the FIFO.  Re-measure after Option 1.
+- **HW skip-R-slot SCK in I2S MONO_MODE** (peris/i2s Phase B).
+  Today `apb_i2s_receiver` toggles SCK during the R slot even though
+  MONO_MODE discards R data.  Half of all SCK transitions burn power
+  for nothing.  Patch the SCK generator to gate toggles on
+  `ws_reg == 0` (L slot) when MONO_MODE && cfg_q8_en.  Needs a
+  proper testbench (Phase C) — current sim has no I2S-protocol
+  assertions.
 - **Merge peris/i2s `nnom-quantize` branch (HW Q7 + downsample)**.
-  A branch on the peris/i2s submodule does hardware-side Q7
-  conversion + decimation.  After merge: drop the `>>16` extraction
-  in the ISR, capture-leg bus traffic shrinks 4×, ring_buf shrinks
-  4×.  Steps: identify branch on peris/i2s, bump submodule pointer,
-  update `kws_soc.v` instantiation if ports / parameters changed,
-  update ISR / DMA configuration to consume the new sample format.
+  Phase A done (firmware uses Q8_EN, ISR unpacks 4 samples/word
+  MSB-first, IRQ count 4× lower).  Phase B (HW skip-R-slot) and
+  Phase C (testbench) tracked separately above.
+- **Validate readI2s Q8 testbench end-to-end**.  Merged the NNOM
+  branch's `test/i2s/c/readI2s.c` (compares HW-packed bytes against
+  `sim/debug_audio.hex` via uart_printf).  Boot + banner work; the
+  IRQ-driven check loop never reaches `done` in an 80M-cycle sim
+  window.  Suspect: (a) `i2s_mic_sim` stops feeding after 234 samples
+  so FIFO never gets back to half-full, or (b) `clk_div=4` paired with
+  the sim's SCK-driven sample tick produces no FIFO writes.  Step
+  through one IRQ in waveforms and pin down which.
 - **Voice-activity detector before model_run**.  Today every clip
   pays ~108M cycles of inference whether anyone is talking or not.
   Real deployment is mostly silence — gate with even a free
@@ -47,6 +77,21 @@ Priority ladder:
   whatever count is in the FIFO.  Three paths: (D) direct I2S→DMA
   wire, (C) level-triggered AHB drain, (B) DMA reads SIZE from I2S
   `fifo_count` register.
+- **I2S becomes its own AHB master, autonomous drain to SRAM
+  (long-term, Option 2).**  End-state for the audio capture path:
+  `apb_i2s_receiver` grows an AHB-Lite master port and writes
+  packed Q8 samples directly into a SRAM ring region with no DMA
+  peripheral, no `dmac_irq`, no per-frame ISR.  The CPU only sees
+  one IRQ per clip (when the ring head crosses the clip boundary).
+  Eliminates 250 pipeline flushes during inference, frees the DMA
+  for non-audio work, removes the I2S/DMA burst-size coupling
+  altogether (TODO #13 disappears).  Bigger RTL change — third
+  master on `ahbl_crossbar` (NUM_MASTERS=3), arbitration retest,
+  and a dedicated FIFO-drain FSM in the I2S block — so deferred
+  until the Conv1D accelerator work brings the inference budget
+  down enough that the per-IRQ pipe-flush savings actually move
+  the needle.  Lands naturally as part of that effort because it
+  also wants its own master port.
 - **Reduce DMA cost on FIFO-empty (zero) reads**.  Wasted AHB cycles
   + dynamic power when the burst overruns available samples.
   Subsumed by the autonomous-drain task; keep separate so a faster
