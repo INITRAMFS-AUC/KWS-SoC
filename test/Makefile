@@ -64,7 +64,7 @@ I2S_DMA_BURST_WORDS := $(shell expr $(I2S_FIFO_DEPTH) / 2)
 # hazard3_config.vh — flip an EXTENSION_* there and both gcc -march and
 # the Verilog parameter elaboration update together (TODO #6 + #13).
 # Defaults allow invoking targets directly from test/ without the root Makefile.
-RV_ARCH ?= rv32imac_zicsr_zifencei
+RV_ARCH ?= rv32imac_zicsr_zifencei_zba_zbb
 RV_ABI  ?= ilp32
 CFLAGS  = -march=$(RV_ARCH) -mabi=$(RV_ABI) -g -c -MMD -MP
 CFLAGS += $(GLOBAL_UART_CONFIG)
