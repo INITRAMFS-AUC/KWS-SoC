@@ -119,15 +119,15 @@ Priority ladder:
   Subsumed by the autonomous-drain task; keep separate so a faster
   power-gate fix (gate `dst_hwdata` toggling on `fifo_empty`) doesn't
   block on the bigger redesign.
-- **XIP cache: next-line prefetch + critical-word-first / early
-  restart** (TODO at `peris/xip/ro_cache.v:1`).  At NL=256 the miss
-  rate is already 0.09 % and CYCLES_INFER is 45.8M, but the
-  remaining 61K misses still each pay one full QSPI line fetch.
-  Next-line prefetch hides that latency for sequential code paths;
-  critical-word-first lets the CPU resume on the requested word
-  before the rest of the line lands.  Either alone should chip
-  another few percent off CYCLES_INFER.  Combine with the FSM
-  oracle below for the full win.
+- **XIP cache: next-line prefetch** (TODO at `peris/xip/ro_cache.v:1`).
+  Critical-word-first / early-restart is now always-on in `ro_dmc` —
+  shipped in commit ed8732d for −1.23 % CYCLES_INFER (45.84M → 45.28M
+  on mel_compact_4blk_ch36).  Modest because most i-fetches target
+  word 0 (sequential code) where CWF saves nothing; the standalone
+  TB sweep across all 8 word offsets shows −34 % stall.  Next-line
+  prefetch is the orthogonal win: hide whole-line miss latency for
+  sequential code by walking `line_no+1` ahead of the CPU.  Combine
+  with the FSM oracle below for the full saving.
 - **XIP cache: program-aware FSM prefetch** (TODO at
   `peris/xip/ro_cache.v:2`, also raised in conversation 2026-05-02).
   The firmware code is fixed and known at flash-program time, so
