@@ -53,9 +53,19 @@ parameter EXTENSION_E         = 0,
 parameter EXTENSION_M         = 1,
 
 // EXTENSION_ZBA: Support for Zba address generation instructions
+// Tried 1 on 2026-05-02 with EXTENSION_ZBB=1 too: gcc emitted ~30
+// sext.h / min / max / sh1add / sh2add instructions and the ELF text
+// shrank 220 bytes, but mel_compact_4blk_ch36 CYCLES_INFER REGRESSED
+// from 105.0M to 115.7M (+10.2M / +9.5%, reproducible across clips).
+// Likely cause: gcc's instruction scheduling with the bitmanip path
+// produces hot-loop sequences that interact poorly with Hazard3's
+// pipeline forwarding.  Leaving off until we can profile a hot conv
+// kernel and pin down where the extra cycles are coming from.
 parameter EXTENSION_ZBA       = 0,
 
 // EXTENSION_ZBB: Support for Zbb basic bit manipulation instructions
+// See EXTENSION_ZBA above — flipping both to 1 made mel_compact_4blk_ch36
+// 9.5 % slower despite a smaller text section.  Off until profiled.
 parameter EXTENSION_ZBB       = 0,
 
 // EXTENSION_ZBC: Support for Zbc carry-less multiplication instructions

@@ -28,6 +28,20 @@ Priority ladder:
 
 ## P1 — perf / power
 
+- **Profile why Zba+Zbb regressed mel_compact 9.5%.**  Flipping
+  EXTENSION_ZBA / EXTENSION_ZBB on in hazard3_config.vh (and
+  rebuilding both Verilator and the firmware via the new RV_ARCH
+  pipeline) shrank the text section 220 bytes and produced ~30
+  bitmanip instructions in the binary, but CYCLES_INFER went from
+  105.0M to 115.7M (reproducible across both sim clips, DETECT
+  preserved).  Hazard3's barrel shifter + ALU result mux look
+  single-cycle on paper, so the most likely culprit is gcc's
+  instruction scheduling with the bitmanip path producing hot-loop
+  sequences that miss Hazard3's forwarding bypass.  Plan: disasm a
+  hot conv kernel in both builds, diff the schedules, and try
+  Zba-only vs Zbb-only to isolate.  If the cause is gcc-side, the
+  workaround might be `-fno-tree-vectorize` or layer-specific
+  pragmas; if it's Hazard3-side, file an upstream issue.
 - **HW skip-R-slot SCK in I2S MONO_MODE** (peris/i2s Phase B).
   Today `apb_i2s_receiver` toggles SCK during the R slot even though
   MONO_MODE discards R data.  Half of all SCK transitions burn power
