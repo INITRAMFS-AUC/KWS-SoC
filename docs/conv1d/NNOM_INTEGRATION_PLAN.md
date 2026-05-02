@@ -354,6 +354,53 @@ live `model_run()` acceleration is enabled.
 
 ---
 
+## Tests requiring another device
+
+The following tests require `riscv32-unknown-elf-gcc` and Verilator. They are
+**not run on the Icarus-only development machine**. Run them on a device with
+the full RISC-V toolchain and Verilator installed.
+
+**No `model_run()` acceleration result is claimed until step 3 passes.**
+
+### 1. Firmware tiny golden test
+
+```bash
+make -C test conv1d-tiny-fw
+make sim-verilator FLASH=test/build/conv1d_tiny_golden_fw_xip.bin NO_JTAG=1 CYCLES=500000
+```
+
+Expected UART:
+
+```
+CONV1D_ID:PASS
+CONV1D_TINY_FW:PASS
+```
+
+### 2. Baseline `model_run()` cycle measurement (software only)
+
+```bash
+make clean
+make -C test mel-compact USE_MCYCLE_CSR=1
+make sim-verilator FLASH=test/build/mel_compact_4blk_ch36_xip.bin \
+    MIC=sim/down_0000.hex NO_JTAG=1
+```
+
+Record `CYCLES_INFER` from UART output. This is the software-only baseline.
+
+### 3. Guarded accelerator integration (not yet implemented)
+
+```bash
+make clean
+make -C test mel-compact USE_MCYCLE_CSR=1 USE_CONV1D_ACCEL=1
+make sim-verilator FLASH=test/build/mel_compact_4blk_ch36_xip.bin \
+    MIC=sim/down_0000.hex NO_JTAG=1
+```
+
+Requires wiring `conv1d_accel_nnom_bridge.c` into `kws_bare_main.c` behind
+`#ifdef USE_CONV1D_ACCEL`. Not yet done. `kws_bare_main.c` is unmodified.
+
+---
+
 ## Next Steps
 
 1. Build firmware ELFs with the RISC-V toolchain — `make -C test conv1d-tiny-fw` (blocked on `riscv32-unknown-elf`).

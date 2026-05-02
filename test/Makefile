@@ -384,14 +384,22 @@ clean:
 #       Enable the in-firmware mcycle-CSR cycle counter and "CYCLES:"
 #       UART line.  Off by default — VPI testbenches measure cycles more
 #       accurately and without running extra firmware code.
+#   USE_CONV1D_ACCEL=1
+#       Enable the Conv1D accelerator bridge in kws_bare_main.c.  Off by
+#       default — kws_bare_main.c is unmodified until the bridge is wired.
+#       Requires the RISC-V toolchain and Verilator to build and test.
 KWS_DEBUG_DUMP_FIRST_CLIP ?= 0
-USE_MCYCLE_CSR           ?= 0
-KWS_EXTRA_CFLAGS         :=
+USE_MCYCLE_CSR            ?= 0
+USE_CONV1D_ACCEL          ?= 0
+KWS_EXTRA_CFLAGS          :=
 ifeq ($(KWS_DEBUG_DUMP_FIRST_CLIP),1)
   KWS_EXTRA_CFLAGS += -DKWS_DEBUG_DUMP_FIRST_CLIP=1
 endif
 ifeq ($(USE_MCYCLE_CSR),1)
   KWS_EXTRA_CFLAGS += -DUSE_MCYCLE_CSR=1
+endif
+ifeq ($(USE_CONV1D_ACCEL),1)
+  KWS_EXTRA_CFLAGS += -DUSE_CONV1D_ACCEL=1 -I$(CONV1D_INC_DIR)
 endif
 MEL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
              -DNNOM_STATIC_BUF_KB=36 \

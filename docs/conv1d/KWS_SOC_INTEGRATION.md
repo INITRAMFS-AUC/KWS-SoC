@@ -194,3 +194,77 @@ equivalent RTL testbench runs without a toolchain: `make run-conv1d-spad-loader`
 The correct integration claim today is:
 
 > The accelerator is packaged for KWS-SoC integration with a verified APB-facing wrapper, an APB scratchpad loader for firmware tensor preload/readback, and a firmware tiny golden test that exercises the complete control path.
+
+## I. Tests requiring another device
+
+The following tests are **not run on this development machine** because they require
+`riscv32-unknown-elf-gcc` and Verilator (or the repo's full CXXRTL/Verilator SoC
+simulator). Run them on a device with the RISC-V toolchain and Verilator installed.
+
+**No full `model_run()` acceleration result is claimed until these pass.**
+
+---
+
+### 1. Firmware tiny golden test
+
+```bash
+# Build firmware ELF and binary
+make -C test conv1d-tiny-fw
+
+# Run in SoC simulation (no JTAG, 500k cycle budget)
+make sim-verilator FLASH=test/build/conv1d_tiny_golden_fw_xip.bin NO_JTAG=1 CYCLES=500000
+```
+
+Expected UART output:
+
+```
+CONV1D_ID:PASS
+CONV1D_TINY_FW:PASS
+```
+
+This proves the APB scratchpad loader path from real firmware code running on
+the Hazard3 RISC-V core.
+
+---
+
+### 2. Baseline full `model_run()` cycle measurement (no accelerator)
+
+```bash
+make clean
+make -C test mel-compact USE_MCYCLE_CSR=1
+make sim-verilator FLASH=test/build/mel_compact_4blk_ch36_xip.bin \
+    MIC=sim/down_0000.hex NO_JTAG=1
+```
+
+Expected UART output on first clip (exact numbers will vary by clock/model):
+
+```
+DETECT:0,down
+CYCLES_CAPTURE:<N>
+CYCLES_INFER:<N>
+CYCLES_TOTAL:<N>
+CYCLES:<N>
+```
+
+Record `CYCLES_INFER` as the baseline before any hardware acceleration.
+
+---
+
+### 3. Guarded accelerator integration (future — not yet implemented)
+
+Once the `USE_CONV1D_ACCEL` bridge is wired into `kws_bare_main.c`:
+
+```bash
+make clean
+make -C test mel-compact USE_MCYCLE_CSR=1 USE_CONV1D_ACCEL=1
+make sim-verilator FLASH=test/build/mel_compact_4blk_ch36_xip.bin \
+    MIC=sim/down_0000.hex NO_JTAG=1
+```
+
+Expected UART output: same detection result as baseline, with `CYCLES_INFER`
+reduced. Compare `CYCLES_INFER` with and without `USE_CONV1D_ACCEL=1` for the
+speedup figure.
+
+**This step is not yet implemented.** `kws_bare_main.c` is unmodified; the bridge
+exists (`test/conv1d/c/conv1d_accel_nnom_bridge.c`) but is not yet called from the
+live inference path.
