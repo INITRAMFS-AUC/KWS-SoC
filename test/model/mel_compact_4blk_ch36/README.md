@@ -13,16 +13,16 @@ Hazard3 RV32IMAC SoC Verilator simulation.
 | CSR_COUNTER | 1 (mcycle enabled) |
 | Accelerator | none |
 | Measured cycles (original) | 195,486,216 (±27) — using `/opt/nnom` majianjia@4d1d8fc |
-| Measured cycles (this branch) | ~198,321,644 — using `third_party/nnom` INITRAMFS-AUC@733d72b |
+| Measured cycles (this branch) | ~198,321,644 — using `nnom` INITRAMFS-AUC@733d72b |
 | Wall-clock @ 36 MHz | ~5.43–5.51 s per inference |
 | Test results | 8/10 correct (left→unknown, up→unknown) |
 
 > **NNoM version note:** The original 195M measurement used `/opt/nnom` (majianjia/nnom
-> commit `4d1d8fc`). This branch uses `third_party/nnom` (INITRAMFS-AUC/nnom fork,
+> commit `4d1d8fc`). This branch uses `nnom` (INITRAMFS-AUC/nnom fork,
 > commit `733d72b`). The ~2.8M cycle difference (~1.4%) is due to minor divergence
 > between the two NNoM versions. Layer implementations (conv2d, dense, etc.) are
 > functionally equivalent; exact binary identity is not guaranteed.
-> To reproduce the exact 195M figure, replace `third_party/nnom` with a checkout of
+> To reproduce the exact 195M figure, replace `nnom` with a checkout of
 > majianjia/nnom at `4d1d8fc` (see NNoM version note in Prerequisites).
 
 ---
@@ -39,14 +39,14 @@ Hazard3 RV32IMAC SoC Verilator simulation.
 The 195M run used `/opt/nnom` installed from
 [majianjia/nnom](https://github.com/majianjia/nnom) (commit `4d1d8fc`).
 
-This branch builds against `third_party/nnom` which is the
+This branch builds against `nnom` which is the
 [INITRAMFS-AUC/nnom](https://github.com/INITRAMFS-AUC/nnom) fork
 (commit `733d72b`, v0.4.3-57). The fork may have minor divergence from
 upstream. The NNoM layer implementations (conv2d, dense, etc.) that
 matter for cycle count are expected to be equivalent, but exact binary
 identity is not guaranteed.
 
-To use the exact upstream version instead, replace `third_party/nnom`
+To use the exact upstream version instead, replace `nnom`
 with a checkout of `majianjia/nnom` at commit `4d1d8fc`.
 
 ### Submodule SSH workaround
@@ -76,7 +76,7 @@ git submodule update --init --recursive
 cd ..
 
 # Finally, init the NNoM submodule:
-git submodule update --init --force third_party/nnom
+git submodule update --init --force nnom
 ```
 
 ---

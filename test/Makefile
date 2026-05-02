@@ -29,7 +29,7 @@ MODEL_DIR             = model
 STRIDED_MODEL_C_DIR   = $(MODEL_DIR)/strided_s16_nodil
 MEL_COMPACT_C_DIR     = $(MODEL_DIR)/mel_compact_4blk_ch36
 STREAMING_MODEL_C_DIR = $(MODEL_DIR)/streaming
-NNOM_DIR     = ../third_party/nnom
+NNOM_DIR     = ../nnom
 NNOM_INC_DIR = $(NNOM_DIR)/inc
 NNOM_PORT_DIR = $(NNOM_DIR)/port
 

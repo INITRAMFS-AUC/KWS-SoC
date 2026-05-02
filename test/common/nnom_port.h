@@ -1,6 +1,6 @@
 /*
  * test/common/nnom_port.h — KWS-SoC project-local override of NNoM's port
- * header.  We put this directory ahead of third_party/nnom/port in the
+ * header.  We put this directory ahead of nnom/port in the
  * include path (see test/Makefile) so NNoM's `#include "nnom_port.h"` from
  * core/layers/backends picks up THIS file instead of the upstream one.
  *
@@ -23,7 +23,7 @@
  * Best of both: zero overhead for cheap copies, fast loop for the
  * genuinely-variable hot-path calls (Conv2D im2col / padding).
  *
- * Everything else here mirrors upstream third_party/nnom/port/nnom_port.h
+ * Everything else here mirrors upstream nnom/port/nnom_port.h
  * verbatim — keep them in sync if NNoM is bumped.
  */
 

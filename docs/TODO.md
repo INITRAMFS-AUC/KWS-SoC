@@ -168,12 +168,13 @@ Priority ladder:
      identical (mel_compact_4blk_ch36_xip.elf same 28380/53228 size).
      Renames done with git mv so blame/log follow.  Part (1) of
      TODO #7. -->
-- **Move `third_party/nnom` to `./nnom`**.  NNoM is a vendored, locally
-  patched dependency we drive ourselves — it isn't really
-  "third_party" in the sit-quietly-in-the-corner sense.  Renaming it
-  to `./nnom` next to `busfabric/`, `peris/`, etc. brings the layout
-  in line with the reorg above.  `git mv third_party/nnom nnom` then
-  bulk-update `NNOM_DIR` etc. in Makefiles.  Part (2) of TODO #7.
+<!-- Done: third_party/nnom moved to ./nnom alongside busfabric/,
+     peris/, etc.  .gitmodules path updated, test/Makefile NNOM_DIR
+     re-anchored, README + nnom_port.h doc strings updated.  Build
+     verified across all three model targets.  Part (2) of TODO #7. -->
+<!-- TODO #7 fully done: model dirs consolidated under
+     test/model/<name>/ AND nnom moved out of third_party/. -->
+
 - **Software cache invalidation hook on firmware update** (TODO at
   `peris/xip/ro_cache.v:1`).  `ro_dmc` only invalidates a line when
   the cache controller fetches it; if the firmware ever writes new
