@@ -176,6 +176,10 @@ UART_CFLAGS := $(addprefix -D,$(UART_VERILOG_MACROS))
 # Propagate to all RTL tools (Quartus, Yosys, Verilator Verilog elaboration)
 VERILOG_MACROS += $(UART_VERILOG_MACROS)
 
+# Conv1D accelerator defaults to the verified buffered mode.
+CONV1D_USE_WEIGHT_BUFFER ?= 1
+VERILOG_MACROS += USE_WEIGHT_BUFFER=$(CONV1D_USE_WEIGHT_BUFFER)
+
 # Optional bus-snooper debug peripheral. Set DEBUG_SNOOPER=1 in the
 # environment (e.g. `make DEBUG_SNOOPER=1 sim-verilator …`) to:
 #   - define DEBUG_SNOOPER for Verilog elaboration (instantiates the

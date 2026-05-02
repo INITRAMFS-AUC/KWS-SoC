@@ -1,0 +1,116 @@
+/*
+ * conv1d_accel_regs.h
+ *
+ * Firmware register map and helpers for the Conv1D accelerator's APB
+ * control wrapper. Drop this header into the KWS-SoC firmware tree and
+ * include it from the keyword-spotting application.
+ *
+ * The base address below is the suggested KWS-SoC mapping; override
+ * CONV1D_BASE before including this header (or via build flags) if your
+ * APB splitter places the slave somewhere else.
+ */
+#ifndef CONV1D_ACCEL_REGS_H
+#define CONV1D_ACCEL_REGS_H
+
+#include <stdint.h>
+
+#ifndef CONV1D_BASE
+#define CONV1D_BASE         0x4000C000u
+#endif
+
+/* Register offsets (bytes) */
+#define CONV1D_ID           0x00u   /* RO: ID/version (expect 0x12345678) */
+#define CONV1D_CTRL         0x04u   /* WO: bit[0] = start                  */
+#define CONV1D_STATUS       0x08u   /* RO: bit[0] = busy, bit[1] = done    */
+#define CONV1D_INPUT_BASE   0x0Cu   /* RW: input tensor base address       */
+#define CONV1D_WEIGHT_BASE  0x10u   /* RW: weight tensor base address      */
+#define CONV1D_BIAS_BASE    0x14u   /* RW: bias tensor base address        */
+#define CONV1D_OUTPUT_BASE  0x18u   /* RW: output tensor base address      */
+#define CONV1D_INPUT_LEN    0x1Cu   /* RW: input length (samples)          */
+#define CONV1D_IN_CH        0x20u   /* RW: input channels                  */
+#define CONV1D_OUT_CH       0x24u   /* RW: output channels                 */
+#define CONV1D_QUANT        0x28u   /* RW: [4:0]=out_shift, [5]=relu_en    */
+
+/* Bit definitions */
+#define CONV1D_CTRL_START        (1u << 0)
+#define CONV1D_STATUS_BUSY       (1u << 0)
+#define CONV1D_STATUS_DONE       (1u << 1)
+#define CONV1D_QUANT_SHIFT_MASK  0x1Fu        /* [4:0] */
+#define CONV1D_QUANT_RELU_EN     (1u << 5)
+
+/* Expected ID register value (from APB wrapper) */
+#define CONV1D_EXPECTED_ID  0x12345678u
+
+/* ------------------------------------------------------------------ */
+/* MMIO helpers                                                        */
+/* ------------------------------------------------------------------ */
+
+static inline void conv1d_write_reg(uint32_t offset, uint32_t value)
+{
+    volatile uint32_t *reg = (volatile uint32_t *)(CONV1D_BASE + offset);
+    *reg = value;
+}
+
+static inline uint32_t conv1d_read_reg(uint32_t offset)
+{
+    volatile uint32_t *reg = (volatile uint32_t *)(CONV1D_BASE + offset);
+    return *reg;
+}
+
+static inline void conv1d_start(void)
+{
+    conv1d_write_reg(CONV1D_CTRL, CONV1D_CTRL_START);
+}
+
+static inline int conv1d_done(void)
+{
+    return (conv1d_read_reg(CONV1D_STATUS) & CONV1D_STATUS_DONE) ? 1 : 0;
+}
+
+static inline int conv1d_busy(void)
+{
+    return (conv1d_read_reg(CONV1D_STATUS) & CONV1D_STATUS_BUSY) ? 1 : 0;
+}
+
+/*
+ * Run a Conv1D layer end-to-end. Configures all programmable registers,
+ * fires CTRL.start, and busy-polls until STATUS.done is observed.
+ *
+ * Caller is responsible for placing input, weight, bias, and output
+ * tensors at the addresses passed in, and for ensuring those addresses
+ * are reachable by the accelerator's memory-side ports in the SoC.
+ *
+ * Returns 0 on success.
+ */
+static inline int conv1d_run_layer(uint32_t input_base,
+                                   uint32_t weight_base,
+                                   uint32_t bias_base,
+                                   uint32_t output_base,
+                                   uint16_t input_len,
+                                   uint16_t in_ch,
+                                   uint16_t out_ch,
+                                   uint8_t  out_shift,
+                                   int      relu_en)
+{
+    uint32_t quant = ((uint32_t)out_shift & CONV1D_QUANT_SHIFT_MASK)
+                   | (relu_en ? CONV1D_QUANT_RELU_EN : 0u);
+
+    conv1d_write_reg(CONV1D_INPUT_BASE,  input_base);
+    conv1d_write_reg(CONV1D_WEIGHT_BASE, weight_base);
+    conv1d_write_reg(CONV1D_BIAS_BASE,   bias_base);
+    conv1d_write_reg(CONV1D_OUTPUT_BASE, output_base);
+    conv1d_write_reg(CONV1D_INPUT_LEN,   (uint32_t)input_len);
+    conv1d_write_reg(CONV1D_IN_CH,       (uint32_t)in_ch);
+    conv1d_write_reg(CONV1D_OUT_CH,      (uint32_t)out_ch);
+    conv1d_write_reg(CONV1D_QUANT,       quant);
+
+    conv1d_start();
+
+    while (!conv1d_done()) {
+        /* spin; firmware can replace this with a WFI/yield as needed */
+    }
+
+    return 0;
+}
+
+#endif /* CONV1D_ACCEL_REGS_H */

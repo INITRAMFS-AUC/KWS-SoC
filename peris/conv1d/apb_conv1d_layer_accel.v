@@ -1,0 +1,215 @@
+// APB Register Wrapper for Conv1D Layer Accelerator
+`timescale 1ns/1ps
+
+module apb_conv1d_layer_accel #(
+    parameter ADDR_W = 32,
+    parameter DATA_W = 32,
+    parameter integer MAX_IN_CH = 64
+)(
+    // Clock & Reset
+    input  wire                  clk,
+    input  wire                  rst_n,
+
+    // APB Interface
+    input  wire [31:0]           paddr,
+    input  wire                  psel,
+    input  wire                  penable,
+    input  wire                  pwrite,
+    input  wire [31:0]           pwdata,
+    output reg  [31:0]           prdata,
+    output reg                   pready,
+    output reg                   pslverr,
+
+    // Accelerator Control Interface
+    output reg                   start,
+    output reg                   busy,
+    output reg                   done,
+
+    output reg  [ADDR_W-1:0]     input_base,
+    output reg  [ADDR_W-1:0]     weight_base,
+    output reg  [ADDR_W-1:0]     bias_base,
+    output reg  [ADDR_W-1:0]     output_base,
+
+    output reg  [15:0]           input_len,
+    output reg  [15:0]           in_ch,
+    output reg  [15:0]           out_ch,
+
+    output reg  [4:0]            out_shift,
+    output reg                   relu_en,
+
+    // Memory Interface (read/write ports delegated to testbench)
+    output wire                  rd0_en,
+    output wire [ADDR_W-1:0]     rd0_addr,
+    input  wire [DATA_W-1:0]     rd0_data,
+    input  wire                  rd0_valid,
+
+    output wire                  rd1_en,
+    output wire [ADDR_W-1:0]     rd1_addr,
+    input  wire [DATA_W-1:0]     rd1_data,
+    input  wire                  rd1_valid,
+
+    output wire                  wr_en,
+    output wire [ADDR_W-1:0]     wr_addr,
+    output wire [DATA_W-1:0]     wr_data,
+    output wire [3:0]            wr_strb
+);
+
+    // APB Register map (memory-mapped)
+    // 0x00: ID/VERSION (RO)
+    // 0x04: CTRL (WO) - bit[0]=start
+    // 0x08: STATUS (RO) - bit[0]=busy, bit[1]=done
+    // 0x0C: INPUT_BASE (RW)
+    // 0x10: WEIGHT_BASE (RW)
+    // 0x14: BIAS_BASE (RW)
+    // 0x18: OUTPUT_BASE (RW)
+    // 0x1C: INPUT_LEN (RW)
+    // 0x20: IN_CH (RW)
+    // 0x24: OUT_CH (RW)
+    // 0x28: QUANT (RW) - [4:0]=out_shift, [5]=relu_en
+
+    reg [31:0] id_reg;
+    reg [31:0] ctrl_reg;
+    reg [31:0] status_reg;
+
+    wire core_busy;
+    wire core_done;
+    wire core_rd0_en;
+    wire [ADDR_W-1:0] core_rd0_addr;
+    wire core_rd1_en;
+    wire [ADDR_W-1:0] core_rd1_addr;
+    wire core_wr_en;
+    wire [ADDR_W-1:0] core_wr_addr;
+    wire [DATA_W-1:0] core_wr_data;
+    wire [3:0] core_wr_strb;
+
+    assign rd0_en = core_rd0_en;
+    assign rd0_addr = core_rd0_addr;
+    assign rd1_en = core_rd1_en;
+    assign rd1_addr = core_rd1_addr;
+    assign wr_en = core_wr_en;
+    assign wr_addr = core_wr_addr;
+    assign wr_data = core_wr_data;
+    assign wr_strb = core_wr_strb;
+
+    conv1d_layer_accel #(
+        .ADDR_W(ADDR_W),
+        .DATA_W(DATA_W),
+        .LANES(4),
+        .MAX_IN_CH(MAX_IN_CH)
+    ) core (
+        .clk(clk),
+        .rst_n(rst_n),
+        .start(start),
+        .busy(core_busy),
+        .done(core_done),
+        .input_base(input_base),
+        .weight_base(weight_base),
+        .bias_base(bias_base),
+        .output_base(output_base),
+        .input_len(input_len),
+        .in_ch(in_ch),
+        .out_ch(out_ch),
+        .out_shift(out_shift),
+        .relu_en(relu_en),
+        .rd0_en(core_rd0_en),
+        .rd0_addr(core_rd0_addr),
+        .rd0_data(rd0_data),
+        .rd0_valid(rd0_valid),
+        .rd1_en(core_rd1_en),
+        .rd1_addr(core_rd1_addr),
+        .rd1_data(rd1_data),
+        .rd1_valid(rd1_valid),
+        .wr_en(core_wr_en),
+        .wr_addr(core_wr_addr),
+        .wr_data(core_wr_data),
+        .wr_strb(core_wr_strb)
+    );
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            start <= 1'b0;
+            id_reg <= 32'h12345678;  // Example ID
+            ctrl_reg <= 32'd0;
+            pready <= 1'b1;
+            pslverr <= 1'b0;
+            prdata <= 32'd0;
+            busy <= 1'b0;
+            done <= 1'b0;
+
+            input_base <= 32'd0;
+            weight_base <= 32'd512;
+            bias_base <= 32'd2048;
+            output_base <= 32'd3072;
+
+            input_len <= 16'd0;
+            in_ch <= 16'd0;
+            out_ch <= 16'd0;
+            out_shift <= 5'd0;
+            relu_en <= 1'b0;
+        end else begin
+            // Default: clear single-cycle signals
+            start <= 1'b0;
+
+            busy <= core_busy;
+            if (start) begin
+                done <= 1'b0;
+            end else if (core_done) begin
+                done <= 1'b1;
+            end
+            ctrl_reg[0] <= start;
+
+            // Status register
+            status_reg[0] <= core_busy;
+            status_reg[1] <= done | core_done;
+            status_reg[31:2] <= 30'd0;
+
+            // APB transaction (Write)
+            if (psel && penable && pwrite) begin
+                case (paddr[7:0])
+                    8'h04: begin  // CTRL
+                        ctrl_reg <= pwdata;
+                        if (pwdata[0]) start <= 1'b1;
+                    end
+                    8'h0C: input_base <= pwdata;
+                    8'h10: weight_base <= pwdata;
+                    8'h14: bias_base <= pwdata;
+                    8'h18: output_base <= pwdata;
+                    8'h1C: input_len <= pwdata[15:0];
+                    8'h20: in_ch <= pwdata[15:0];
+                    8'h24: out_ch <= pwdata[15:0];
+                    8'h28: begin
+                        out_shift <= pwdata[4:0];
+                        relu_en <= pwdata[5];
+                    end
+                    default: pslverr <= 1'b1;
+                endcase
+            end
+
+            // APB transaction (Read)
+            if (psel && penable && !pwrite) begin
+                pslverr <= 1'b0;
+                case (paddr[7:0])
+                    8'h00: prdata <= id_reg;
+                    8'h04: prdata <= ctrl_reg;
+                    8'h08: prdata <= status_reg;
+                    8'h0C: prdata <= input_base;
+                    8'h10: prdata <= weight_base;
+                    8'h14: prdata <= bias_base;
+                    8'h18: prdata <= output_base;
+                    8'h1C: prdata <= {{16{1'b0}}, input_len};
+                    8'h20: prdata <= {{16{1'b0}}, in_ch};
+                    8'h24: prdata <= {{16{1'b0}}, out_ch};
+                    8'h28: prdata <= {{26{1'b0}}, relu_en, out_shift};
+                    default: begin
+                        prdata <= 32'd0;
+                        pslverr <= 1'b1;
+                    end
+                endcase
+            end else if (psel && !penable) begin
+                // Setup phase: hold data
+                pslverr <= 1'b0;
+            end
+        end
+    end
+
+endmodule

@@ -13,3 +13,8 @@ file MS_DMAC_AHBL/hdl/rtl/MS_DMAC_AHBL.pp.v
 
 # Bus snooper (debug)
 file snooper/bus_snooper.v
+
+# Conv1D accelerator
+file conv1d/conv1d_layer_accel.v
+file conv1d/apb_conv1d_layer_accel.v
+file conv1d/conv1d_accel_soc_wrapper.v
