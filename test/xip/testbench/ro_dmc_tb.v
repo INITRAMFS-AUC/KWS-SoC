@@ -115,10 +115,16 @@ module ro_dmc_tb;
     end
 
     // ------------------------------------------------------------------
-    // Pass / fail tracking
+    // Pass / fail + perf tracking.  total_stall sums every ahb_read
+    // task's stall cycles across the whole run; total_misses counts
+    // reads that stalled at all.  Running this TB once with `+CWF and
+    // once without lets us see the CWF speedup directly without
+    // having to integrate into the SoC and re-run mel_compact.
     // ------------------------------------------------------------------
-    integer passes = 0;
-    integer fails  = 0;
+    integer passes       = 0;
+    integer fails        = 0;
+    integer total_stall  = 0;
+    integer total_misses = 0;
 
     task check_eq(input [255:0] tag,
                   input [31:0] got, input [31:0] exp);
@@ -180,6 +186,11 @@ module ro_dmc_tb;
             last_stall = last_stall + 1;
         end
         cpu_rd = 1'b0;
+
+        // Roll into the run-wide perf totals so the final summary
+        // line can quantify CWF speedup vs the baseline.
+        if (last_stall > 0) total_misses = total_misses + 1;
+        total_stall = total_stall + last_stall;
     end
     endtask
 
@@ -316,12 +327,39 @@ module ro_dmc_tb;
         check_le("stall <= 12 cyc",              last_stall, 12);
 `endif
 
+        // --- 13. Uniform word-offset miss sweep ---
+        // 8 cold misses, one per word position (offsets 0x00, 0x04,
+        // ..., 0x1c).  Each lives in a different cache slot so they
+        // don't conflict; the only thing we're measuring is how the
+        // miss penalty depends on the requested word.
+        //
+        // Without CWF every miss waits for the full line: ~10 cyc each
+        // × 8 = ~80 total.
+        // With CWF the stall is K+4 per miss, summing to
+        //     (4 + 5 + 6 + 7 + 8 + 9 + 10 + 11) = 60 cyc total.
+        // Saving: 20 cyc / 25 % across 8 misses.  Real flash latency
+        // per word is much higher (16 cyc) so the SoC saving scales
+        // proportionally — see the doc block at the top of the file.
+        $display("\n[13] Uniform miss sweep — all 8 word offsets");
+        begin : sweep
+            integer k;
+            for (k = 0; k < 8; k = k + 1) begin
+                // Slot-stride: each iteration picks a fresh slot so
+                // we don't conflict with previous fetches.  Tag bits
+                // (>= bit 10) absorb the iteration index too.
+                ahb_read(32'h80010000 + (k << 10) + (k << 2));
+                check_eq("data sweep", cpu_data,
+                         32'h80010000 + (k << 10) + (k << 2));
+            end
+        end
+
         // --- summary ---
         $display("\n=== ro_dmc_tb summary: %0d PASS  %0d FAIL ===", passes, fails);
+        $display("=== ro_dmc_tb perf: total_stall=%0d cyc across %0d misses (avg %0d cyc/miss) ===",
+                 total_stall, total_misses,
+                 (total_misses > 0) ? (total_stall / total_misses) : 0);
         if (fails != 0) begin
             $display("=== TESTBENCH FAILED ===");
-            // iverilog $finish always returns 0; print a marker line so
-            // an outer wrapper grep can catch it.
             $display("TB_RESULT: FAIL");
         end else begin
             $display("TB_RESULT: PASS");
