@@ -115,9 +115,18 @@ static void uart_puthex(uint32_t v) {
 /* ── I2S (KWS-SoC apb_i2s_receiver at 0x40008000) ──────────────────────── */
 
 typedef struct {
-    volatile uint32_t id;    /* 0x00: peripheral ID (ROV = 0xDEADCAFE) */
-    volatile uint32_t conf;  /* 0x04: [31:8]=clk_div, [4]=irq_en      */
-    volatile uint32_t fifo;  /* 0x08: audio FIFO (read 32-bit sample) */
+    volatile uint32_t id;    /* 0x00: peripheral ID (ROV = 0xDEADCAFE)        */
+    volatile uint32_t conf;  /* 0x04: [31:8] cfg_div
+                              *       [7]    cfg_skip_r_en   (skip-R-SCK,
+                              *                               see RTL patch)
+                              *       [6]    cfg_q8_en       (HW int8 quant
+                              *                               4 samples/word,
+                              *                               MSB = oldest)
+                              *       [5]    cfg_ds_en       (HW 2x downsample)
+                              *       [4]    cfg_irq_en                       */
+    volatile uint32_t fifo;  /* 0x08: audio FIFO; with q8_en=1 each 32-bit
+                              *       read returns 4 packed int8 samples
+                              *       (byte[3]=oldest, byte[0]=newest).       */
 } i2s_hw_t;
 
 #define I2S_BASE_ADDR    0x40008000UL
@@ -152,9 +161,27 @@ typedef struct {
 #define I2S_CLK_DIV  35
 #endif
 
+/* I2S_CONF bit masks — match peris/i2s/i2s_apb/i2s_itr2/i2s_regs.h */
+#define I2S_CONF_IRQ_EN     (1u << 4)
+#define I2S_CONF_DS_EN      (1u << 5)   /* HW 2x downsample (skip every L)   */
+#define I2S_CONF_Q8_EN      (1u << 6)   /* HW int8 quant: 4 samples per word */
+#define I2S_CONF_SKIP_R_EN  (1u << 7)   /* skip SCK toggling during R slot   */
+
 static void i2s_init(uint32_t clk_div) {
-    /* CONF_IRQ_EN bit 4 (0x10), CONF_DIV bits[31:8]. */
-    I2S->conf = ((clk_div & 0xFFFFFFu) << 8) | (1u << 4);
+    /* Q8_EN: HW packs 4 int8 samples per FIFO word — 4× less FIFO/AHB
+     *        traffic per second of audio.  The trap handler unpacks
+     *        MSB-first (byte[3] of dma_batch[i] is the OLDEST sample).
+     * SKIP_R_EN: I2S protocol forces SCK toggling through both L and R
+     *        slots even in MONO_MODE (we throw R away).  This bit gates
+     *        SCK during the R slot, halving SCK toggle activity (mic +
+     *        I2S peripheral) for free.  Requires the matching RTL patch
+     *        in peris/i2s/i2s_apb/i2s_itr2/apb_i2s_receiver.v.
+     * DS_EN: not enabled — would halve the audio rate to 4 kHz, which
+     *        the model isn't trained for.  Keep cfg_div=35 → 8 kHz. */
+    I2S->conf = ((clk_div & 0xFFFFFFu) << 8)
+              | I2S_CONF_SKIP_R_EN
+              | I2S_CONF_Q8_EN
+              | I2S_CONF_IRQ_EN;
 }
 
 /* ── MS_DMAC_AHBL (0x6000_0000) ─────────────────────────────────────────── */
@@ -271,10 +298,36 @@ void __attribute__((interrupt("machine"), aligned(4))) kws_trap_handler(void) {
 
     DMAC->icr = 1u;   /* clear ICR latch so IRQ de-asserts before mret */
 
-    for (int i = 0; i < I2S_DMA_BURST_WORDS; i++) {
-        if (ring_pos < SAMPLES_PER_CLIP)
-            ring_buf[ring_pos++] = (int8_t)((uint32_t)dma_batch[i] >> 16);
+    /* I2S q8_en is on, so each dma_batch word holds FOUR packed int8
+     * samples in big-endian-by-time order: byte[3] is the OLDEST,
+     * byte[0] is the NEWEST.  Unpack MSB-first to preserve audio
+     * time order in ring_buf.
+     *
+     * Hoist the bounds check: SAMPLES_PER_CLIP (8000) is divisible by
+     * I2S_DMA_BURST_WORDS*4 (32), so a full burst always fits cleanly
+     * unless we're at the last burst of the clip — which the
+     * `ring_ready` branch below catches.  Skips ~8000 per-byte
+     * branches per clip in the steady state. */
+    int local_pos = ring_pos;
+    if (local_pos + (int)(I2S_DMA_BURST_WORDS * 4) <= SAMPLES_PER_CLIP) {
+        for (int i = 0; i < I2S_DMA_BURST_WORDS; i++) {
+            uint32_t word = (uint32_t)dma_batch[i];
+            ring_buf[local_pos    ] = (int8_t)(word >> 24);
+            ring_buf[local_pos + 1] = (int8_t)(word >> 16);
+            ring_buf[local_pos + 2] = (int8_t)(word >>  8);
+            ring_buf[local_pos + 3] = (int8_t)(word      );
+            local_pos += 4;
+        }
+    } else {
+        for (int i = 0; i < I2S_DMA_BURST_WORDS; i++) {
+            uint32_t word = (uint32_t)dma_batch[i];
+            for (int s = 24; s >= 0; s -= 8) {
+                if (local_pos < SAMPLES_PER_CLIP)
+                    ring_buf[local_pos++] = (int8_t)(word >> s);
+            }
+        }
     }
+    ring_pos = local_pos;
     i2s_irq_count++;
 
     if (ring_pos >= SAMPLES_PER_CLIP) {
