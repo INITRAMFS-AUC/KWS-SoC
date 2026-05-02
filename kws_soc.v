@@ -794,6 +794,14 @@ module kws_soc #(
   wire [31:0] conv1d_wr_data;
   wire [3:0]  conv1d_wr_strb;
 
+  // APB scratchpad loader wires (firmware preload/readback via SPAD_ADDR/WDATA/RDATA)
+  wire        conv1d_spad_lpb_wr_en;
+  wire [31:0] conv1d_spad_lpb_wr_addr;
+  wire [31:0] conv1d_spad_lpb_wr_data;
+  wire [3:0]  conv1d_spad_lpb_wr_strb;
+  wire [31:0] conv1d_spad_lpb_rd_addr;
+  wire [31:0] conv1d_spad_lpb_rd_data;
+
 `ifdef CONV1D_USE_SIM_SCRATCHPAD
   conv1d_scratchpad_mem #(
       .MEM_BYTES(8192)
@@ -811,7 +819,13 @@ module kws_soc #(
       .wr_en    (conv1d_wr_en),
       .wr_addr  (conv1d_wr_addr),
       .wr_data  (conv1d_wr_data),
-      .wr_strb  (conv1d_wr_strb)
+      .wr_strb  (conv1d_wr_strb),
+      .lpb_wr_en   (conv1d_spad_lpb_wr_en),
+      .lpb_wr_addr (conv1d_spad_lpb_wr_addr),
+      .lpb_wr_data (conv1d_spad_lpb_wr_data),
+      .lpb_wr_strb (conv1d_spad_lpb_wr_strb),
+      .lpb_rd_addr (conv1d_spad_lpb_rd_addr),
+      .lpb_rd_data (conv1d_spad_lpb_rd_data)
   );
 `else
   reg conv1d_rd0_valid_stub;
@@ -821,6 +835,7 @@ module kws_soc #(
   assign conv1d_rd1_data = 32'd0;
   assign conv1d_rd0_valid = conv1d_rd0_valid_stub;
   assign conv1d_rd1_valid = conv1d_rd1_valid_stub;
+  assign conv1d_spad_lpb_rd_data = 32'd0;
 
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -839,7 +854,10 @@ module kws_soc #(
                               | ^conv1d_rd0_addr
                               | ^conv1d_rd1_addr
                               | ^conv1d_wr_addr
-                              | ^conv1d_wr_data;
+                              | ^conv1d_wr_data
+                              | conv1d_spad_lpb_wr_en
+                              | ^conv1d_spad_lpb_wr_addr
+                              | ^conv1d_spad_lpb_rd_addr;
 `endif
 
   conv1d_accel_soc_wrapper #(
@@ -873,7 +891,14 @@ module kws_soc #(
       .wr_en  (conv1d_wr_en),
       .wr_addr(conv1d_wr_addr),
       .wr_data(conv1d_wr_data),
-      .wr_strb(conv1d_wr_strb)
+      .wr_strb(conv1d_wr_strb),
+
+      .spad_lpb_wr_en   (conv1d_spad_lpb_wr_en),
+      .spad_lpb_wr_addr (conv1d_spad_lpb_wr_addr),
+      .spad_lpb_wr_data (conv1d_spad_lpb_wr_data),
+      .spad_lpb_wr_strb (conv1d_spad_lpb_wr_strb),
+      .spad_lpb_rd_addr (conv1d_spad_lpb_rd_addr),
+      .spad_lpb_rd_data (conv1d_spad_lpb_rd_data)
   );
 
 

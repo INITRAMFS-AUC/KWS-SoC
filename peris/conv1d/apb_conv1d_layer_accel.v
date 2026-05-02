@@ -52,7 +52,19 @@ module apb_conv1d_layer_accel #(
     output wire                  wr_en,
     output wire [ADDR_W-1:0]     wr_addr,
     output wire [DATA_W-1:0]     wr_data,
-    output wire [3:0]            wr_strb
+    output wire [3:0]            wr_strb,
+
+    // Scratchpad APB loader port (firmware preload/readback)
+    // 0x34: SPAD_ADDR  — byte address (auto-inc on WDATA write / RDATA read)
+    // 0x38: SPAD_WDATA — write 32-bit word to scratchpad, advance SPAD_ADDR
+    // 0x3C: SPAD_RDATA — read 32-bit word from scratchpad, advance SPAD_ADDR
+    // 0x40: SPAD_CTRL  — bit[0]=reset SPAD_ADDR to 0
+    output wire                  spad_lpb_wr_en,
+    output wire [ADDR_W-1:0]     spad_lpb_wr_addr,
+    output wire [DATA_W-1:0]     spad_lpb_wr_data,
+    output wire [3:0]            spad_lpb_wr_strb,
+    output wire [ADDR_W-1:0]     spad_lpb_rd_addr,
+    input  wire [DATA_W-1:0]     spad_lpb_rd_data
 );
 
     // APB Register map (memory-mapped)
@@ -69,6 +81,10 @@ module apb_conv1d_layer_accel #(
     // 0x28: QUANT (RW) - [4:0]=out_shift, [5]=relu_en
     // 0x2C: QUANT_INDEX (RW) - [7:0]=output channel index
     // 0x30: QUANT_SHIFT_DATA (RW) - write [4:0] to selected output channel
+    // 0x34: SPAD_ADDR (RW)  - scratchpad byte address (auto-inc on WDATA/RDATA)
+    // 0x38: SPAD_WDATA (WO) - write word to scratchpad at SPAD_ADDR, advance by 4
+    // 0x3C: SPAD_RDATA (RO) - read word from scratchpad at SPAD_ADDR, advance by 4
+    // 0x40: SPAD_CTRL (WO)  - bit[0]=reset SPAD_ADDR to 0
 
     reg [31:0] id_reg;
     reg [31:0] ctrl_reg;
@@ -77,6 +93,7 @@ module apb_conv1d_layer_accel #(
     reg [4:0] quant_shift_data;
     reg out_shift_load_all;
     reg out_shift_we;
+    reg [31:0] spad_addr;
 
     wire core_busy;
     wire core_done;
@@ -97,6 +114,13 @@ module apb_conv1d_layer_accel #(
     assign wr_addr = core_wr_addr;
     assign wr_data = core_wr_data;
     assign wr_strb = core_wr_strb;
+
+    // Scratchpad loader: combinatorial write enable fires during APB access phase
+    assign spad_lpb_wr_en   = psel & penable & pwrite & (paddr[7:0] == 8'h38);
+    assign spad_lpb_wr_addr = spad_addr;
+    assign spad_lpb_wr_data = pwdata;
+    assign spad_lpb_wr_strb = 4'hF;
+    assign spad_lpb_rd_addr = spad_addr;
 
     conv1d_layer_accel #(
         .ADDR_W(ADDR_W),
@@ -162,6 +186,7 @@ module apb_conv1d_layer_accel #(
             quant_shift_data <= 5'd0;
             out_shift_load_all <= 1'b0;
             out_shift_we <= 1'b0;
+            spad_addr <= 32'd0;
         end else begin
             // Default: clear single-cycle signals
             start <= 1'b0;
@@ -206,6 +231,10 @@ module apb_conv1d_layer_accel #(
                         quant_shift_data <= pwdata[4:0];
                         out_shift_we <= 1'b1;
                     end
+                    8'h34: spad_addr <= pwdata;
+                    8'h38: spad_addr <= spad_addr + 32'd4; // write is combinatorial above
+                    8'h3C: ; // SPAD_RDATA is read-only; silent no-op on write
+                    8'h40: if (pwdata[0]) spad_addr <= 32'd0;
                     default: pslverr <= 1'b1;
                 endcase
             end
@@ -227,6 +256,13 @@ module apb_conv1d_layer_accel #(
                     8'h28: prdata <= {{26{1'b0}}, relu_en, out_shift};
                     8'h2C: prdata <= {{24{1'b0}}, quant_index};
                     8'h30: prdata <= {{27{1'b0}}, quant_shift_data};
+                    8'h34: prdata <= spad_addr;
+                    8'h38: prdata <= 32'd0; // SPAD_WDATA write-only
+                    8'h3C: begin
+                        prdata <= spad_lpb_rd_data; // combinatorial from scratchpad
+                        spad_addr <= spad_addr + 32'd4;
+                    end
+                    8'h40: prdata <= 32'd0;
                     default: begin
                         prdata <= 32'd0;
                         pslverr <= 1'b1;

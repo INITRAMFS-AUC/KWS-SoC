@@ -34,6 +34,12 @@
 #define CONV1D_QUANT_SHIFT_DATA \
                             0x30u   /* RW: [4:0]=shift for selected index  */
 
+/* Scratchpad APB loader registers (firmware preload/readback) */
+#define CONV1D_SPAD_ADDR    0x34u   /* RW: scratchpad byte addr (auto-inc) */
+#define CONV1D_SPAD_WDATA   0x38u   /* WO: write word to scratchpad        */
+#define CONV1D_SPAD_RDATA   0x3Cu   /* RO: read word from scratchpad       */
+#define CONV1D_SPAD_CTRL    0x40u   /* WO: bit[0]=reset SPAD_ADDR to 0     */
+
 /* Bit definitions */
 #define CONV1D_CTRL_START        (1u << 0)
 #define CONV1D_STATUS_BUSY       (1u << 0)
@@ -133,6 +139,52 @@ static inline void conv1d_load_output_shifts_u8(const uint8_t *shifts, int out_c
 
     for (oc = 0; oc < out_ch; oc++)
         conv1d_write_output_shift(oc, shifts[oc]);
+}
+
+/* ------------------------------------------------------------------ */
+/* Scratchpad APB loader helpers (sim-scratchpad path)                */
+/* ------------------------------------------------------------------ */
+
+static inline void conv1d_spad_reset(void)
+{
+    conv1d_write_reg(CONV1D_SPAD_CTRL, 1u);
+}
+
+static inline void conv1d_spad_set_addr(uint32_t byte_addr)
+{
+    conv1d_write_reg(CONV1D_SPAD_ADDR, byte_addr);
+}
+
+static inline void conv1d_spad_write_word(uint32_t word)
+{
+    conv1d_write_reg(CONV1D_SPAD_WDATA, word);
+}
+
+static inline uint32_t conv1d_spad_read_word(void)
+{
+    return conv1d_read_reg(CONV1D_SPAD_RDATA);
+}
+
+/* Write a single signed 8-bit value at the given byte address.
+ * The 8-bit value is packed into the correct byte lane of a 32-bit word.
+ * Only the target byte is updated (full-word write with the value in the
+ * correct lane; the scratchpad stores byte lanes individually via wr_strb,
+ * but the APB loader always writes full words — caller packs as needed). */
+static inline void conv1d_spad_write_s8_at(uint32_t byte_addr, int8_t val)
+{
+    uint32_t word_addr = byte_addr & ~3u;
+    uint32_t lane      = byte_addr & 3u;
+    uint32_t word      = (uint32_t)(uint8_t)val << (lane * 8u);
+    conv1d_spad_set_addr(word_addr);
+    conv1d_spad_write_word(word);
+}
+
+static inline int8_t conv1d_spad_read_s8_at(uint32_t byte_addr)
+{
+    uint32_t word_addr = byte_addr & ~3u;
+    uint32_t lane      = byte_addr & 3u;
+    conv1d_spad_set_addr(word_addr);
+    return (int8_t)((conv1d_spad_read_word() >> (lane * 8u)) & 0xFFu);
 }
 
 /*

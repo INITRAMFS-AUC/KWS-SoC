@@ -19,12 +19,22 @@ module conv1d_scratchpad_mem #(
     input  wire        wr_en,
     input  wire [31:0] wr_addr,
     input  wire [31:0] wr_data,
-    input  wire [3:0]  wr_strb
+    input  wire [3:0]  wr_strb,
+
+    // APB loader port: combinatorial read, synchronous write (firmware preload/readback)
+    input  wire        lpb_wr_en,
+    input  wire [31:0] lpb_wr_addr,
+    input  wire [31:0] lpb_wr_data,
+    input  wire [3:0]  lpb_wr_strb,
+    input  wire [31:0] lpb_rd_addr,
+    output wire [31:0] lpb_rd_data
 );
     localparam integer WORDS = MEM_BYTES / 4;
     localparam integer ADDR_BITS = $clog2(MEM_BYTES);
 
     reg [31:0] mem [0:WORDS-1];
+
+    assign lpb_rd_data = mem[word_index(lpb_rd_addr)];
 
     function integer word_index;
         input [31:0] addr;
@@ -54,6 +64,13 @@ module conv1d_scratchpad_mem #(
                 if (wr_strb[1]) mem[word_index(wr_addr)][15:8]  <= wr_data[15:8];
                 if (wr_strb[2]) mem[word_index(wr_addr)][23:16] <= wr_data[23:16];
                 if (wr_strb[3]) mem[word_index(wr_addr)][31:24] <= wr_data[31:24];
+            end
+
+            if (lpb_wr_en) begin
+                if (lpb_wr_strb[0]) mem[word_index(lpb_wr_addr)][7:0]   <= lpb_wr_data[7:0];
+                if (lpb_wr_strb[1]) mem[word_index(lpb_wr_addr)][15:8]  <= lpb_wr_data[15:8];
+                if (lpb_wr_strb[2]) mem[word_index(lpb_wr_addr)][23:16] <= lpb_wr_data[23:16];
+                if (lpb_wr_strb[3]) mem[word_index(lpb_wr_addr)][31:24] <= lpb_wr_data[31:24];
             end
         end
     end

@@ -47,7 +47,15 @@ module conv1d_accel_soc_wrapper #(
     output wire                  wr_en,
     output wire [ADDR_W-1:0]     wr_addr,
     output wire [DATA_W-1:0]     wr_data,
-    output wire [3:0]            wr_strb
+    output wire [3:0]            wr_strb,
+
+    // APB scratchpad loader port (firmware preload/readback)
+    output wire                  spad_lpb_wr_en,
+    output wire [ADDR_W-1:0]     spad_lpb_wr_addr,
+    output wire [DATA_W-1:0]     spad_lpb_wr_data,
+    output wire [3:0]            spad_lpb_wr_strb,
+    output wire [ADDR_W-1:0]     spad_lpb_rd_addr,
+    input  wire [DATA_W-1:0]     spad_lpb_rd_data
 );
 
     // Tag the parameter so synthesis tooling can flag a mismatch between the
@@ -106,7 +114,14 @@ module conv1d_accel_soc_wrapper #(
         .wr_en       (wr_en),
         .wr_addr     (wr_addr),
         .wr_data     (wr_data),
-        .wr_strb     (wr_strb)
+        .wr_strb     (wr_strb),
+
+        .spad_lpb_wr_en   (spad_lpb_wr_en),
+        .spad_lpb_wr_addr (spad_lpb_wr_addr),
+        .spad_lpb_wr_data (spad_lpb_wr_data),
+        .spad_lpb_wr_strb (spad_lpb_wr_strb),
+        .spad_lpb_rd_addr (spad_lpb_rd_addr),
+        .spad_lpb_rd_data (spad_lpb_rd_data)
     );
 
 endmodule
