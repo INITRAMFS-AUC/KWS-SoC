@@ -9,24 +9,17 @@
  *
  * Suggested usage:
  *   1. ID check (APB-only path)
- *   2. Configure a tiny Conv1D layer
- *   3. Start the accelerator and poll done
- *   4. (Optional) Compare output bytes against a software reference
+ *   2. Write/read APB config registers
+ *   3. Defer CTRL.start until the memory-side wrapper is real
  */
 
 #include <stdint.h>
 #include "conv1d_accel_regs.h"
 
 /* The firmware should provide a print primitive. Replace as appropriate. */
+extern void uart_init(void);
 extern int  uart_printf(const char *fmt, ...);
-extern void panic(const char *msg);
 
-/*
- * A tiny test layer: input_len=8, in_ch=4, out_ch=2, out_shift=0, relu off.
- * The exact tensor data is the firmware's job. The addresses below are
- * placeholder offsets in a contiguous SRAM scratchpad mapped at
- * CONV1D_DATA_BASE; adjust to your SoC's memory layout.
- */
 #ifndef CONV1D_DATA_BASE
 #define CONV1D_DATA_BASE  0x20000000u
 #endif
@@ -42,44 +35,60 @@ extern void panic(const char *msg);
 #define SMOKE_OUT_SHIFT    0u
 #define SMOKE_RELU_EN      0
 
-/*
- * Caller fills SMOKE_INPUT_BASE / SMOKE_WEIGHT_BASE / SMOKE_BIAS_BASE
- * before calling this routine. Output bytes appear at SMOKE_OUTPUT_BASE.
- */
-int conv1d_smoke_test(void)
+static int check_reg(const char *name, uint32_t offset, uint32_t expected)
 {
-    /* 1. ID check */
-    uint32_t id = conv1d_read_reg(CONV1D_ID);
-    if (id != CONV1D_EXPECTED_ID) {
-        uart_printf("conv1d: ID mismatch: got 0x%08x expected 0x%08x\r\n",
-                    id, CONV1D_EXPECTED_ID);
+    uint32_t got = conv1d_read_reg(offset);
+
+    if (got != expected) {
+        uart_printf("CONV1D_APB: FAIL %s got 0x%x expected 0x%x\r\n",
+                    name, got, expected);
         return -1;
     }
-    uart_printf("conv1d: ID = 0x%08x OK\r\n", id);
 
-    /* 2-4. Configure, start, and poll done */
-    int rc = conv1d_run_layer(SMOKE_INPUT_BASE,
-                              SMOKE_WEIGHT_BASE,
-                              SMOKE_BIAS_BASE,
-                              SMOKE_OUTPUT_BASE,
-                              SMOKE_INPUT_LEN,
-                              SMOKE_IN_CH,
-                              SMOKE_OUT_CH,
-                              SMOKE_OUT_SHIFT,
-                              SMOKE_RELU_EN);
-    if (rc != 0) {
-        uart_printf("conv1d: run_layer returned %d\r\n", rc);
-        return rc;
+    return 0;
+}
+
+int conv1d_smoke_test(void)
+{
+    uint32_t id = conv1d_read_reg(CONV1D_ID);
+
+    uart_printf("CONV1D_ID: 0x%x\r\n", id);
+    if (id != CONV1D_EXPECTED_ID) {
+        uart_printf("CONV1D_APB: FAIL expected 0x%x\r\n",
+                    CONV1D_EXPECTED_ID);
+        return -1;
     }
 
-    uart_printf("conv1d: smoke layer completed (done observed)\r\n");
+    conv1d_write_reg(CONV1D_INPUT_BASE, SMOKE_INPUT_BASE);
+    conv1d_write_reg(CONV1D_WEIGHT_BASE, SMOKE_WEIGHT_BASE);
+    conv1d_write_reg(CONV1D_BIAS_BASE, SMOKE_BIAS_BASE);
+    conv1d_write_reg(CONV1D_OUTPUT_BASE, SMOKE_OUTPUT_BASE);
+    conv1d_write_reg(CONV1D_INPUT_LEN, SMOKE_INPUT_LEN);
+    conv1d_write_reg(CONV1D_IN_CH, SMOKE_IN_CH);
+    conv1d_write_reg(CONV1D_OUT_CH, SMOKE_OUT_CH);
+    conv1d_write_reg(CONV1D_QUANT,
+                     (SMOKE_OUT_SHIFT & CONV1D_QUANT_SHIFT_MASK) |
+                     (SMOKE_RELU_EN ? CONV1D_QUANT_RELU_EN : 0u));
+    conv1d_write_output_shift(0, 3u);
+    conv1d_write_output_shift(1, 4u);
+
+    if (check_reg("INPUT_BASE", CONV1D_INPUT_BASE, SMOKE_INPUT_BASE) != 0 ||
+        check_reg("WEIGHT_BASE", CONV1D_WEIGHT_BASE, SMOKE_WEIGHT_BASE) != 0 ||
+        check_reg("BIAS_BASE", CONV1D_BIAS_BASE, SMOKE_BIAS_BASE) != 0 ||
+        check_reg("OUTPUT_BASE", CONV1D_OUTPUT_BASE, SMOKE_OUTPUT_BASE) != 0 ||
+        check_reg("INPUT_LEN", CONV1D_INPUT_LEN, SMOKE_INPUT_LEN) != 0 ||
+        check_reg("IN_CH", CONV1D_IN_CH, SMOKE_IN_CH) != 0 ||
+        check_reg("OUT_CH", CONV1D_OUT_CH, SMOKE_OUT_CH) != 0 ||
+        check_reg("QUANT_INDEX", CONV1D_QUANT_INDEX, 1u) != 0 ||
+        check_reg("QUANT_SHIFT_DATA", CONV1D_QUANT_SHIFT_DATA, 4u) != 0) {
+        return -1;
+    }
+
+    uart_printf("CONV1D_APB: PASS\r\n");
 
     /*
-     * 5. (Optional) Compare output bytes against a software-computed
-     *    reference. The reference computation is typically generated
-     *    offline and embedded into the firmware as a const array.
-     *    Skipped here; the firmware integrator should add this once the
-     *    SRAM-backed memory path is wired up.
+     * Do not write CTRL.start in Phase 5A. ID/config readback proves APB
+     * reachability without depending on the future scratchpad/AHB memory path.
      */
     return 0;
 }
@@ -87,9 +96,11 @@ int conv1d_smoke_test(void)
 #ifdef CONV1D_SMOKE_TEST_MAIN
 int main(void)
 {
-    if (conv1d_smoke_test() != 0) {
-        panic("conv1d smoke test failed");
-    }
+    uart_init();
+
+    if (conv1d_smoke_test() != 0)
+        return 1;
+
     return 0;
 }
 #endif

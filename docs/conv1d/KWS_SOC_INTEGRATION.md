@@ -64,6 +64,21 @@ The accelerator presents itself to the SoC as one more APB-3 peripheral, equival
 
 This guide does not claim exact signal packing for KWS-SoC's mux/splitter source, since that depends on the version of the SoC RTL you have in front of you. Wire the eight APB signals plus clock/reset using the same convention as your existing slaves.
 
+### KWS-SoC Phase 5A wiring status
+
+The integration branch wires `conv1d_accel_soc_wrapper` into `kws_soc.v` as
+the fourth APB splitter slave:
+
+- timer: `0x4000_0000`
+- I2S: `0x4000_8000`
+- UART: `0x4000_4000`
+- Conv1D accelerator: `0x4000_C000`
+
+For APB-only bring-up, the accelerator memory-side ports are connected to a
+safe zero-data stub: read-valid follows read-enable by one clock, read data is
+zero, and writes are consumed/ignored. This supports ID/config readback smoke
+tests only. It is not the final scratchpad or AHB/SRAM memory path.
+
 ## F. Memory-side integration options
 
 The accelerator's memory ports are intentionally abstract:

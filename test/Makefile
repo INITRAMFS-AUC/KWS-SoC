@@ -15,6 +15,7 @@ I2S_C_DIR    = i2s/c
 XIP_C_DIR    = xip/c
 XIP_DIR      = xip
 DMA_C_DIR    = dma/c
+CONV1D_C_DIR = conv1d/c
 
 MALLOC_C_DIR = malloc/c
 MEMCPY_C_DIR = memcpy/c
@@ -53,6 +54,7 @@ NNOM_SRCS_MODEL = $(wildcard $(NNOM_DIR)/src/core/*.c) \
 I2S_REGS_DIR  = ../peris/i2s/i2s_apb/i2s_itr2
 UART_REGS_DIR = ../Hazard3/example_soc/libfpga/peris/uart
 DMAC_FW_DIR   = ../peris/MS_DMAC_AHBL/fw
+CONV1D_INC_DIR = conv1d/include
 
 # Memory config
 SRAM_DEPTH ?= 32768
@@ -77,6 +79,7 @@ CFLAGS += -I$(I2S_REGS_DIR)
 CFLAGS += -I$(UART_REGS_DIR)
 CFLAGS += -I$(DMAC_FW_DIR)
 CFLAGS += -I$(I2S_C_DIR)
+CFLAGS += -I$(CONV1D_INC_DIR)
 CFLAGS += -DI2S_DMA_BURST_WORDS=$(I2S_DMA_BURST_WORDS)
 
 # Linker flags:
@@ -187,6 +190,8 @@ model-mel-compact: $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf $(BUILD_DIR)/mel_c
 # $(BUILD_DIR)/strided_s16_nodil_sram.elf $(BUILD_DIR)/strided_s16_nodil_sram.dis $(BUILD_DIR)/strided_s16_nodil_sram.bin
 dma:    $(BUILD_DIR)/dma_test_sram.elf    $(BUILD_DIR)/dma_test_sram.dis    $(BUILD_DIR)/dma_test_sram.bin \
         $(BUILD_DIR)/dma_test_xip.elf     $(BUILD_DIR)/dma_test_xip.dis     $(BUILD_DIR)/dma_test_xip.bin
+conv1d-smoke: $(BUILD_DIR)/conv1d_smoke_sram.elf $(BUILD_DIR)/conv1d_smoke_sram.dis $(BUILD_DIR)/conv1d_smoke_sram.bin \
+              $(BUILD_DIR)/conv1d_smoke_xip.elf  $(BUILD_DIR)/conv1d_smoke_xip.dis  $(BUILD_DIR)/conv1d_smoke_xip.bin
 xip-testbench:
 	$(MAKE) -C $(XIP_DIR) run-testbench
 
@@ -216,6 +221,9 @@ $(BUILD_DIR)/memcpy_simple_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/memcp
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/dma_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dma_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
+	$(LD) $(SRAM_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/conv1d_smoke_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/conv1d_accel_smoke_test.o $(BUILD_DIR)/uart.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
 # --- XIP LINK RULES ---
@@ -267,6 +275,9 @@ $(BUILD_DIR)/streaming_model_xip.elf: \
 	$(CROSS_COMPILE)size $@
 
 $(BUILD_DIR)/dma_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dma_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
+	$(LD) $(XIP_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/conv1d_smoke_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/conv1d_accel_smoke_test.o $(BUILD_DIR)/uart.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 # --- COMPILATION RULES ---
@@ -327,6 +338,9 @@ $(BUILD_DIR)/dma_test.o: $(DMA_C_DIR)/dma_test.c $(ROOT_MAKEFILE)
 $(BUILD_DIR)/MS_DMAC_AHBL.o: $(DMAC_FW_DIR)/MS_DMAC_AHBL.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
 
+$(BUILD_DIR)/conv1d_accel_smoke_test.o: $(CONV1D_C_DIR)/conv1d_accel_smoke_test.c $(CONV1D_INC_DIR)/conv1d_accel_regs.h $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -DCONV1D_SMOKE_TEST_MAIN -o $@ $<
+
 # --- BINARY & DISASSEMBLY RULES ---
 $(BUILD_DIR)/%.dis: $(BUILD_DIR)/%.elf
 	$(OBJDUMP) -d $< > $@
@@ -339,7 +353,7 @@ clean:
 	rm -f $(COMMON_DIR)/*.d
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact xip-testbench
+.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact dma conv1d-smoke xip-testbench
 
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)

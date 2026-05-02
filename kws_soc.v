@@ -412,6 +412,7 @@ module kws_soc #(
   // - System timer at.. 0x4000_0000
   // - UART at.......... 0x4000_4000
   // - I2S at........... 0x4000_8000
+  // - Conv1D accel at.. 0x4000_C000
   // - DMAC at.......... 0x6000_0000
   // - XIP Flash at..... 0x8000_0000
   //
@@ -585,6 +586,15 @@ module kws_soc #(
   wire        i2s_pready;
   wire        i2s_pslverr;
 
+  wire        conv1d_psel;
+  wire        conv1d_penable;
+  wire        conv1d_pwrite;
+  wire [15:0] conv1d_paddr;
+  wire [31:0] conv1d_pwdata;
+  wire [31:0] conv1d_prdata;
+  wire        conv1d_pready;
+  wire        conv1d_pslverr;
+
   ahbl_to_apb apb_bridge_u (
       .clk  (clk),
       .rst_n(rst_n),
@@ -613,10 +623,10 @@ module kws_soc #(
   );
 
   apb_splitter #(
-      .N_SLAVES (3),
+      .N_SLAVES (4),
       .W_ADDR   (16),
-      .ADDR_MAP (48'h4000_8000_0000),
-      .ADDR_MASK(48'hc000_c000_c000)
+      .ADDR_MAP (64'hc000_4000_8000_0000),
+      .ADDR_MASK(64'hc000_c000_c000_c000)
   ) inst_apb_splitter (
       .apbs_paddr   (bridge_paddr),
       .apbs_psel    (bridge_psel),
@@ -627,14 +637,14 @@ module kws_soc #(
       .apbs_prdata  (bridge_prdata),
       .apbs_pslverr (bridge_pslverr),
 
-      .apbm_paddr   ({uart_paddr,   i2s_paddr,   timer_paddr  }),
-      .apbm_psel    ({uart_psel,    i2s_psel,    timer_psel   }),
-      .apbm_penable ({uart_penable, i2s_penable, timer_penable}),
-      .apbm_pwrite  ({uart_pwrite,  i2s_pwrite,  timer_pwrite }),
-      .apbm_pwdata  ({uart_pwdata,  i2s_pwdata,  timer_pwdata }),
-      .apbm_pready  ({uart_pready,  i2s_pready,  timer_pready }),
-      .apbm_prdata  ({uart_prdata,  i2s_prdata,  timer_prdata }),
-      .apbm_pslverr ({uart_pslverr, i2s_pslverr, timer_pslverr})
+      .apbm_paddr   ({conv1d_paddr,   uart_paddr,   i2s_paddr,   timer_paddr  }),
+      .apbm_psel    ({conv1d_psel,    uart_psel,    i2s_psel,    timer_psel   }),
+      .apbm_penable ({conv1d_penable, uart_penable, i2s_penable, timer_penable}),
+      .apbm_pwrite  ({conv1d_pwrite,  uart_pwrite,  i2s_pwrite,  timer_pwrite }),
+      .apbm_pwdata  ({conv1d_pwdata,  uart_pwdata,  i2s_pwdata,  timer_pwdata }),
+      .apbm_pready  ({conv1d_pready,  uart_pready,  i2s_pready,  timer_pready }),
+      .apbm_prdata  ({conv1d_prdata,  uart_prdata,  i2s_prdata,  timer_prdata }),
+      .apbm_pslverr ({conv1d_pslverr, uart_pslverr, i2s_pslverr, timer_pslverr})
   );
 
   // ----------------------------------------------------------------------------
@@ -766,6 +776,73 @@ module kws_soc #(
       .sck_out      (i2s_sck_out),
       .ws_out       (i2s_ws_out),
       .i2s_irq      (i2s_irq)
+  );
+
+  // Phase 5A APB reachability path for the Conv1D accelerator. The memory
+  // side is a safe zero-data stub so ID/config smoke tests can run before the
+  // scratchpad or AHB/SRAM wrapper is implemented.
+  wire        conv1d_rd0_en;
+  wire [31:0] conv1d_rd0_addr;
+  reg         conv1d_rd0_valid;
+  wire        conv1d_rd1_en;
+  wire [31:0] conv1d_rd1_addr;
+  reg         conv1d_rd1_valid;
+  wire        conv1d_wr_en;
+  wire [31:0] conv1d_wr_addr;
+  wire [31:0] conv1d_wr_data;
+  wire [3:0]  conv1d_wr_strb;
+
+  always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      conv1d_rd0_valid <= 1'b0;
+      conv1d_rd1_valid <= 1'b0;
+    end else begin
+      conv1d_rd0_valid <= conv1d_rd0_en;
+      conv1d_rd1_valid <= conv1d_rd1_en;
+    end
+  end
+
+  // Keep memory-side output signals consumed until a real wrapper replaces
+  // this APB-only bring-up stub.
+  wire conv1d_mem_stub_unused = conv1d_wr_en
+                              | conv1d_wr_strb[0]
+                              | ^conv1d_rd0_addr
+                              | ^conv1d_rd1_addr
+                              | ^conv1d_wr_addr
+                              | ^conv1d_wr_data;
+
+  conv1d_accel_soc_wrapper #(
+      .ADDR_W           (32),
+      .DATA_W           (32),
+      .MAX_IN_CH        (64),
+      .MAX_OUT_CH       (64),
+      .USE_WEIGHT_BUFFER(1)
+  ) conv1d_accel_u (
+      .pclk   (clk),
+      .presetn(rst_n),
+      .psel   (conv1d_psel),
+      .penable(conv1d_penable),
+      .pwrite (conv1d_pwrite),
+      .paddr  ({16'd0, conv1d_paddr}),
+      .pwdata (conv1d_pwdata),
+      .prdata (conv1d_prdata),
+      .pready (conv1d_pready),
+      .pslverr(conv1d_pslverr),
+
+      .rd0_en   (conv1d_rd0_en),
+      .rd0_addr (conv1d_rd0_addr),
+      .rd0_data (32'd0),
+      .rd0_valid(conv1d_rd0_valid),
+
+      .rd1_en   (conv1d_rd1_en),
+      .rd1_addr (conv1d_rd1_addr),
+      .rd1_data (32'd0),
+      .rd1_valid(conv1d_rd1_valid),
+
+      .wr_en  (conv1d_wr_en),
+      .wr_addr(conv1d_wr_addr),
+      .wr_data(conv1d_wr_data),
+      .wr_strb(conv1d_wr_strb)
   );
 
 
