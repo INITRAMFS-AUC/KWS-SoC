@@ -25,8 +25,6 @@
  *                                                    (the budget that
  *                                                    matters for real-
  *                                                    time / power).
- *                                    CYCLES:         legacy alias =
- *                                                    CYCLES_INFER.
  *     -DKWS_DEBUG_DUMP_FIRST_CLIP  after the first full ring_buf is
  *                                  captured, dump every Q7 sample over
  *                                  UART in the same hex-word format as
@@ -518,9 +516,7 @@ int main(void) {
 #ifdef USE_MCYCLE_CSR
         /* Three counters per clip:
          *   CYCLES_CAPTURE  I2S + DMA + ISR window (CPU mostly WFI).
-         *   CYCLES_INFER    model_run() — the value the old "CYCLES:"
-         *                    line reported.  Kept under that name too
-         *                    for log-scraper backwards compatibility.
+         *   CYCLES_INFER    model_run() only.
          *   CYCLES_TOTAL    capture + inference, the end-to-end cost
          *                    per clip (what matters for energy and
          *                    real-time latency budgets). */
@@ -530,8 +526,6 @@ int main(void) {
         uart_putdec((int)cycles);
         uart_puts("\r\nCYCLES_TOTAL:");
         uart_putdec((int)(cycles_capture + cycles));
-        uart_puts("\r\nCYCLES:");      /* legacy alias = CYCLES_INFER */
-        uart_putdec((int)cycles);
         uart_puts("\r\n");
 
         /* Restart the capture-window timer for the next clip. */
