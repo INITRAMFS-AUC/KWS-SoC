@@ -11,12 +11,19 @@ module flash_ctrl_eb #(parameter LW = 256) (
     output wire             done,
     input  wire [23:0]      A,
     output wire [LW-1:0]    D,
+    // word_done[K] is set when byte 4K+3 (last byte of word K) lands
+    // in D and stays high until the next `start`.  ro_dmc consumes
+    // this as the per-word ready bitmap for critical-word-first
+    // early-restart.  Adds ~LW/32 flops.
+    output reg  [LW/32-1:0] word_done,
     output wire             csn,
     output wire             sck,
     output wire [3:0]       doe,
     output wire [3:0]       spi_do,
     input  wire [3:0]       di
 );
+    localparam LWB = LW/8;            // bytes per line
+    localparam BCW = $clog2(LWB);     // byte-index width
 
     localparam integer TRST_CYCLES = 30 * `CLK_MHZ;
     // --- FSM States ---
@@ -113,19 +120,45 @@ module flash_ctrl_eb #(parameter LW = 256) (
     assign csn = ~state_active;
     assign sck = state_active ? phase_tick[0] : 1'b0;
 
-    // --- Synchronous Data Capture ---
-    reg [7:0] dbyte;
-    reg [LW-1:0] data_reg;
+    // --- Synchronous Data Capture (position-based + per-word ready) ---
+    //
+    // Each byte takes 4 phase_ticks of the DATA state (2 SCK cycles
+    // × 2 nibbles per byte over QSPI's 4-bit bus).  Pre-CWF we built
+    // data_reg by shifting bytes in from the top, which meant each
+    // byte spent the rest of the fetch sliding to its final
+    // position; nothing in the line was observably correct until
+    // m_done.  CWF needs per-byte position commits so that
+    // data_reg[K*8 +: 8] becomes correct as byte K lands and
+    // word_done[K] can latch high reliably.
+    //
+    // word_done[K] is the byte-4K+3 commit signal.  Once high it
+    // stays high until the next `start` (level, not pulse) so
+    // ro_dmc's CWF path can use it as a per-word valid bitmap.
+    reg [7:0]      dbyte;
+    reg [LW-1:0]   data_reg;
+    reg [BCW-1:0]  byte_idx;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            dbyte <= 0;
-            data_reg <= 0;
+            dbyte     <= 8'b0;
+            data_reg  <= {LW{1'b0}};
+            byte_idx  <= {BCW{1'b0}};
+            word_done <= {(LW/32){1'b0}};
+        end else if (start) begin
+            // Reset per-fetch state.  data_reg is left as-is; bytes
+            // get overwritten in place as they arrive.
+            byte_idx  <= {BCW{1'b0}};
+            word_done <= {(LW/32){1'b0}};
         end else if (state == DATA && phase_tick[0] == 1'b1) begin
             if (phase_tick[1] == 1'b0) begin
                 dbyte[7:4] <= di;
             end else begin
-                data_reg <= {dbyte[7:4], di, data_reg[LW-1:8]};
+                data_reg[byte_idx*8 +: 8] <= {dbyte[7:4], di};
+                byte_idx <= byte_idx + 1'b1;
+                // Pulse word_done[K] when byte 4K+3 lands.
+                if (byte_idx[1:0] == 2'b11) begin
+                    word_done[byte_idx[BCW-1:2]] <= 1'b1;
+                end
             end
         end
     end

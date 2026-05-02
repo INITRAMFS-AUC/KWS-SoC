@@ -49,7 +49,8 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
     wire [31:0] cpu_data;
 
     reg         m_done_reg;
-    wire [LW-1:0] flash_data_bus;
+    wire [LW-1:0]    flash_data_bus;
+    wire [LW/32-1:0] flash_word_done;
 
     ro_dmc #(.LW(LW), .NL(NL)) cache_inst (
         .clk(HCLK),
@@ -57,12 +58,14 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
         .cpu_rd(address_phase_req), // Address phase triggers a cache check
         .cpu_aaddr(HADDR),          // Address phase address
         .cpu_daddr(dphase_addr),    // Data phase address
+        .cpu_dvalid(dphase_active), // Used by CWF deferred-miss rescue
         .cpu_ahit(cpu_ahit),
         .cpu_dhit(cpu_dhit),
         .cpu_data(cpu_data),
 
         // Memory Interface to FSM
         .m_data(flash_data_bus),
+        .m_word_done(flash_word_done),
         .m_addr(m_addr),
         .m_start(m_start),
         .m_done(m_done_reg)
@@ -128,6 +131,7 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
         // Send the latched miss address to the flash controller, aligned to 32 bytes
         .A({m_addr[23:5], 5'b00000}),
         .D(flash_data_bus),
+        .word_done(flash_word_done),
         .csn(csn), .sck(sck), .doe(doe), .spi_do(spi_do), .di(di)
     );
 
