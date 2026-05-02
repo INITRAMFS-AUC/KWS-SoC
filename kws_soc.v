@@ -706,7 +706,7 @@ module kws_soc #(
   // TODO: Make the following parameters config dependent
   ahbl_flash_ctrl_eb_cache #(
       .LW(32*8),
-      .NL(32)
+      .NL(256)
   ) xip (
       .HCLK                (clk),
       .HRESETn             (rst_n_cpu),
