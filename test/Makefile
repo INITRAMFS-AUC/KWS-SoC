@@ -79,7 +79,8 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/malloc_simple_test_xip.elf  $(BUILD_DIR)/malloc_simple_test_xip.dis  $(BUILD_DIR)/malloc_simple_test_xip.bin \
 	$(BUILD_DIR)/malloc_torture_test_xip.elf $(BUILD_DIR)/malloc_torture_test_xip.dis $(BUILD_DIR)/malloc_torture_test_xip.bin \
 	$(BUILD_DIR)/memcpy_simple_test_xip.elf  $(BUILD_DIR)/memcpy_simple_test_xip.dis  $(BUILD_DIR)/memcpy_simple_test_xip.bin \
-	$(BUILD_DIR)/strided_s16_nodil_xip.elf   $(BUILD_DIR)/strided_s16_nodil_xip.dis   $(BUILD_DIR)/strided_s16_nodil_xip.bin
+	$(BUILD_DIR)/strided_s16_nodil_xip.elf   $(BUILD_DIR)/strided_s16_nodil_xip.dis   $(BUILD_DIR)/strided_s16_nodil_xip.bin \
+	$(BUILD_DIR)/accel_test_xip.elf      $(BUILD_DIR)/accel_test_xip.dis      $(BUILD_DIR)/accel_test_xip.bin
 
 
 ALL_TARGETS = $(SRAM_TARGETS) $(XIP_TARGETS)
@@ -161,6 +162,9 @@ $(BUILD_DIR)/memcpy_simple_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/memcpy
 $(BUILD_DIR)/strided_s16_nodil_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/strided_s16_nodil_main.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/malloc.o $(BUILD_DIR)/memcpy.o $(BUILD_DIR)/memset.o $(NNOM_OBJS)
 	$(MODEL_LINK) $(MODEL_XIP_GCC_LDFLAGS) -o $@ $^ -lgcc
 
+$(BUILD_DIR)/accel_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/accel_test.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/memset.o
+	$(MODEL_LINK) $(MODEL_XIP_GCC_LDFLAGS) -o $@ $^ -lgcc
+
 # --- COMPILATION RULES ---
 $(BUILD_DIR)/crt0.o: $(COMMON_DIR)/crt0.s $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
@@ -195,6 +199,9 @@ $(BUILD_DIR)/memcpy_simple_test.o: $(MEMCPY_C_DIR)/simple_test.c $(ROOT_MAKEFILE
 $(BUILD_DIR)/strided_s16_nodil_main.o: $(MODEL_C_DIR)/strided_s16_nodil_main.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR) -o $@ $<
 
+$(BUILD_DIR)/accel_test.o: accel/accel_test.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -I$(COMMON_DIR) -o $@ $<
+
 $(BUILD_DIR)/nnom_%.o: $(NNOM_DIR)/src/%.c $(ROOT_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR) -o $@ $<
@@ -223,7 +230,7 @@ clean:
 	rm -f $(COMMON_DIR)/*.d
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil xip-testbench mel-compact
+.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil xip-testbench mel-compact mel-compact-accel
 
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)
@@ -297,3 +304,89 @@ $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf: \
 	$(CROSS_COMPILE)size $@
 
 mel-compact: $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf
+
+# ── mel_compact_4blk_ch36 — Conv1D hardware accelerator (42× speedup) ────────
+#
+# Reproduces the confirmed ~4,644,000 cycle inference result with the
+# Conv1D hardware accelerator (42× speedup over the 195M SW baseline).
+#
+# SoC config: CSR_COUNTER=1, MULDIV_UNROLL=1, conv1d_accel at 0x4000C000.
+# Model: mel_compact_4blk_ch36 seed=789, 88.7% int8, 28.7 KB flash.
+#
+# Build:
+#   make mel-compact-accel
+#
+# Run one clip (from kws_soc/ root with Nix devshell active):
+#   NO_JTAG=1 make sim-verilator \
+#     FLASH=test/build/mel_compact_4blk_ch36_xip_accel.bin \
+#     MIC=sim/yes_0000.hex \
+#     CYCLES=60000000
+#
+# Run all 11 clips and report accuracy + cycle counts:
+#   bash scripts/run_soc_batch.sh \
+#     --flash test/build/mel_compact_4blk_ch36_xip_accel.bin \
+#     --audio-dir sim \
+#     --max-cycles 60000000 \
+#     --label accel
+#
+# Toolchain: riscv32-unknown-elf-gcc (rv32imac_zicsr_zifencei, ilp32)
+# NNoM: third_party/nnom (INITRAMFS-AUC fork), nnom_conv2d.c replaced by
+#       mel_compact_accel/nnom_conv1d_hw.c; linked with --wrap=conv2d_run.
+
+MEL_ACCEL_DIR = mel_compact_accel
+
+# Same NNoM sources as mel-compact but WITHOUT nnom_conv2d.c.
+# The hardware accelerator replacement (nnom_conv1d_hw.c) is added explicitly.
+NNOM_SRCS_MEL_ACCEL = $(NNOM_DIR)/src/core/nnom.c \
+                      $(NNOM_DIR)/src/core/nnom_layers.c \
+                      $(NNOM_DIR)/src/core/nnom_tensor.c \
+                      $(NNOM_DIR)/src/core/nnom_utils.c \
+                      $(NNOM_DIR)/src/layers/nnom_activation.c \
+                      $(NNOM_DIR)/src/layers/nnom_avgpool.c \
+                      $(NNOM_DIR)/src/layers/nnom_baselayer.c \
+                      $(NNOM_DIR)/src/layers/nnom_dense.c \
+                      $(NNOM_DIR)/src/layers/nnom_flatten.c \
+                      $(NNOM_DIR)/src/layers/nnom_global_pool.c \
+                      $(NNOM_DIR)/src/layers/nnom_input.c \
+                      $(NNOM_DIR)/src/layers/nnom_maxpool.c \
+                      $(NNOM_DIR)/src/layers/nnom_output.c \
+                      $(NNOM_DIR)/src/layers/nnom_reshape.c \
+                      $(NNOM_DIR)/src/layers/nnom_softmax.c \
+                      $(NNOM_DIR)/src/backends/nnom_local.c \
+                      $(NNOM_DIR)/src/backends/nnom_local_q15.c \
+                      $(MEL_ACCEL_DIR)/nnom_conv1d_hw.c
+
+MEL_ACCEL_CFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
+                   -Os -flto -std=gnu99 \
+                   -ffunction-sections -fdata-sections \
+                   -falign-functions=4 \
+                   -DNNOM_USING_STATIC_MEMORY \
+                   -DNNOM_BARE_METAL \
+                   "-DNNOM_LOG(...)=" \
+                   -DCLK_MHZ=36 -DUART_BAUD_RATE=115200 \
+                   -DI2S_FIFO_DEPTH=8 \
+                   -DNNOM_STATIC_BUF_KB=36 \
+                   -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR) \
+                   -I$(MEL_ACCEL_DIR)
+
+# --wrap=conv2d_run: linker redirects NNoM's conv2d_run → __wrap_conv2d_run
+# in nnom_conv1d_hw.c, which calls the hardware accelerator.
+MEL_ACCEL_LDFLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
+                    -nostartfiles \
+                    -Wl,-T,$(COMMON_DIR)/link.ld \
+                    -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES) \
+                    -Wl,--gc-sections \
+                    -Wl,--wrap=conv2d_run \
+                    -lm -lgcc
+
+$(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/sbrk.c \
+    $(MEL_ACCEL_DIR)/kws_bare.c \
+    $(NNOM_SRCS_MEL_ACCEL) | $(BUILD_DIR)
+	$(CC) $(MEL_ACCEL_CFLAGS) -o $@ $^ $(MEL_ACCEL_LDFLAGS)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+mel-compact-accel: $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf
+
