@@ -48,16 +48,45 @@
 /* MMIO helpers                                                        */
 /* ------------------------------------------------------------------ */
 
+#ifdef CONV1D_ACCEL_HOST_TEST
+enum { CONV1D_HOST_REG_WORDS = 16 };
+static uint32_t conv1d_host_regs[CONV1D_HOST_REG_WORDS];
+#endif
+
 static inline void conv1d_write_reg(uint32_t offset, uint32_t value)
 {
+#ifdef CONV1D_ACCEL_HOST_TEST
+    uint32_t index = offset >> 2;
+
+    if (index >= CONV1D_HOST_REG_WORDS)
+        return;
+
+    conv1d_host_regs[index] = value;
+
+    if (offset == CONV1D_CTRL && (value & CONV1D_CTRL_START))
+        conv1d_host_regs[CONV1D_STATUS >> 2] = CONV1D_STATUS_DONE;
+#else
     volatile uint32_t *reg = (volatile uint32_t *)(uintptr_t)(CONV1D_BASE + offset);
     *reg = value;
+#endif
 }
 
 static inline uint32_t conv1d_read_reg(uint32_t offset)
 {
+#ifdef CONV1D_ACCEL_HOST_TEST
+    uint32_t index = offset >> 2;
+
+    if (offset == CONV1D_ID)
+        return CONV1D_EXPECTED_ID;
+
+    if (index >= CONV1D_HOST_REG_WORDS)
+        return 0;
+
+    return conv1d_host_regs[index];
+#else
     volatile uint32_t *reg = (volatile uint32_t *)(uintptr_t)(CONV1D_BASE + offset);
     return *reg;
+#endif
 }
 
 static inline void conv1d_start(void)
@@ -93,6 +122,17 @@ static inline void conv1d_load_output_shifts(const int8_t *shifts, int out_ch)
 
     for (oc = 0; oc < out_ch; oc++)
         conv1d_write_output_shift(oc, (uint32_t)shifts[oc]);
+}
+
+static inline void conv1d_load_output_shifts_u8(const uint8_t *shifts, int out_ch)
+{
+    int oc;
+
+    if (shifts == NULL || out_ch <= 0)
+        return;
+
+    for (oc = 0; oc < out_ch; oc++)
+        conv1d_write_output_shift(oc, shifts[oc]);
 }
 
 /*

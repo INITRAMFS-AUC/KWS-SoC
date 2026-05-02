@@ -116,6 +116,32 @@ For NNoM Conv2D replacement, prepare bias as
 `output_shift[oc]` through the per-channel registers, and keep `relu_en = 0`
 because ReLU remains a separate NNoM layer.
 
+### Firmware APB call path
+
+The bridge helper `conv1d_accel_run_prepared_layer()` programs the APB wrapper
+for an already-prepared K=3 Conv1D layer. It writes:
+
+- `INPUT_BASE`, `WEIGHT_BASE`, `BIAS_BASE`, `OUTPUT_BASE`
+- `INPUT_LEN`, `IN_CH`, `OUT_CH`
+- scalar `QUANT` with `out_shift = 0`, `relu_en = 0`
+- one per-channel shift entry per output channel via
+  `QUANT_INDEX`/`QUANT_SHIFT_DATA`
+- `CTRL.start`, followed by a bounded poll of `STATUS.done`
+
+Fallback is returned without touching live inference when any required pointer
+is null, a pointer is not 4-byte aligned, `input_len < 3`, `in_ch` or `out_ch`
+exceeds 64, an output shift does not fit the 5-bit hardware field, or the done
+poll exceeds `CONV1D_ACCEL_TIMEOUT` (default `1000000` iterations).
+
+The APB call path is intentionally not wired into `model_run()` yet. The next
+hardware-facing validation should use a tiny golden comparison:
+
+- `input_len = 8`, `in_ch = 4`, `out_ch = 2`, `K = 3`
+- different per-output-channel shifts
+- prepared bias with NNoM rounding included
+- software golden output compared byte-for-byte against accelerator output
+  after the APB run
+
 The correct integration claim today is:
 
 > The accelerator is packaged for KWS-SoC integration with a verified APB-facing wrapper and a documented memory-side integration path.

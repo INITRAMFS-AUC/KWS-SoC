@@ -20,6 +20,9 @@ typedef int nnom_status_t;
 #endif
 
 /* Conv1D accelerator packs channels in groups of 4 int8 lanes. */
+#define CONV1D_ACCEL_KERNEL_SIZE 3
+#define CONV1D_ACCEL_MAX_IN_CH 64
+#define CONV1D_ACCEL_MAX_OUT_CH 64
 #define CONV1D_CHANNEL_GROUPS(in_ch) (((in_ch) + 3) / 4)
 #define CONV1D_PACKED_WEIGHT_BYTES(in_ch, out_ch) \
     ((size_t)(out_ch) * 3u * (size_t)CONV1D_CHANNEL_GROUPS(in_ch) * 4u)
@@ -168,6 +171,10 @@ typedef struct {
     uint32_t conv1d_attempts;
     uint32_t conv1d_success;
     uint32_t conv1d_skip;
+    uint32_t conv1d_hw_calls;
+    uint32_t conv1d_hw_timeouts;
+    uint32_t conv1d_hw_unsupported;
+    uint32_t conv1d_hw_alignment_fail;
     uint32_t cycles_accel_total;
 } conv1d_accel_stats_t;
 
@@ -185,8 +192,30 @@ static inline void conv1d_accel_stats_reset(void)
     g_conv1d_accel_stats.conv1d_attempts = 0;
     g_conv1d_accel_stats.conv1d_success = 0;
     g_conv1d_accel_stats.conv1d_skip = 0;
+    g_conv1d_accel_stats.conv1d_hw_calls = 0;
+    g_conv1d_accel_stats.conv1d_hw_timeouts = 0;
+    g_conv1d_accel_stats.conv1d_hw_unsupported = 0;
+    g_conv1d_accel_stats.conv1d_hw_alignment_fail = 0;
     g_conv1d_accel_stats.cycles_accel_total = 0;
 }
+
+/**
+ * Run a prepared K=3 Conv1D layer through the APB accelerator path.
+ * Inputs must already use accelerator-compatible memory layout:
+ * - packed_weights: [out_ch][3][ceil(in_ch/4)][4]
+ * - prepared_bias: (NNoM bias << bias_shift) + NNOM_ROUND(output_shift)
+ * - output_shifts: one output_shift per output channel
+ *
+ * Returns 1 on accelerator completion, 0 when firmware should fall back.
+ */
+int conv1d_accel_run_prepared_layer(const int8_t *input,
+                                    const int8_t *packed_weights,
+                                    const int32_t *prepared_bias,
+                                    const uint8_t *output_shifts,
+                                    int8_t *output,
+                                    int input_len,
+                                    int in_ch,
+                                    int out_ch);
 
 /**
  * Attempt to accelerate a Conv1D layer using the hardware accelerator.

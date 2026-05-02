@@ -206,10 +206,13 @@ printf("CONV1D_ACCEL: %d/%d layers accelerated\n",
 - [x] Add reference quantization helper for unit testing
 - [x] Add per-output-channel output shift support in RTL/APB/firmware helpers
 
-### Phase 4: Full Acceleration
-- [ ] Configure APB registers with layer parameters
-- [ ] Start accelerator, poll done
-- [ ] Verify output correctness
+### Phase 4: APB Call Path ✅ DONE
+- [x] Add prepared-layer APB setup function
+- [x] Configure APB registers with layer parameters
+- [x] Load per-output-channel shifts through `QUANT_INDEX`/`QUANT_SHIFT_DATA`
+- [x] Start accelerator and poll done with timeout
+- [x] Add host-stub API compile/runtime test
+- [ ] Verify output correctness on live SoC memory path
 - [ ] Measure performance gain
 
 ### Phase 5: Integration Testing
@@ -234,6 +237,63 @@ printf("CONV1D_ACCEL: %d/%d layers accelerated\n",
 | Per-layer stats | Enables per-layer profiling |
 | Graceful fallback | Safety: software path always available |
 | Phase-based implementation | Incremental validation at each step |
+
+## Phase 4 APB Call Sequence
+
+`conv1d_accel_run_prepared_layer()` is the non-live bridge entry point for a
+K=3 Conv1D layer whose data has already been converted to accelerator layout:
+
+1. Validate all pointers are non-null.
+2. Validate 4-byte alignment for input, packed weights, prepared bias, and output.
+3. Validate `input_len >= 3`, `1 <= in_ch <= 64`, and `1 <= out_ch <= 64`.
+4. Validate each output shift fits the APB/RTL 5-bit shift field.
+5. Write `INPUT_BASE`, `WEIGHT_BASE`, `BIAS_BASE`, `OUTPUT_BASE`,
+   `INPUT_LEN`, `IN_CH`, and `OUT_CH`.
+6. Write scalar `QUANT` with `out_shift = 0` and `relu_en = 0`.
+7. For each output channel, write `QUANT_INDEX = oc`, then
+   `QUANT_SHIFT_DATA = output_shift[oc]`.
+8. Write `CTRL.start`.
+9. Poll `STATUS.done` until completion or `CONV1D_ACCEL_TIMEOUT` expires.
+
+Return value is `1` only when the accelerator reports done. All unsupported
+cases return `0`, preserving the software fallback contract.
+
+### Fallback and Timeout Counters
+
+The bridge now tracks hardware-call specific counters:
+
+- `conv1d_hw_calls`: valid prepared APB calls issued.
+- `conv1d_hw_unsupported`: null pointers, unsupported dimensions, or invalid shifts.
+- `conv1d_hw_alignment_fail`: required 4-byte alignment was not met.
+- `conv1d_hw_timeouts`: `STATUS.done` was not observed before timeout.
+
+The timeout defaults to `1000000` poll iterations and can be overridden with
+`CONV1D_ACCEL_TIMEOUT`. A timeout returns fallback instead of hanging firmware.
+
+### Quantization and ReLU Mapping
+
+Prepared bias remains:
+
+```
+prepared_bias[oc] = (bias[oc] << bias_shift[oc]) + NNOM_ROUND(output_shift[oc])
+```
+
+The per-output-channel `output_shift[oc]` table is loaded through the APB
+per-channel shift registers. `relu_en` stays disabled for bit-exact Conv2D
+replacement because the generated NNoM model keeps ReLU as a separate layer.
+
+### Future Tiny Golden Test
+
+Before wiring the bridge into `model_run()`, run a live APB memory-path test:
+
+- `input_len = 8`
+- `in_ch = 4`
+- `out_ch = 2`
+- `K = 3`
+- per-channel shifts intentionally different
+- prepared bias includes NNoM rounding
+- expected output is computed by the software reference
+- accelerator output is compared byte-for-byte after the APB run
 
 ---
 
