@@ -262,7 +262,11 @@ module kws_soc #(
 
   // Crossbar AHB5 master-side outputs (we don't have a real exclusive monitor;
   // the splitter/arbiter return hexokay=1 by default when no slave drives it).
+`ifdef XIP_PLAYBACK
+  wire [4:0]        src_hexokay_xbar;  // {playback, accel, dmac, d-port, i-port}
+`else
   wire [3:0]        src_hexokay_xbar;  // {accel, dmac, d-port, i-port}
+`endif
   assign d_hexokay = src_hexokay_xbar[1];
 
   wire              pwrup_req;
@@ -511,6 +515,35 @@ module kws_soc #(
   wire [W_DATA-1:0] accel_hrdata;
   wire              accel_hresp;
 
+`ifdef XIP_PLAYBACK
+  // XIP sample playback AHB master signals (crossbar master port 4)
+  wire [W_ADDR-1:0] playback_haddr;
+  wire              playback_hwrite;
+  wire [       1:0] playback_htrans;
+  wire [       2:0] playback_hsize;
+  wire [W_DATA-1:0] playback_hrdata;
+  wire              playback_hready;
+  wire              playback_hresp;
+`endif
+
+`ifdef XIP_PLAYBACK
+  // Bus fabric:
+  // Masters (N_MASTERS=5):
+  //   Master 0 — i-port     SRAM+XIP              CONN[3:0]  = 4'b1001
+  //   Master 1 — d-port     SRAM+Bridge+DMAC+XIP  CONN[7:4]  = 4'b1111
+  //   Master 2 — DMAC       SRAM+Bridge           CONN[11:8] = 4'b0011
+  //   Master 3 — accel      SRAM+XIP              CONN[15:12]= 4'b1001
+  //   Master 4 — playback   XIP only              CONN[19:16]= 4'b1000
+  // CONN_MATRIX_TRANSPOSE[slave*N_MASTERS+master]:
+  //   SRAM[0]    ← accel+dmac+d+i     5'b01111  [4:0]
+  //   Bridge[1]  ← dmac+d-port        5'b00110  [9:5]
+  //   DMACregs[2]← d-port only        5'b00010  [14:10]
+  //   XIP[3]     ← playback+accel+d+i 5'b10011  [19:15]
+
+  localparam N_MASTERS_XBAR = 5;
+  localparam CONN_MATRIX_PB       = 20'b1000_1001_0011_1111_1001;
+  localparam CONN_MATRIX_TRANS_PB = 20'b1001_1000_1000_1100_1111;
+`else
   // Bus fabric:
   // Masters (N_MASTERS=4):
   //   Master 0 — i-port   SRAM+XIP              CONN[3:0]  = 4'b1001
@@ -523,20 +556,42 @@ module kws_soc #(
   //   DMACregs[2]← d-port only   4'b0010  [11:8]
   //   XIP[3]     ← i+d+accel     4'b1011  [15:12]
 
+  localparam N_MASTERS_XBAR = 4;
+  localparam CONN_MATRIX_PB       = 16'b1001_0011_1111_1001;
+  localparam CONN_MATRIX_TRANS_PB = 16'b1011_0010_0110_1111;
+`endif
+
   ahbl_crossbar #(
-      .N_MASTERS(4),
+      .N_MASTERS(N_MASTERS_XBAR),
       .N_SLAVES (4),
       .W_ADDR   (W_ADDR),
       .W_DATA   (W_DATA),
       .ADDR_MAP (128'h80000000_60000000_40000000_00000000),
       .ADDR_MASK(128'he0000000_e0000000_e0000000_e0000000),
-      .CONN_MATRIX           (16'b1001_0011_1111_1001),
-      .CONN_MATRIX_TRANSPOSE (16'b1011_0010_0110_1111)
+      .CONN_MATRIX           (CONN_MATRIX_PB),
+      .CONN_MATRIX_TRANSPOSE (CONN_MATRIX_TRANS_PB)
   ) xbar_u (
       .clk  (clk),
       .rst_n(rst_n),
 
-      // Masters: {accel [MSB], dmac, d-port, i-port [LSB]}.
+`ifdef XIP_PLAYBACK
+      // Masters (N_MASTERS=5): {playback [MSB], accel, dmac, d-port, i-port [LSB]}.
+      .src_hready_resp({playback_hready,  accel_hready,    dmac_m_hready,  d_hready,    i_hready   }),
+      .src_hresp      ({playback_hresp,   accel_hresp,     dmac_m_hresp,   d_hresp,     i_hresp    }),
+      .src_hexokay    (src_hexokay_xbar),
+      .src_haddr      ({playback_haddr,   accel_haddr,     dmac_m_haddr,   d_haddr,     i_haddr    }),
+      .src_hwrite     ({playback_hwrite,  accel_hwrite,    dmac_m_hwrite,  d_hwrite,    i_hwrite   }),
+      .src_htrans     ({playback_htrans,  accel_htrans,    dmac_m_htrans,  d_htrans,    i_htrans   }),
+      .src_hsize      ({playback_hsize,   accel_hsize,     dmac_m_hsize,   d_hsize,     i_hsize    }),
+      .src_hburst     ({3'b000,           accel_hburst,    3'b000,         d_hburst,    i_hburst   }),
+      .src_hprot      ({4'b0011,          accel_hprot,     4'b0011,        d_hprot,     i_hprot    }),
+      .src_hmaster    ({8'd0,             8'd0,            8'd0,           d_hmaster,   i_hmaster  }),
+      .src_hmastlock  ({1'b0,             accel_hmastlock, 1'b0,           d_hmastlock, i_hmastlock}),
+      .src_hexcl      ({1'b0,             1'b0,            1'b0,           d_hexcl,     i_hexcl    }),
+      .src_hwdata     ({32'h0,            accel_hwdata,    dmac_m_hwdata,  d_hwdata,    i_hwdata   }),
+      .src_hrdata     ({playback_hrdata,  accel_hrdata,    dmac_m_hrdata,  d_hrdata,    i_hrdata   }),
+`else
+      // Masters (N_MASTERS=4): {accel [MSB], dmac, d-port, i-port [LSB]}.
       .src_hready_resp({accel_hready,    dmac_m_hready,  d_hready,    i_hready   }),
       .src_hresp      ({accel_hresp,     dmac_m_hresp,   d_hresp,     i_hresp    }),
       .src_hexokay    (src_hexokay_xbar),
@@ -551,6 +606,7 @@ module kws_soc #(
       .src_hexcl      ({1'b0,            1'b0,           d_hexcl,     i_hexcl    }),
       .src_hwdata     ({accel_hwdata,    dmac_m_hwdata,  d_hwdata,    i_hwdata   }),
       .src_hrdata     ({accel_hrdata,    dmac_m_hrdata,  d_hrdata,    i_hrdata   }),
+`endif
 
       // Slaves: {xip [MSB], dmac regs, bridge, sram [LSB]}.
       // No slave drives hexokay; tie off.  dst_hmaster / dst_hexcl unused.
@@ -781,6 +837,39 @@ module kws_soc #(
       .dreq(  /* unused */)
   );
 
+  // I2S SD input mux: real mic pin vs XIP sample playback
+  wire i2s_sd_internal;
+
+`ifdef XIP_PLAYBACK
+  // XIP sample playback: read samples from XIP flash via AHB bus and
+  // feed them serially to the I2S receiver's sd input.
+  wire xip_player_sd;
+
+  xip_sample_player #(
+      .SAMPLE_XIP_ADDR(32'h8001_0000),  // matches .playback_samples in link.ld
+      .N_SAMPLES      (8000)            // 1 second at 8 kHz
+  ) xip_player_u (
+      .clk       (clk),
+      .rst_n     (rst_n),
+      .sck_ref   (i2s_sck_out),
+      .ws_ref    (i2s_ws_out),
+      .sd_out    (xip_player_sd),
+      // AHB master port (crossbar master slot 4)
+      .m_haddr   (playback_haddr),
+      .m_hwrite  (playback_hwrite),
+      .m_htrans  (playback_htrans),
+      .m_hsize   (playback_hsize),
+      .m_hrdata  (playback_hrdata),
+      .m_hready  (playback_hready),
+      .m_hresp   (playback_hresp)
+  );
+
+  assign i2s_sd_internal = xip_player_sd;
+`else
+  // Normal operation: use external I2S mic input
+  assign i2s_sd_internal = i2s_sd;
+`endif
+
   // FIFO_DEPTH comes from the root Makefile (-DI2S_FIFO_DEPTH=N).  The
   // firmware DMA burst (test/common/kws_bare_main.c) is derived as N/2
   // from the same source so the two stay in lock-step — see task #13.
@@ -792,7 +881,7 @@ module kws_soc #(
   ) apb_i2s_receiver_inst (
       .clk          (clk),
       .rst_n        (rst_n),
-      .sd           (i2s_sd),
+      .sd           (i2s_sd_internal),
       .apbs_psel    (i2s_psel),
       .apbs_penable (i2s_penable),
       .apbs_pwrite  (i2s_pwrite),

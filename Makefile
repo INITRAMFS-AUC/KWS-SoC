@@ -176,6 +176,23 @@ UART_CFLAGS := $(addprefix -D,$(UART_VERILOG_MACROS))
 # Propagate to all RTL tools (Quartus, Yosys, Verilator Verilog elaboration)
 VERILOG_MACROS += $(UART_VERILOG_MACROS)
 
+# Optional XIP sample playback for post-FPGA validation. Set XIP_PLAYBACK=1
+# to feed pre-recorded audio samples (loaded from XIP flash at 0x8001_0000)
+# into the I2S receiver instead of the external mic pin.
+# The I2S controller and firmware are unchanged — the firmware sees I2S
+# data flowing normally and outputs classification via UART for minicom.
+# Default off — production builds and normal sim use the real I2S mic input.
+XIP_PLAYBACK ?= 0
+
+# Path to the audio hex file used for playback.  Replace with any 1-second
+# clip (e.g. sim/go_0000.hex, sim/no_0000.hex) to test different inputs.
+PLAYBACK_SAMPLES_HEX ?= sim/playback_samples.hex
+PLAYBACK_SAMPLES_C   := test/build/playback_samples.c
+
+ifeq ($(XIP_PLAYBACK),1)
+  VERILOG_MACROS += XIP_PLAYBACK
+endif
+
 # Optional bus-snooper debug peripheral. Set DEBUG_SNOOPER=1 in the
 # environment (e.g. `make DEBUG_SNOOPER=1 sim-verilator …`) to:
 #   - define DEBUG_SNOOPER for Verilog elaboration (instantiates the
@@ -601,20 +618,28 @@ else
 	$(PGM) -c "USB-Blaster" -m JTAG -o "p;$(SOF_FILE)"
 endif
 
-test:
-	$(MAKE) -C test
+# Generate playback samples C file from audio hex (only needed when XIP_PLAYBACK=1)
+$(PLAYBACK_SAMPLES_C): $(PLAYBACK_SAMPLES_HEX) scripts/hex_to_c_array.py | test/build
+	@echo "--- Generating playback samples from $(PLAYBACK_SAMPLES_HEX) ---"
+	python3 scripts/hex_to_c_array.py $< $@
+
+test/build:
+	mkdir -p test/build
+
+test: $(if $(filter 1,$(XIP_PLAYBACK)),$(PLAYBACK_SAMPLES_C),)
+	$(MAKE) -C test XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
 
 test-dma:
-	$(MAKE) -C test dma
+	$(MAKE) -C test dma XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
 
 test-mel-compact:
-	$(MAKE) -C test mel-compact
+	$(MAKE) -C test mel-compact XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
 
 test-mel-compact-accel:
-	$(MAKE) -C test mel-compact-accel
+	$(MAKE) -C test mel-compact-accel XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
 
 test-lr-model-accel:
-	$(MAKE) -C test lr-model-accel
+	$(MAKE) -C test lr-model-accel XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
 
 testbench:
 	# TODO: Make a python script that runs all testbenches using vvp and checks their output and gives a report

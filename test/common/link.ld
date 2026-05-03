@@ -43,5 +43,15 @@ SECTIONS {
     /* Enforce 16-byte alignment for the stack top */
     PROVIDE(_stack_top = ORIGIN(SRAM) + LENGTH(SRAM) - 16);
 
+    /* XIP sample playback: fixed-location section for 1-second audio clips.
+     * Placed after firmware text/rodata so playback samples don't overlap.
+     * RTL xip_sample_player reads from here when XIP_PLAYBACK=1.
+     * This section is empty in normal builds — only populated when
+     * playback_samples.c is compiled and linked. */
+    .playback_samples 0x80010000 : {
+        KEEP(*(.playback_samples))
+        . = ALIGN(4);
+    } > FLASH
+
     /DISCARD/ : { *(.note.GNU-stack) *(.comment) }
 }

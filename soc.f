@@ -32,6 +32,9 @@ list busfabric/busfabric.f
 
 list peris/peris.f
 
+# XIP sample playback (elaborated only when XIP_PLAYBACK is defined)
+file peris/xip/xip_sample_player.v
+
 # Conv1D hardware accelerator
 
 file peris/conv1d_accel/conv1d_accel.v

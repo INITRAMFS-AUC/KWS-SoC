@@ -61,6 +61,19 @@ SRAM_SIZE_BYTES = $(shell echo $$(($(SRAM_DEPTH) * 4)))
 I2S_FIFO_DEPTH      ?= 16
 I2S_DMA_BURST_WORDS := $(shell expr $(I2S_FIFO_DEPTH) / 2)
 
+# XIP sample playback — passed from root Makefile when XIP_PLAYBACK=1.
+# When set, the generated playback_samples.c is compiled and linked into
+# every XIP firmware, placing audio samples at 0x8001_0000 for the RTL
+# xip_sample_player to read.
+XIP_PLAYBACK        ?= 0
+PLAYBACK_SAMPLES_C  ?=
+
+ifeq ($(XIP_PLAYBACK),1)
+  PLAYBACK_OBJ := $(BUILD_DIR)/playback_samples.o
+else
+  PLAYBACK_OBJ :=
+endif
+
 # Compiler flags
 # RV_ARCH and RV_ABI are exported by the root Makefile and derived from
 # hazard3_config.vh — flip an EXTENSION_* there and both gcc -march and
@@ -82,7 +95,7 @@ CFLAGS += -DI2S_DMA_BURST_WORDS=$(I2S_DMA_BURST_WORDS)
 #   XIP_LDFLAGS  – text+rodata in FLASH (0x80000000), data+bss in SRAM.
 #                  Required for standalone boot; string literals live at their flash VMA.
 SRAM_LDFLAGS = -T $(COMMON_DIR)/sram_link.ld --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
-XIP_LDFLAGS  = -T $(COMMON_DIR)/link.ld      --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
+XIP_LDFLAGS  = -T $(COMMON_DIR)/link.ld      --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES) $(PLAYBACK_OBJ)
 
 # Shared compilation and link flags for all model (NNoM) targets.
 # `-g` adds DWARF debug info to the ELF only — `objcopy -O binary` strips
@@ -117,7 +130,7 @@ MODEL_LDFLAGS_COMMON = -march=$(RV_ARCH) -mabi=$(RV_ABI) \
                        -nostdlib \
                        -Wl,--gc-sections
 MODEL_LDFLAGS_SRAM   = $(MODEL_LDFLAGS_COMMON) -Wl,-T,$(COMMON_DIR)/sram_link.ld -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
-MODEL_LDFLAGS_XIP    = $(MODEL_LDFLAGS_COMMON) -Wl,-T,$(COMMON_DIR)/link.ld     -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
+MODEL_LDFLAGS_XIP    = $(MODEL_LDFLAGS_COMMON) -Wl,-T,$(COMMON_DIR)/link.ld     -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES) $(PLAYBACK_OBJ)
 
 # --- TARGET LISTS ---
 # *_sram: GDB workflow — `make gdb`, then `load build/<test>_sram.elf`, then `continue`
@@ -158,7 +171,7 @@ XIP_TARGETS = \
 
 ALL_TARGETS = $(SRAM_TARGETS) $(XIP_TARGETS)
 
-all: $(BUILD_DIR) $(ALL_TARGETS)
+all: $(BUILD_DIR) $(PLAYBACK_OBJ) $(ALL_TARGETS)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -346,6 +359,10 @@ $(BUILD_DIR)/%.dis: $(BUILD_DIR)/%.elf
 
 $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.elf
 	$(OBJCOPY) -O binary $< $@
+
+# XIP sample playback: compile generated playback_samples.c into firmware
+$(BUILD_DIR)/playback_samples.o: $(PLAYBACK_SAMPLES_C) $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
 	rm -rf $(BUILD_DIR) *.o *.elf *.dis

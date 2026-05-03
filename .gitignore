@@ -61,3 +61,7 @@ __pycache__/
 
 # GCC dependency files (may appear outside build/ during out-of-tree invocations)
 *.d
+
+
+# data
+sim/playback/
