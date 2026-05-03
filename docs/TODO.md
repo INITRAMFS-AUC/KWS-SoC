@@ -119,15 +119,28 @@ Priority ladder:
   Subsumed by the autonomous-drain task; keep separate so a faster
   power-gate fix (gate `dst_hwdata` toggling on `fifo_empty`) doesn't
   block on the bigger redesign.
-- **XIP cache: next-line prefetch** (TODO at `peris/xip/ro_cache.v:1`).
-  Critical-word-first / early-restart is now always-on in `ro_dmc` —
+- **XIP cache: critical-word-first** is now always-on in `ro_dmc` —
   shipped in commit ed8732d for −1.23 % CYCLES_INFER (45.84M → 45.28M
   on mel_compact_4blk_ch36).  Modest because most i-fetches target
   word 0 (sequential code) where CWF saves nothing; the standalone
-  TB sweep across all 8 word offsets shows −34 % stall.  Next-line
-  prefetch is the orthogonal win: hide whole-line miss latency for
-  sequential code by walking `line_no+1` ahead of the CPU.  Combine
-  with the FSM oracle below for the full saving.
+  TB sweep across all 8 word offsets shows −34 % stall.
+- **XIP cache: next-line prefetch — TRIED, REGRESSES (2026-05-03)**.
+  Implemented chained-prefetch in `ro_dmc` (TB-validated, 54/54 PASS,
+  showed prefetched lines hit at 0 stall as expected).  In the SoC,
+  CYCLES_INFER **regressed** 45.28M → 50.68M (+11.9 %).  CWF_DEBUG
+  counts: demand misses 41,151 → 39,720 (only −3.5 %), CWF hits
+  329K → 552K (+68 %), but total flash fetches 93,543 → 215,166
+  (+130 %).  Mechanism: at NL=256 the i-cache is already 99.91 % hit,
+  so most misses are branches/calls/returns — only ~3.5 % of them are
+  next-sequential lines that prefetch can predict.  The remaining
+  ~96 % of prefetches are wasted, and ~40 % of demand misses arrive
+  while a wasted prefetch is mid-flight, forcing the CPU to wait for
+  the prefetch to drain (~340 cyc) before its own demand fetch can
+  start.  Net cost outweighs the small spatial-locality saving.
+  Reverted.  Don't re-try without one of: (a) a victim-buffer-style
+  prefetch that doesn't disturb the main cache, (b) abort-able
+  in-flight QSPI fetches, or (c) a workload with much lower hit rate
+  (smaller cache, larger model).
 - **XIP cache: program-aware FSM prefetch** (TODO at
   `peris/xip/ro_cache.v:2`, also raised in conversation 2026-05-02).
   The firmware code is fixed and known at flash-program time, so
