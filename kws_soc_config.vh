@@ -1,5 +1,5 @@
 `ifndef SRAM_DEPTH
-    `define SRAM_DEPTH (1 << 15)  // Default 32 kwords -> 128 kB
+    `define SRAM_DEPTH (1 << 7)  // Default 16 kwords -> 64 kB
 `endif
 
 // TODO: rename this to ellude to the timer MHZ

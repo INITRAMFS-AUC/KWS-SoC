@@ -15,7 +15,7 @@ def main():
     dest_dir = Path(args.dest)
 
     # 1. Verify the list file exists
-    if not list_file.is_file():
+    if not list_file.exists():
         print(f"Error: The list file '{list_file}' does not exist.")
         sys.exit(1)
 
