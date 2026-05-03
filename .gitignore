@@ -54,10 +54,12 @@ result
 result-*
 .envrc
 
-# Python cache
+# Python 
 __pycache__/
 *.pyc
 *.pyo
+scripts/venv/
+venv/
 
 # GCC dependency files (may appear outside build/ during out-of-tree invocations)
 *.d

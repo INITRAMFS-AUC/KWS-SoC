@@ -305,6 +305,7 @@ All four run targets honour these Make variables:
 | `XIP_PLAYBACK` | `XIP_PLAYBACK=1` | Feed pre-recorded audio from XIP flash instead of the external mic pin |
 | `PLAYBACK_SAMPLES_NUMBER` | `PLAYBACK_SAMPLES_NUMBER=5` | Number of 1-second 8 kHz clips in the playback hex file (auto-set by `wav_to_hex.py`; override if you supply a hex file externally) |
 | `PLAYBACK_SAMPLES_HEX` | `PLAYBACK_SAMPLES_HEX=sim/go_0000.hex` | Path to the audio hex file fed to the XIP sample player (default: `sim/playback_samples.hex`) |
+| `KWS_DEBOUNCE_COUNT` | `KWS_DEBOUNCE_COUNT=3` | Consecutive identical predictions required before a detection is reported (default: `2`); set to `1` to disable debouncing |
 
 ### XIP audio playback (`XIP_PLAYBACK=1`)
 
@@ -369,6 +370,95 @@ NO_JTAG=1 make sim-verilator FLASH=test/build/flash_read_test_xip.bin
 # Verilator, VCD format, flash + mic
 make sim-verilator-vcd FLASH=test/build/flash_read_test_xip.bin MIC=audio.hex TRACE_FORMAT=VCD
 ```
+
+## KWS UART Output Format
+
+All NNoM KWS firmware variants emit structured lines over UART that can be parsed by a host script:
+
+| Line | Format | Example | When emitted |
+| --- | --- | --- | --- |
+| `DETECT` | `DETECT:<class>, <index>` | `DETECT:go, 1` | Every inference; reports debounced result (falls back to `unknown, 10` until threshold met) |
+| `IRQS` | `IRQS:<count>` | `IRQS:250` | Every inference; cumulative I2S IRQ count |
+| `CYCLES_CAPTURE` | `CYCLES_CAPTURE:<n>` | `CYCLES_CAPTURE:12000000` | Per inference, only with `USE_MCYCLE_CSR=1` |
+| `CYCLES_INFER` | `CYCLES_INFER:<n>` | `CYCLES_INFER:4200000` | Per inference, only with `USE_MCYCLE_CSR=1` |
+| `CYCLES_TOTAL` | `CYCLES_TOTAL:<n>` | `CYCLES_TOTAL:16200000` | Per inference, only with `USE_MCYCLE_CSR=1` |
+
+Inference debouncing is applied before the `DETECT` line: the same predicted class must appear `KWS_DEBOUNCE_COUNT` consecutive times (default 2) before it is promoted from `unknown` to a confirmed detection.  Set `KWS_DEBOUNCE_COUNT=1` to report every raw prediction immediately.
+
+### Validating inference accuracy (`kws_uart_validate.py`)
+
+`scripts/kws_uart_validate.py` reads `DETECT` lines from the UART, aligns them against the expected class sequence from `wav_to_hex.py`, and reports accuracy.
+
+**Validation strategy**
+
+The XIP sample player loops through clips in order.  Each 1-second clip produces exactly one `DETECT` line, so inference N maps to clip `N % len(labels)`.  The script simulates the firmware debounce to classify each output:
+
+| Result | Condition | Counted in accuracy? |
+| --- | --- | --- |
+| `OK` | actual == expected class for that clip | Yes (numerator) |
+| `--` | actual == `unknown` (debounce warm-up, expected at class transitions) | No (excluded) |
+| `WRONG` | actual is a real class but differs from expected | Yes (denominator only) |
+
+**Accuracy = correct / (correct + wrong)** — `unknown` outputs are excluded because they are the normal, expected result of the debounce window at the start of each new class.  A sequence of correct detections for the same repeated class is treated as multiple correct predictions, each counted independently.
+
+**Arguments**
+
+| Argument | Default | Description |
+| --- | --- | --- |
+| `-l / --labels` | *(required)* | Labels file from `wav_to_hex.py` (one class per line) |
+| `-p / --port` | `/dev/ttyUSB0` | Serial port |
+| `-b / --baud` | `115200` | Baud rate |
+| `-n / --loops` | `1` | Full playback loops to capture; `0` = run until Ctrl-C |
+| `-t / --timeout` | `15` | Seconds to wait before giving up on no data |
+| `-d / --debounce` | `2` | `KWS_DEBOUNCE_COUNT` value used in firmware |
+| `--log` | — | Read from a saved UART log file instead of the serial port |
+
+**Usage examples**
+
+```bash
+# Live capture — 1 full loop on default port
+python3 scripts/kws_uart_validate.py -l sim/labels.txt
+
+# Different port, two loops
+python3 scripts/kws_uart_validate.py -l sim/labels.txt -p /dev/ttyACM0 --loops 2
+
+# Replay a saved UART log (e.g. from scripts/uart_capture.py)
+python3 scripts/kws_uart_validate.py -l sim/labels.txt --log uart.log
+
+# Match firmware built with KWS_DEBOUNCE_COUNT=3
+python3 scripts/kws_uart_validate.py -l sim/labels.txt --debounce 3
+
+# Run until Ctrl-C, then score whatever was captured
+python3 scripts/kws_uart_validate.py -l sim/labels.txt --loops 0
+```
+
+**Example output**
+
+```
+Labels (4 clips): ['go', 'go', 'left', 'yes']
+
+    #  Clip  True class    Exp. DETECT   Actual        Result
+--------------------------------------------------------------------
+    0     0  go            unknown       unknown       --
+    1     1  go            go            go            OK
+    2     2  left          unknown       unknown       --
+    3     3  yes           unknown       yes           OK
+
+====================================================================
+Total inferences : 4   Correct : 2   Wrong : 0   Unknown : 2
+
+Accuracy (correct / (correct + wrong)) : 100.0%
+
+Per-clip breakdown  (KWS_DEBOUNCE_COUNT=2):
+  Clip  Class          Correct   Wrong   Unknown     Rate
+     0  go                   0       0         1      n/a
+     1  go                   1       0         0   100.0%
+     2  left                 0       0         1      n/a
+     3  yes                  1       0         0   100.0%
+```
+
+> **Tip:** `pyserial` is required for live capture — install with `pip install pyserial`.
+> For offline validation, pass `--log uart.log` with a file captured by `scripts/uart_capture.py`.
 
 ## Running the SoC (GDB workflow)
 

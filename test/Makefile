@@ -391,8 +391,12 @@ MEL_DIR = mel_compact
 #       Enable the in-firmware mcycle-CSR cycle counter and "CYCLES:"
 #       UART line.  Off by default — VPI testbenches measure cycles more
 #       accurately and without running extra firmware code.
+#   KWS_DEBOUNCE_COUNT=N
+#       Consecutive identical predictions required before a detection is
+#       accepted (default: 2).  Set to 1 to disable debouncing entirely.
 KWS_DEBUG_DUMP_FIRST_CLIP ?= 0
 USE_MCYCLE_CSR           ?= 0
+KWS_DEBOUNCE_COUNT       ?= 2
 KWS_EXTRA_CFLAGS         :=
 ifeq ($(KWS_DEBUG_DUMP_FIRST_CLIP),1)
   KWS_EXTRA_CFLAGS += -DKWS_DEBUG_DUMP_FIRST_CLIP=1
@@ -400,6 +404,7 @@ endif
 ifeq ($(USE_MCYCLE_CSR),1)
   KWS_EXTRA_CFLAGS += -DUSE_MCYCLE_CSR=1
 endif
+KWS_EXTRA_CFLAGS += -DKWS_DEBOUNCE_COUNT=$(KWS_DEBOUNCE_COUNT)
 MEL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
              -DNNOM_STATIC_BUF_KB=36 \
              -DKWS_WEIGHTS_HEADER='"mel_compact_4blk_ch36_weights.h"' \

@@ -527,9 +527,9 @@ int main(void) {
         uart_putdec(i2s_irq_count);
         uart_puts("\r\n");
         uart_puts("DETECT:");
-        uart_putdec(debounced);
-        uart_putc(',');
         uart_puts(class_names[debounced]);
+        uart_puts(", ");
+        uart_putdec(debounced);
         uart_puts("\r\n");
 #ifdef USE_MCYCLE_CSR
         /* Three counters per clip:
