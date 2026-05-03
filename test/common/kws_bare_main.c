@@ -307,6 +307,11 @@ static inline void csr_meiea_dmac_en(void) {
 #ifndef NNOM_STATIC_BUF_KB
 #  error "NNOM_STATIC_BUF_KB must be passed via -D (model peak activation, in KB)"
 #endif
+
+#ifndef KWS_DEBOUNCE_COUNT
+#define KWS_DEBOUNCE_COUNT 2
+#endif
+
 #ifdef NNOM_USING_STATIC_MEMORY
 static uint8_t nnom_static_buf[NNOM_STATIC_BUF_KB * 1024];
 #endif
@@ -418,6 +423,8 @@ int main(void) {
      * after each inference (= SAMPLES_PER_CLIP today, smaller when a
      * Conv1D accelerator makes overlapping windows feasible). */
     uint32_t bytes_at_next_inference = SAMPLES_PER_CLIP;
+    int last_pred    = NUM_CLASSES - 1;
+    int debounce_cnt = 0;
 
 #ifdef USE_MCYCLE_CSR
     /* Capture-window measurement: read mcycle when we *start* waiting
@@ -508,13 +515,21 @@ int main(void) {
             }
         }
 
+        if (pred == last_pred) {
+            debounce_cnt++;
+        } else {
+            last_pred    = pred;
+            debounce_cnt = 1;
+        }
+        int debounced = (debounce_cnt >= KWS_DEBOUNCE_COUNT) ? pred : (NUM_CLASSES - 1);
+
         uart_puts("IRQS:");
         uart_putdec(i2s_irq_count);
         uart_puts("\r\n");
         uart_puts("DETECT:");
-        uart_putdec(pred);
+        uart_putdec(debounced);
         uart_putc(',');
-        uart_puts(class_names[pred]);
+        uart_puts(class_names[debounced]);
         uart_puts("\r\n");
 #ifdef USE_MCYCLE_CSR
         /* Three counters per clip:

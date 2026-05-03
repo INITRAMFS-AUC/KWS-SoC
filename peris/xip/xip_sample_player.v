@@ -23,8 +23,16 @@ module xip_sample_player #(
     parameter SAMPLE_XIP_ADDR = 32'h8001_0000,
 
     // Number of 32-bit words in the sample array.
-    // 8000 = 1 second of mono audio at 8 kHz (one packed int8 word per sample).
+    // Driven automatically by the XIP_N_SAMPLES Verilog macro, which the root
+    // Makefile computes as PLAYBACK_SAMPLES_NUMBER * 8000 (clips × 8000 words/clip).
+    // wav_to_hex.py writes PLAYBACK_SAMPLES_NUMBER to a .count sidecar so Make
+    // can pick it up without manual editing.  Falls back to 8000 (one clip) when
+    // XIP_PLAYBACK is not set or the macro is absent.
+`ifdef XIP_N_SAMPLES
+    parameter N_SAMPLES = `XIP_N_SAMPLES
+`else
     parameter N_SAMPLES = 8000
+`endif
 ) (
     input  wire        clk,       // System clock (e.g. 36 MHz FPGA / 12 MHz sim)
     input  wire        rst_n,     // Active-low reset

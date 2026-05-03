@@ -69,7 +69,7 @@ sudo make install
 ```
 
 >[!WARNING]
-> This might not go smoothly, so if it doesn't go smoothly either try to build as best you can by either modifying the Makefiles generated and/or building its submodules separately or contacting me.
+> This might not go smoothly, so if it doesn't go smoothly either try to build as best you can by either modifying the Makefiles generated and/or building its submodules separately or contacting us.
 
 
 3. Make sure you have a riscv32 gcc14-based gnu toolchain installed with the following steps as per Hazard3 repo instructions:
@@ -302,6 +302,58 @@ All four run targets honour these Make variables:
 | `NO_JTAG` | `NO_JTAG=1` | Standalone mode — no OpenOCD/GDB needed; CPU boots from flash immediately |
 | `EXTRA_ARGS` | `EXTRA_ARGS="--cycles 50000000"` | Pass extra flags directly to the testbench binary |
 | `TRACE_FORMAT` | `TRACE_FORMAT=VCD` | Verilator only: choose `VCD` instead of `FST` |
+| `XIP_PLAYBACK` | `XIP_PLAYBACK=1` | Feed pre-recorded audio from XIP flash instead of the external mic pin |
+| `PLAYBACK_SAMPLES_NUMBER` | `PLAYBACK_SAMPLES_NUMBER=5` | Number of 1-second 8 kHz clips in the playback hex file (auto-set by `wav_to_hex.py`; override if you supply a hex file externally) |
+| `PLAYBACK_SAMPLES_HEX` | `PLAYBACK_SAMPLES_HEX=sim/go_0000.hex` | Path to the audio hex file fed to the XIP sample player (default: `sim/playback_samples.hex`) |
+
+### XIP audio playback (`XIP_PLAYBACK=1`)
+
+The XIP playback path lets you validate KWS inference on the FPGA or in simulation
+using pre-recorded audio instead of the live microphone:
+
+```
+WAV files → scripts/wav_to_hex.py → sim/playback_samples.hex
+                                   → sim/playback_samples.count  (clip count)
+         → make (reads .count)    → XIP_N_SAMPLES macro passed to RTL
+         → scripts/hex_to_c_array.py → test/build/playback_samples.c (linked into flash)
+```
+
+**Generate the hex file from a directory of 1-second WAV clips:**
+
+```bash
+python3 scripts/wav_to_hex.py path/to/wavs/ -o sim/playback_samples.hex -l sim/labels.txt
+```
+
+`wav_to_hex.py` arguments:
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| `directory` | Yes | Directory containing `.wav` files (sorted alphabetically and concatenated) |
+| `-o / --output` | No | Output `.hex` file path (default: `output.hex`) |
+| `-l / --labels` | No | Output text file for per-clip class labels (default: `labels.txt`) |
+
+The script automatically writes a `.count` sidecar (e.g., `sim/playback_samples.count`) with the
+integer number of clips.  The root Makefile reads this as `PLAYBACK_SAMPLES_NUMBER` and derives
+`XIP_N_SAMPLES = PLAYBACK_SAMPLES_NUMBER × 8000`, which is passed as a Verilog macro to
+`peris/xip/xip_sample_player.v` so `N_SAMPLES` is set correctly without any manual RTL edits.
+
+**Run simulation with playback audio:**
+
+```bash
+# Build firmware + RTL, then simulate with pre-recorded audio
+NO_JTAG=1 make sim-verilator XIP_PLAYBACK=1 FLASH=test/build/lr_model_xip_accel.bin
+
+# Override clip count manually (if hex was generated externally)
+NO_JTAG=1 make sim-verilator XIP_PLAYBACK=1 PLAYBACK_SAMPLES_NUMBER=3 FLASH=test/build/lr_model_xip_accel.bin
+```
+
+**Synthesize for FPGA with XIP playback enabled:**
+
+```bash
+make test map fit asm XIP_PLAYBACK=1
+```
+
+`XIP_PLAYBACK=1` must be set for both `test` (links the sample array into the firmware flash binary) and `map` (instantiates `xip_sample_player` in RTL and sets `N_SAMPLES` via `XIP_N_SAMPLES`).
 
 Examples:
 ```bash

@@ -186,11 +186,22 @@ XIP_PLAYBACK ?= 0
 
 # Path to the audio hex file used for playback.  Replace with any 1-second
 # clip (e.g. sim/go_0000.hex, sim/no_0000.hex) to test different inputs.
-PLAYBACK_SAMPLES_HEX ?= sim/playback_samples.hex
-PLAYBACK_SAMPLES_C   := test/build/playback_samples.c
+PLAYBACK_SAMPLES_HEX         ?= sim/playback_samples.hex
+PLAYBACK_SAMPLES_C           := test/build/playback_samples.c
+
+# Number of 1-second 8 kHz clips in the playback hex file.
+# wav_to_hex.py writes this automatically to a .count sidecar beside the hex.
+# Override on the command line if you generate the hex externally:
+#   make XIP_PLAYBACK=1 PLAYBACK_SAMPLES_NUMBER=5 sim-verilator ...
+PLAYBACK_SAMPLES_COUNT_FILE  := $(PLAYBACK_SAMPLES_HEX:.hex=.count)
+PLAYBACK_SAMPLES_NUMBER      ?= $(shell cat $(PLAYBACK_SAMPLES_COUNT_FILE) 2>/dev/null || echo 1)
 
 ifeq ($(XIP_PLAYBACK),1)
   VERILOG_MACROS += XIP_PLAYBACK
+  # Total 32-bit words in the sample array = clips × 8000 samples/clip.
+  # Passed to xip_sample_player.v as `XIP_N_SAMPLES so N_SAMPLES is set
+  # automatically without editing the RTL.
+  VERILOG_MACROS += XIP_N_SAMPLES=$(shell expr $(PLAYBACK_SAMPLES_NUMBER) \* 8000)
 endif
 
 # Optional bus-snooper debug peripheral. Set DEBUG_SNOOPER=1 in the
