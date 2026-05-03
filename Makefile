@@ -613,6 +613,9 @@ test-mel-compact:
 test-mel-compact-accel:
 	$(MAKE) -C test mel-compact-accel
 
+test-lr-model-accel:
+	$(MAKE) -C test lr-model-accel
+
 testbench:
 	# TODO: Make a python script that runs all testbenches using vvp and checks their output and gives a report
 	$(MAKE) -C test xip-testbench

@@ -22,6 +22,7 @@ MODEL_C_DIR  = model
 STREAMING_MODEL_C_DIR = streaming_model
 MEL_COMPACT_C_DIR = mel_compact
 MEL_COMPACT_INT8_C_DIR = mel_compact_int8
+LR_MODEL_C_DIR = lr_model
 NNOM_DIR     = ../third_party/nnom
 NNOM_INC_DIR = $(NNOM_DIR)/inc
 NNOM_PORT_DIR = $(NNOM_DIR)/port
@@ -151,7 +152,9 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf       $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis       $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin \
 	$(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.bin \
 	$(BUILD_DIR)/mel_compact_int8_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_xip_accel.bin \
-	$(BUILD_DIR)/accel_test_xip.elf                  $(BUILD_DIR)/accel_test_xip.dis                  $(BUILD_DIR)/accel_test_xip.bin
+	$(BUILD_DIR)/accel_test_xip.elf                  $(BUILD_DIR)/accel_test_xip.dis                  $(BUILD_DIR)/accel_test_xip.bin \
+	$(BUILD_DIR)/lr_model_xip.elf                    $(BUILD_DIR)/lr_model_xip.dis                    $(BUILD_DIR)/lr_model_xip.bin \
+	$(BUILD_DIR)/lr_model_xip_accel.elf              $(BUILD_DIR)/lr_model_xip_accel.dis              $(BUILD_DIR)/lr_model_xip_accel.bin
 
 ALL_TARGETS = $(SRAM_TARGETS) $(XIP_TARGETS)
 
@@ -184,6 +187,8 @@ model-streaming: $(BUILD_DIR)/streaming_model_xip.elf $(BUILD_DIR)/streaming_mod
 model-mel-compact: $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin
 model-mel-compact-accel: $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.bin
 model-mel-compact-int8-accel: $(BUILD_DIR)/mel_compact_int8_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_xip_accel.bin
+model-lr: $(BUILD_DIR)/lr_model_xip.elf $(BUILD_DIR)/lr_model_xip.dis $(BUILD_DIR)/lr_model_xip.bin
+model-lr-accel: $(BUILD_DIR)/lr_model_xip_accel.elf $(BUILD_DIR)/lr_model_xip_accel.dis $(BUILD_DIR)/lr_model_xip_accel.bin
 # SRAM model artifacts intentionally disabled:
 # $(BUILD_DIR)/strided_s16_nodil_sram.elf $(BUILD_DIR)/strided_s16_nodil_sram.dis $(BUILD_DIR)/strided_s16_nodil_sram.bin
 dma:    $(BUILD_DIR)/dma_test_sram.elf    $(BUILD_DIR)/dma_test_sram.dis    $(BUILD_DIR)/dma_test_sram.bin \
@@ -347,7 +352,7 @@ clean:
 	rm -f $(COMMON_DIR)/*.d
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact model-mel-compact-accel model-mel-compact-int8-accel xip-testbench mel-compact mel-compact-accel mel-compact-int8-accel
+.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact model-mel-compact-accel model-mel-compact-int8-accel model-lr model-lr-accel xip-testbench mel-compact mel-compact-accel mel-compact-int8-accel lr-model lr-model-accel
 
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)
@@ -433,7 +438,7 @@ NNOM_SRCS_MEL_ACCEL = \
     $(NNOM_DIR)/src/layers/nnom_softmax.c \
     $(NNOM_DIR)/src/backends/nnom_local.c \
     $(NNOM_DIR)/src/backends/nnom_local_q15.c \
-    $(MEL_DIR)/nnom_conv1d_hw.c
+    $(COMMON_DIR)/nnom_conv1d_hw.c
 
 MEL_ACCEL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
                    -DNNOM_STATIC_BUF_KB=36 \
@@ -478,3 +483,52 @@ $(BUILD_DIR)/mel_compact_int8_xip_accel.elf: \
 
 mel-compact-int8-accel: $(BUILD_DIR)/mel_compact_int8_xip_accel.elf
 model-mel-compact-int8-accel: $(BUILD_DIR)/mel_compact_int8_xip_accel.elf
+
+# ── lr_model — KWS model with Conv1D layers ──────────────────────────────
+#
+# Same pattern as mel_compact: uses kws_bare_main.c which calls
+# model_create() defined in the weights header.
+# Build:  make lr-model   or   make model-lr
+
+LR_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+            -DNNOM_STATIC_BUF_KB=36 \
+            -DKWS_WEIGHTS_HEADER='"weights_lr.h"' \
+            -DKWS_MODEL_NAME='"lr_model"' \
+            -I$(LR_MODEL_C_DIR)
+
+$(BUILD_DIR)/lr_model_xip.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
+	$(CC) $(LR_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/lr_model_xip.bin
+	$(CROSS_COMPILE)size $@
+
+lr-model: $(BUILD_DIR)/lr_model_xip.elf
+
+# ── lr_model — Conv1D hardware accelerator variant ───────────────────────────
+#
+# Same as mel-compact-accel but uses the lr_model weights.
+# Build:  make lr-model-accel   or   make model-lr-accel
+
+LR_ACCEL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+                  -DNNOM_STATIC_BUF_KB=36 \
+                  -DKWS_WEIGHTS_HEADER='"weights_lr.h"' \
+                  -DKWS_MODEL_NAME='"lr_model_accel"' \
+                  -I$(LR_MODEL_C_DIR)
+
+$(BUILD_DIR)/lr_model_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_MEL_ACCEL) | $(BUILD_DIR)
+	$(CC) $(LR_ACCEL_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/lr_model_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+lr-model-accel: $(BUILD_DIR)/lr_model_xip_accel.elf
