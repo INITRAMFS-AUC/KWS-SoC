@@ -124,23 +124,30 @@ Priority ladder:
   on mel_compact_4blk_ch36).  Modest because most i-fetches target
   word 0 (sequential code) where CWF saves nothing; the standalone
   TB sweep across all 8 word offsets shows −34 % stall.
-- **XIP cache: next-line prefetch — TRIED, REGRESSES (2026-05-03)**.
+- **XIP cache: next-line prefetch — TRIED, REGRESSES AT EVERY NL (2026-05-03)**.
   Implemented chained-prefetch in `ro_dmc` (TB-validated, 54/54 PASS,
-  showed prefetched lines hit at 0 stall as expected).  In the SoC,
-  CYCLES_INFER **regressed** 45.28M → 50.68M (+11.9 %).  CWF_DEBUG
-  counts: demand misses 41,151 → 39,720 (only −3.5 %), CWF hits
-  329K → 552K (+68 %), but total flash fetches 93,543 → 215,166
-  (+130 %).  Mechanism: at NL=256 the i-cache is already 99.91 % hit,
-  so most misses are branches/calls/returns — only ~3.5 % of them are
-  next-sequential lines that prefetch can predict.  The remaining
-  ~96 % of prefetches are wasted, and ~40 % of demand misses arrive
-  while a wasted prefetch is mid-flight, forcing the CPU to wait for
-  the prefetch to drain (~340 cyc) before its own demand fetch can
-  start.  Net cost outweighs the small spatial-locality saving.
+  prefetched lines hit at 0 stall).  Swept (NL, prefetch) over
+  NL ∈ {32, 64, 128, 256} on mel_compact_4blk_ch36.  Steady-state
+  CYCLES_INFER:
+
+      NL=32  off  ~99.9M    on  >300M (no infer in 300M cyc)
+      NL=64  off  ~77.9M    on  ~113.7M  (+46 %)
+      NL=128 off  ~52.7M    on  ~63.3M   (+20 %)
+      NL=256 off  ~46.3M    on  ~50.7M   (+9 %)
+
+  Counter-intuitive: the **smaller the cache, the WORSE prefetch is**.
+  Bus-fetch counts went +25 % (NL=32) → +81 % (NL=256) and CYCLES_INFER
+  regressed in every case; at NL=32 the CPU never finishes inference
+  in 300M cycles.  Mechanism: prefetch evicts a hot line on every
+  miss, the CPU's next miss on the evicted line triggers another
+  prefetch that evicts more hot lines — a self-feeding eviction
+  cascade that gets worse as the cache shrinks.  The ~3.5 % spatial-
+  locality win never pays for the bus contention + premature evictions.
   Reverted.  Don't re-try without one of: (a) a victim-buffer-style
-  prefetch that doesn't disturb the main cache, (b) abort-able
-  in-flight QSPI fetches, or (c) a workload with much lower hit rate
-  (smaller cache, larger model).
+  prefetch that doesn't disturb the main cache (so prefetches can't
+  evict anything), (b) abort-able in-flight QSPI fetches (so a
+  demand miss can pre-empt a wasted prefetch), or (c) confidence
+  prediction (only prefetch when the last K accesses were sequential).
 - **XIP cache: program-aware FSM prefetch** (TODO at
   `peris/xip/ro_cache.v:2`, also raised in conversation 2026-05-02).
   The firmware code is fixed and known at flash-program time, so
