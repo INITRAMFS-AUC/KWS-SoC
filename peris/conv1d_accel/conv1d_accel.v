@@ -22,6 +22,15 @@
 // Weights, bias and per-channel shift are loaded ONCE per output channel then
 // reused across all output positions, amortising XIP flash read cost.
 //
+// Speed improvements over baseline:
+//   1. Weight WORD reads: when patch_bytes is a multiple of 4 and wt_addr is
+//      word-aligned, weights are fetched as 32-bit words (4 bytes/cycle instead
+//      of 1). Reduces weight-load cycles by ~4x.
+//   2. Ping-pong input buffers + overlapped load/MAC: while MAC executes on the
+//      active input buffer, the AHB master pre-fetches the NEXT w_pos's patch
+//      into the idle buffer. Steady-state inner-loop time becomes
+//      max(load_cycles, MAC_cycles)+write, down from load+MAC+write.
+//
 // AHB pipeline timing (r_wait flag):
 //   Both SRAM and XIP cache have 1-cycle latency between address and HRDATA.
 //   r_wait causes each data-capture state to skip the first hready=1 after an
@@ -67,9 +76,9 @@ module conv1d_accel (
     localparam HSIZE_BYTE    = 3'b000;
     localparam HSIZE_WORD    = 3'b010;
 
-    assign hprot     = 4'b0011;  // data, privileged, non-cacheable, non-bufferable
+    assign hprot     = 4'b0011;
     assign hmastlock = 1'b0;
-    assign pready    = 1'b1;     // APB: no wait states
+    assign pready    = 1'b1;
     assign pslverr   = 1'b0;
 
     // -------------------------------------------------------------------------
@@ -78,10 +87,9 @@ module conv1d_accel (
     reg [31:0] r_src_addr, r_wt_addr, r_dst_addr, r_bs_addr, r_shift_addr;
     reg [ 7:0] r_c_in, r_c_out, r_k_w, r_stride;
     reg [15:0] r_w_in;
-    reg [ 4:0] r_shift;     // legacy scalar shift (kept for compatibility)
+    reg [ 4:0] r_shift;
     reg        r_busy, r_done;
 
-    // APB write — paddr[5:2] selects register (covers 0x00–0x3C)
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             r_src_addr   <= 32'h0; r_wt_addr    <= 32'h0;
@@ -104,7 +112,6 @@ module conv1d_accel (
         end
     end
 
-    // APB read
     always @(*) begin
         case (paddr[5:2])
             4'd0: prdata = {22'b0, r_done, r_busy, 8'b0};
@@ -121,23 +128,26 @@ module conv1d_accel (
     end
 
     // -------------------------------------------------------------------------
-    // Internal buffers (64 words = 256 bytes each — covers K_w*C_in up to 256)
+    // Internal buffers
+    //
+    // PING-PONG: in_buf0 / in_buf1 alternate as MAC source and AHB load target.
+    //   buf_sel=0 → MAC reads in_buf0, AHB fills in_buf1 (and vice-versa).
+    //
+    // wt_buf: weight buffer, loaded once per c_pos and reused for all w_pos.
 
-    reg [31:0] in_buf [0:63];
-    reg [31:0] wt_buf [0:63];
+    reg [31:0] in_buf0 [0:63];
+    reg [31:0] in_buf1 [0:63];
+    reg [31:0] wt_buf  [0:63];
 
     // -------------------------------------------------------------------------
     // Derived parameters (registered when start fires)
 
-    reg [15:0] patch_bytes;   // K_w * C_in
-    reg [ 5:0] patch_words;   // ceil(patch_bytes / 4)  — used for input reads
-    reg [15:0] w_out_cnt;     // (W_in - K_w) / stride + 1
-    reg [ 1:0] tail_bytes;    // patch_bytes[1:0] — bytes in last word (input reads)
+    reg [15:0] patch_bytes;
+    reg [ 5:0] patch_words;
+    reg [15:0] w_out_cnt;
+    reg [ 1:0] tail_bytes;
 
-    // Weight read byte-addressing (handles unaligned filter offsets)
-    reg [ 1:0] r_wt_lane0;   // (r_wt_addr + c_pos*patch_bytes)[1:0] — byte lane of wt byte 0
-
-    // Full weight base address for current filter (combinational)
+    reg [ 1:0] r_wt_lane0;
     wire [31:0] w_wt_addr = r_wt_addr + ({24'b0, c_pos} * {16'b0, patch_bytes});
 
     // -------------------------------------------------------------------------
@@ -145,45 +155,56 @@ module conv1d_accel (
     //
     // Loop order: C_out outer, W_out inner.
     //   Per c_pos: load weights (S_WT_*), bias (S_BIAS_*), shift (S_SHIFT_*).
-    //   Per w_pos: load input (S_IN_*), MAC, write result (S_WRITE_*).
-    //   S_ADVANCE: increment w_pos; on rollover increment c_pos and reload weights.
+    //   First w_pos: load input (S_IN_ADDR/S_IN_DATA).
+    //   Steady-state w_pos: S_MAC_OVLP — MAC on active buf + AHB fill of inactive buf.
+    //   Last w_pos: S_MAC only (no next load needed).
+    //   S_ADVANCE: increment w_pos; on rollover increment c_pos.
 
     localparam S_IDLE       = 4'd0;
     localparam S_INIT       = 4'd1;
-    localparam S_WT_ADDR    = 4'd4;   // issue AHB read address for wt_buf (first byte)
-    localparam S_WT_DATA    = 4'd5;   // capture weight bytes
-    localparam S_BIAS_ADDR  = 4'd7;   // read int32 bias[c_pos]
-    localparam S_BIAS_DATA  = 4'd8;   // capture bias, then issue shift byte address
-    localparam S_SHIFT_DATA = 4'd10;  // capture shift byte (address issued in S_BIAS_DATA)
-    localparam S_IN_ADDR    = 4'd2;   // issue AHB read address for in_buf
-    localparam S_IN_DATA    = 4'd3;   // capture hrdata into in_buf
-    localparam S_MAC        = 4'd6;   // 4 MACs per cycle
-    localparam S_WRITE_ADDR = 4'd11;  // write 1 byte result
-    localparam S_WRITE_DATA = 4'd12;  // AHB write data phase
-    localparam S_ADVANCE    = 4'd13;  // increment w_pos or c_pos
+    localparam S_IN_ADDR    = 4'd2;
+    localparam S_IN_DATA    = 4'd3;
+    localparam S_WT_ADDR    = 4'd4;
+    localparam S_WT_DATA    = 4'd5;   // weight BYTE reads (fallback for misaligned/partial)
+    localparam S_MAC        = 4'd6;   // MAC only (first/last w_pos, or w_out_cnt==1)
+    localparam S_BIAS_ADDR  = 4'd7;
+    localparam S_BIAS_DATA  = 4'd8;
+    localparam S_WT_DATA_W  = 4'd9;   // weight WORD reads (fast path: aligned, full words)
+    localparam S_SHIFT_DATA = 4'd10;
+    localparam S_WRITE_ADDR = 4'd11;
+    localparam S_WRITE_DATA = 4'd12;
+    localparam S_ADVANCE    = 4'd13;
     localparam S_DONE       = 4'd14;
+    localparam S_MAC_OVLP   = 4'd15;  // overlapped MAC (active buf) + load (inactive buf)
 
     reg [ 3:0] state;
-    reg [15:0] w_pos;         // current output column position
-    reg [ 7:0] c_pos;         // current output channel
-    reg [ 6:0] buf_idx;       // word index (in-buf loads) or byte index (wt-buf loads)
-    reg [ 5:0] mac_idx;       // word index during MAC phase
+    reg [15:0] w_pos;
+    reg [ 7:0] c_pos;
+    reg [ 6:0] buf_idx;
+    reg [ 5:0] mac_idx;
+    reg [ 5:0] wt_word_idx;       // word counter for S_WT_DATA_W
     reg signed [31:0] acc;
-    reg signed [31:0] bias_val;   // held across all w_pos for current c_pos
+    reg signed [31:0] bias_val;
     reg signed [ 7:0] result_byte;
-    reg [ 4:0] cur_shift;     // per-channel shift (held across w_pos)
-    reg [ 1:0] r_shift_lane;  // byte lane for current shift array element
-
-    // AHB pipeline wait flag
+    reg [ 4:0] cur_shift;
+    reg [ 1:0] r_shift_lane;
     reg        r_wait;
+
+    // Ping-pong control
+    reg        buf_sel;   // 0: MAC←buf0, load→buf1;  1: MAC←buf1, load→buf0
+    reg        mac_done;  // set when MAC phase completes inside S_MAC_OVLP
+    reg        load_done; // set when AHB load phase completes inside S_MAC_OVLP
 
     wire start_pulse = psel && penable && pwrite && (paddr[5:2] == 4'd0) && pwdata[0];
 
-    // MAC datapath (combinational)
-    wire signed [ 7:0] i0 = $signed(in_buf[mac_idx][ 7: 0]);
-    wire signed [ 7:0] i1 = $signed(in_buf[mac_idx][15: 8]);
-    wire signed [ 7:0] i2 = $signed(in_buf[mac_idx][23:16]);
-    wire signed [ 7:0] i3 = $signed(in_buf[mac_idx][31:24]);
+    // -------------------------------------------------------------------------
+    // MAC datapath — reads from active buffer selected by buf_sel
+
+    wire [31:0] mac_in_word = buf_sel ? in_buf1[mac_idx] : in_buf0[mac_idx];
+    wire signed [ 7:0] i0 = $signed(mac_in_word[ 7: 0]);
+    wire signed [ 7:0] i1 = $signed(mac_in_word[15: 8]);
+    wire signed [ 7:0] i2 = $signed(mac_in_word[23:16]);
+    wire signed [ 7:0] i3 = $signed(mac_in_word[31:24]);
     wire signed [ 7:0] w0 = $signed(wt_buf[mac_idx][ 7: 0]);
     wire signed [ 7:0] w1 = $signed(wt_buf[mac_idx][15: 8]);
     wire signed [ 7:0] w2 = $signed(wt_buf[mac_idx][23:16]);
@@ -195,26 +216,30 @@ module conv1d_accel (
     wire signed [31:0] mac4 = {{16{p0[15]}},p0} + {{16{p1[15]}},p1}
                              + {{16{p2[15]}},p2} + {{16{p3[15]}},p3};
 
-    // Shift+clip using per-channel cur_shift
     wire signed [31:0] shifted = (acc + bias_val) >>> cur_shift;
-    wire signed [ 7:0] clipped = (shifted > 32'sd127)  ? 8'sd127  :
+    wire signed [ 7:0] clipped = (shifted > 32'sd127)  ?  8'sd127  :
                                  (shifted < -32'sd128) ? -8'sd128 :
                                  shifted[7:0];
 
+    // -------------------------------------------------------------------------
+    // Main FSM
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state     <= S_IDLE;
-            r_busy    <= 1'b0; r_done <= 1'b0;
-            htrans    <= HTRANS_IDLE; hwrite <= 1'b0;
-            hburst    <= HBURST_SINGLE; hsize <= HSIZE_WORD;
-            haddr     <= 32'b0; hwdata <= 32'b0;
-            w_pos     <= 16'b0; c_pos <= 8'b0;
-            buf_idx   <= 7'b0; mac_idx <= 6'b0;
+            state      <= S_IDLE;
+            r_busy     <= 1'b0; r_done <= 1'b0;
+            htrans     <= HTRANS_IDLE; hwrite <= 1'b0;
+            hburst     <= HBURST_SINGLE; hsize <= HSIZE_WORD;
+            haddr      <= 32'b0; hwdata <= 32'b0;
+            w_pos      <= 16'b0; c_pos <= 8'b0;
+            buf_idx    <= 7'b0; mac_idx <= 6'b0; wt_word_idx <= 6'b0;
             r_wt_lane0 <= 2'b0; r_wait <= 1'b0;
-            acc       <= 32'b0; bias_val <= 32'b0;
-            cur_shift <= 5'b0; r_shift_lane <= 2'b0;
+            acc        <= 32'b0; bias_val <= 32'b0;
+            cur_shift  <= 5'b0; r_shift_lane <= 2'b0;
             patch_bytes <= 16'b0; patch_words <= 6'b0;
-            w_out_cnt   <= 16'b0; tail_bytes <= 2'b0;
+            w_out_cnt  <= 16'b0; tail_bytes <= 2'b0;
+            buf_sel    <= 1'b0;
+            mac_done   <= 1'b0; load_done <= 1'b0;
         end else begin
             case (state)
 
@@ -239,27 +264,60 @@ module conv1d_accel (
                 patch_words <= ((r_k_w * r_c_in) + 3) >> 2;
                 w_out_cnt   <= (r_w_in - r_k_w) / r_stride + 16'd1;
                 tail_bytes  <= (r_k_w * r_c_in) & 2'b11;
-                w_pos <= 16'b0;
-                c_pos <= 8'b0;
-                state <= S_WT_ADDR;   // begin outer loop: load weights for c_pos=0
+                w_pos   <= 16'b0;
+                c_pos   <= 8'b0;
+                buf_sel <= 1'b0;
+                state   <= S_WT_ADDR;
             end
 
             // -----------------------------------------------------------------
-            // Weight reads: HSIZE_BYTE burst for correct unaligned filter offsets.
-            // Called once per c_pos (outer loop), weights reused for all w_pos.
+            // Weight reads — fast WORD path when patch_bytes%4==0 and addr aligned.
+            // Byte path is the original fallback for misaligned/partial cases.
+
             S_WT_ADDR: begin
-                buf_idx    <= 7'b0;
                 r_wt_lane0 <= w_wt_addr[1:0];
                 haddr      <= w_wt_addr;
                 htrans     <= HTRANS_NONSEQ;
                 hburst     <= HBURST_INCR;
-                hsize      <= HSIZE_BYTE;
                 hwrite     <= 1'b0;
                 r_wait     <= 1'b1;
-                wt_buf[patch_words - 1] <= 32'b0;  // pre-zero last word
-                state      <= S_WT_DATA;
+
+                if (w_wt_addr[1:0] == 2'b00 && patch_bytes[1:0] == 2'b00) begin
+                    // Fast path: WORD reads, patch guaranteed full words, addr aligned
+                    hsize       <= HSIZE_WORD;
+                    wt_word_idx <= 6'b0;
+                    state       <= S_WT_DATA_W;
+                end else begin
+                    // Fallback: BYTE reads (handles any alignment/length)
+                    buf_idx <= 7'b0;
+                    hsize   <= HSIZE_BYTE;
+                    wt_buf[patch_words - 1] <= 32'b0;  // pre-zero last word
+                    state   <= S_WT_DATA;
+                end
             end
 
+            // Fast weight load: one wt_buf word per AHB data cycle
+            S_WT_DATA_W: begin
+                if (hready) begin
+                    if (r_wait) begin
+                        haddr  <= haddr + 32'd4;
+                        htrans <= HTRANS_SEQ;
+                        r_wait <= 1'b0;
+                    end else begin
+                        wt_buf[wt_word_idx] <= hrdata;
+                        if (wt_word_idx == patch_words - 6'd1) begin
+                            htrans <= HTRANS_IDLE;
+                            state  <= S_BIAS_ADDR;
+                        end else begin
+                            wt_word_idx <= wt_word_idx + 6'd1;
+                            haddr       <= haddr + 32'd4;
+                            htrans      <= HTRANS_SEQ;
+                        end
+                    end
+                end
+            end
+
+            // Fallback weight load: byte-by-byte (original behaviour)
             S_WT_DATA: begin
                 if (hready) begin
                     if (r_wait) begin
@@ -283,15 +341,15 @@ module conv1d_accel (
                                 2'b10: wt_buf[buf_idx[6:2]][23:16] <= rdbyte;
                                 2'b11: wt_buf[buf_idx[6:2]][31:24] <= rdbyte;
                             endcase
-    `ifdef ACCEL_DEBUG
-                        if (w_pos == 0 && c_pos < 2 && buf_idx < 4)
+`ifdef ACCEL_DEBUG
+                            if (w_pos == 0 && c_pos < 2 && buf_idx < 4)
                                 $display("[WT] c_pos=%0d byte[%0d]=0x%02x lane=%0d hrdata=0x%08x",
                                     c_pos, buf_idx, rdbyte, cur_lane, hrdata);
 `endif
                         end
                         if (buf_idx == patch_bytes - 7'd1) begin
                             htrans <= HTRANS_IDLE;
-                            state  <= S_BIAS_ADDR;  // load bias for this c_pos
+                            state  <= S_BIAS_ADDR;
                         end else begin
                             buf_idx <= buf_idx + 7'd1;
                             haddr   <= haddr + 32'd1;
@@ -302,7 +360,8 @@ module conv1d_accel (
             end
 
             // -----------------------------------------------------------------
-            // Bias read (SRAM, single WORD read) — once per c_pos.
+            // Bias read (SRAM, single WORD) — once per c_pos.
+
             S_BIAS_ADDR: begin
                 haddr  <= r_bs_addr + (c_pos * 4);
                 htrans <= HTRANS_NONSEQ;
@@ -333,6 +392,7 @@ module conv1d_accel (
 
             // -----------------------------------------------------------------
             // Shift byte read — once per c_pos.
+
             S_SHIFT_DATA: begin
                 if (hready) begin
                     if (r_wait) begin
@@ -345,18 +405,19 @@ module conv1d_accel (
                             2'b11: cur_shift <= hrdata[28:24];
                         endcase
                         htrans <= HTRANS_IDLE;
-                        // Begin inner loop: process all w_pos with these weights
-                        acc   <= 32'b0;
-                        state <= S_IN_ADDR;
+                        acc    <= 32'b0;
+                        state  <= S_IN_ADDR;
                     end
                 end
             end
 
             // -----------------------------------------------------------------
-            // Input patch read (SRAM, HSIZE_WORD burst) — once per w_pos.
+            // Input patch read — used only for the FIRST w_pos of each c_pos.
+            // Subsequent w_pos patches are pre-fetched inside S_MAC_OVLP.
+
             S_IN_ADDR: begin
                 buf_idx <= 7'b0;
-                haddr   <= r_src_addr + (w_pos * r_stride * r_c_in) + 0;
+                haddr   <= r_src_addr + (w_pos * {8'b0, r_stride} * {8'b0, r_c_in});
                 htrans  <= HTRANS_NONSEQ;
                 hburst  <= HBURST_INCR;
                 hsize   <= HSIZE_WORD;
@@ -372,18 +433,32 @@ module conv1d_accel (
                         htrans <= HTRANS_SEQ;
                         r_wait <= 1'b0;
                     end else begin
-                        if (buf_idx == patch_words - 1) begin
-                            case (tail_bytes)
-                                2'b01: in_buf[buf_idx] <= {24'b0, hrdata[ 7:0]};
-                                2'b10: in_buf[buf_idx] <= {16'b0, hrdata[15:0]};
-                                2'b11: in_buf[buf_idx] <= { 8'b0, hrdata[23:0]};
-                                2'b00: in_buf[buf_idx] <= hrdata;
-                            endcase
-                            htrans  <= HTRANS_IDLE;
+                        // Write to active buffer (buf_sel=0 at c_pos start)
+                        if (!buf_sel) in_buf0[buf_idx] <= hrdata;
+                        else          in_buf1[buf_idx] <= hrdata;
+
+                        if (buf_idx == patch_words - 7'd1) begin
                             mac_idx <= 6'b0;
-                            state   <= S_MAC;
+
+                            if (w_out_cnt > 16'd1) begin
+                                // Pre-load w_pos=1 into the inactive buffer while
+                                // we MAC on the just-filled active buffer.
+                                haddr   <= r_src_addr + ({8'b0, r_stride} * {8'b0, r_c_in});
+                                htrans  <= HTRANS_NONSEQ;
+                                hburst  <= HBURST_INCR;
+                                hsize   <= HSIZE_WORD;
+                                hwrite  <= 1'b0;
+                                buf_idx <= 7'b0;
+                                r_wait  <= 1'b1;
+                                mac_done  <= 1'b0;
+                                load_done <= 1'b0;
+                                state   <= S_MAC_OVLP;
+                            end else begin
+                                // Only one output position — just MAC, no preload
+                                htrans <= HTRANS_IDLE;
+                                state  <= S_MAC;
+                            end
                         end else begin
-                            in_buf[buf_idx] <= hrdata;
                             buf_idx <= buf_idx + 7'd1;
                             haddr   <= haddr + 32'd4;
                             htrans  <= HTRANS_SEQ;
@@ -393,10 +468,13 @@ module conv1d_accel (
             end
 
             // -----------------------------------------------------------------
+            // S_MAC: plain MAC, no concurrent load.
+            // Used for w_out_cnt==1, or the very last w_pos.
+
             S_MAC: begin
                 htrans <= HTRANS_IDLE;
                 acc    <= acc + mac4;
-                if (mac_idx == patch_words - 1) begin
+                if (mac_idx == patch_words - 6'd1) begin
                     state <= S_WRITE_ADDR;
                 end else begin
                     mac_idx <= mac_idx + 6'd1;
@@ -404,7 +482,56 @@ module conv1d_accel (
             end
 
             // -----------------------------------------------------------------
+            // S_MAC_OVLP: overlapped MAC (active buf) + AHB load (inactive buf).
+            //
+            // Entered from:
+            //   S_IN_DATA  (first w_pos: issues NONSEQ for w_pos=1 before entering)
+            //   S_ADVANCE  (subsequent: issues NONSEQ for w_pos+2 before entering)
+            //
+            // MAC runs every cycle until mac_done.
+            // AHB load runs when hready, respecting r_wait, until load_done.
+            // Exits to S_WRITE_ADDR one cycle after both mac_done and load_done.
+
+            S_MAC_OVLP: begin
+                // ---- MAC side ----
+                if (!mac_done) begin
+                    acc <= acc + mac4;
+                    if (mac_idx == patch_words - 6'd1)
+                        mac_done <= 1'b1;
+                    else
+                        mac_idx <= mac_idx + 6'd1;
+                end
+
+                // ---- AHB load side (fills inactive buffer) ----
+                if (!load_done && hready) begin
+                    if (r_wait) begin
+                        haddr  <= haddr + 32'd4;
+                        htrans <= HTRANS_SEQ;
+                        r_wait <= 1'b0;
+                    end else begin
+                        // Write hrdata into the INACTIVE buffer (!buf_sel)
+                        if (buf_sel) in_buf0[buf_idx] <= hrdata;
+                        else         in_buf1[buf_idx] <= hrdata;
+
+                        if (buf_idx == patch_words - 7'd1) begin
+                            load_done <= 1'b1;
+                            htrans    <= HTRANS_IDLE;
+                        end else begin
+                            buf_idx <= buf_idx + 7'd1;
+                            haddr   <= haddr + 32'd4;
+                            htrans  <= HTRANS_SEQ;
+                        end
+                    end
+                end
+
+                // Exit one cycle after both phases complete
+                if (mac_done && load_done)
+                    state <= S_WRITE_ADDR;
+            end
+
+            // -----------------------------------------------------------------
             // Write 1-byte int8 result to dst[w_pos*C_out + c_pos].
+
             S_WRITE_ADDR: begin
 `ifdef ACCEL_DEBUG
                 if (w_pos < 2 && c_pos < 4)
@@ -413,7 +540,7 @@ module conv1d_accel (
 `endif
                 result_byte <= clipped;
                 hwdata <= {4{clipped}};
-                haddr  <= r_dst_addr + (w_pos * r_c_out) + c_pos;
+                haddr  <= r_dst_addr + (w_pos * {8'b0, r_c_out}) + c_pos;
                 htrans <= HTRANS_NONSEQ;
                 hburst <= HBURST_SINGLE;
                 hsize  <= HSIZE_BYTE;
@@ -430,21 +557,48 @@ module conv1d_accel (
             end
 
             // -----------------------------------------------------------------
-            // Inner loop (w_pos) advances first; outer loop (c_pos) on rollover.
+            // S_ADVANCE: increment w_pos; on rollover increment c_pos.
+            //
+            // For the next inner-loop iteration:
+            //   - If w_pos+2 exists: flip buf_sel, issue NONSEQ for w_pos+2 load,
+            //     reset MAC counters → S_MAC_OVLP (overlap MAC w_pos+1 + load w_pos+2)
+            //   - If w_pos+1 is the last: flip buf_sel, reset MAC counters → S_MAC
+            //   - If w_pos was the last: c_pos increment → S_WT_ADDR or S_DONE
+
             S_ADVANCE: begin
                 if (w_pos < w_out_cnt - 16'd1) begin
-                    // More output positions for this filter — stay in inner loop.
-                    w_pos <= w_pos + 16'd1;
-                    acc   <= 32'b0;
-                    state <= S_IN_ADDR;
+                    // More w_pos remain for this c_pos
+                    w_pos   <= w_pos + 16'd1;
+                    acc     <= 32'b0;
+                    buf_sel <= !buf_sel;   // loaded buffer becomes active
+
+                    if (w_pos + 16'd1 < w_out_cnt - 16'd1) begin
+                        // w_pos+2 exists: issue load now, overlap with MAC on w_pos+1
+                        haddr   <= r_src_addr +
+                                   ((w_pos + 16'd2) * {8'b0, r_stride} * {8'b0, r_c_in});
+                        htrans  <= HTRANS_NONSEQ;
+                        hburst  <= HBURST_INCR;
+                        hsize   <= HSIZE_WORD;
+                        hwrite  <= 1'b0;
+                        buf_idx <= 7'b0;
+                        r_wait  <= 1'b1;
+                        mac_idx <= 6'b0;
+                        mac_done  <= 1'b0;
+                        load_done <= 1'b0;
+                        state   <= S_MAC_OVLP;
+                    end else begin
+                        // w_pos+1 is the last — just MAC, no preload
+                        mac_idx <= 6'b0;
+                        state   <= S_MAC;
+                    end
                 end else begin
-                    // All w_pos done for this c_pos.
+                    // All w_pos done for this c_pos
                     w_pos <= 16'b0;
                     if (c_pos < r_c_out - 8'd1) begin
-                        // Next output channel — reload weights, bias, shift.
-                        c_pos <= c_pos + 8'd1;
-                        acc   <= 32'b0;
-                        state <= S_WT_ADDR;
+                        c_pos   <= c_pos + 8'd1;
+                        acc     <= 32'b0;
+                        buf_sel <= 1'b0;   // reset ping-pong for new c_pos
+                        state   <= S_WT_ADDR;
                     end else begin
                         state <= S_DONE;
                     end
@@ -474,8 +628,8 @@ module conv1d_accel (
         else begin
             dbg_ctr <= dbg_ctr + 21'd1;
             if (dbg_ctr == 21'd1999999)
-                $display("[ACCEL] still busy: state=%0d w_pos=%0d c_pos=%0d buf_idx=%0d mac_idx=%0d haddr=%08x htrans=%0d hready=%0d r_wait=%0d",
-                    state, w_pos, c_pos, buf_idx, mac_idx, haddr, htrans, hready, r_wait);
+                $display("[ACCEL] still busy: state=%0d w_pos=%0d c_pos=%0d buf_idx=%0d mac_idx=%0d haddr=%08x htrans=%0d hready=%0d r_wait=%0d buf_sel=%0d mac_done=%0d load_done=%0d",
+                    state, w_pos, c_pos, buf_idx, mac_idx, haddr, htrans, hready, r_wait, buf_sel, mac_done, load_done);
         end
     end
 `endif
