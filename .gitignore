@@ -67,3 +67,4 @@ venv/
 
 # data
 sim/playback/
+# peris/conv1d_accel/dv/sim/
