@@ -60,7 +60,7 @@ module flash_ctrl_eb #(parameter LW = 256) (
             CMD_66:    if (phase_tick == 15) next_state = WAIT_66;
             WAIT_66:   if (phase_tick == 3)  next_state = CMD_99;
             CMD_99:    if (phase_tick == 15) next_state = TRST_WAIT;
-            TRST_WAIT: if (phase_tick == TRST_CYCLES - 1)  next_state = CMD_EB;
+            TRST_WAIT: if (phase_tick == 16'(TRST_CYCLES) - 16'd1)  next_state = CMD_EB;
             CMD_EB:    if (phase_tick == 15) next_state = ADDR;
             ADDR:      if (phase_tick == 11) next_state = MODE;
             MODE:      if (phase_tick == 3)  next_state = DUMMY;
@@ -81,9 +81,9 @@ module flash_ctrl_eb #(parameter LW = 256) (
     always @* begin
         do_reg = 4'b0000;
         case (state)
-            CMD_66: do_reg[0] = (8'h66 >> (7 - phase_tick[3:1])) & 1;
-            CMD_99: do_reg[0] = (8'h99 >> (7 - phase_tick[3:1])) & 1;
-            CMD_EB: do_reg[0] = (8'hEB >> (7 - phase_tick[3:1])) & 1;
+            CMD_66: do_reg[0] = |((8'h66 >> (7 - phase_tick[3:1])) & 8'h01);
+            CMD_99: do_reg[0] = |((8'h99 >> (7 - phase_tick[3:1])) & 8'h01);
+            CMD_EB: do_reg[0] = |((8'hEB >> (7 - phase_tick[3:1])) & 8'h01);
 
             ADDR: begin
                 case (phase_tick[3:1])

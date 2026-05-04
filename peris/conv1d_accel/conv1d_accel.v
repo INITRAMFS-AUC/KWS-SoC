@@ -236,9 +236,9 @@ module conv1d_accel (
             // -----------------------------------------------------------------
             S_INIT: begin
                 patch_bytes <= r_k_w * r_c_in;
-                patch_words <= ((r_k_w * r_c_in) + 3) >> 2;
-                w_out_cnt   <= (r_w_in - r_k_w) / r_stride + 16'd1;
-                tail_bytes  <= (r_k_w * r_c_in) & 2'b11;
+                patch_words <= 6'(32'({2'b0, r_k_w * r_c_in}) + 32'd3) >> 2;
+                w_out_cnt   <= 16'((32'({16'b0, r_w_in}) - 32'({8'b0, r_k_w})) / 32'({8'b0, r_stride}) + 32'd1);
+                tail_bytes  <= 2'({2'b0, r_k_w} * {2'b0, r_c_in});
                 w_pos <= 16'b0;
                 c_pos <= 8'b0;
                 state <= S_WT_ADDR;   // begin outer loop: load weights for c_pos=0
@@ -276,20 +276,20 @@ module conv1d_accel (
                                 2'b01: rdbyte = hrdata[15: 8];
                                 2'b10: rdbyte = hrdata[23:16];
                                 2'b11: rdbyte = hrdata[31:24];
-                            endcase
-                            case (buf_idx[1:0])
-                                2'b00: wt_buf[buf_idx[6:2]][ 7: 0] <= rdbyte;
-                                2'b01: wt_buf[buf_idx[6:2]][15: 8] <= rdbyte;
-                                2'b10: wt_buf[buf_idx[6:2]][23:16] <= rdbyte;
-                                2'b11: wt_buf[buf_idx[6:2]][31:24] <= rdbyte;
-                            endcase
+                             endcase
+                              case (buf_idx[1:0])
+                                  2'b00: wt_buf[buf_idx[5:0]][ 7: 0] <= rdbyte;
+                                  2'b01: wt_buf[buf_idx[5:0]][15: 8] <= rdbyte;
+                                  2'b10: wt_buf[buf_idx[5:0]][23:16] <= rdbyte;
+                                  2'b11: wt_buf[buf_idx[5:0]][31:24] <= rdbyte;
+                             endcase
     `ifdef ACCEL_DEBUG
                         if (w_pos == 0 && c_pos < 2 && buf_idx < 4)
                                 $display("[WT] c_pos=%0d byte[%0d]=0x%02x lane=%0d hrdata=0x%08x",
                                     c_pos, buf_idx, rdbyte, cur_lane, hrdata);
 `endif
                         end
-                        if (buf_idx == patch_bytes - 7'd1) begin
+                        if (buf_idx == 7'(16'(patch_bytes) - 16'd1)) begin
                             htrans <= HTRANS_IDLE;
                             state  <= S_BIAS_ADDR;  // load bias for this c_pos
                         end else begin
@@ -372,18 +372,18 @@ module conv1d_accel (
                         htrans <= HTRANS_SEQ;
                         r_wait <= 1'b0;
                     end else begin
-                        if (buf_idx == patch_words - 1) begin
+                        if (buf_idx == 7'(6'(patch_words) - 6'd1)) begin
                             case (tail_bytes)
-                                2'b01: in_buf[buf_idx] <= {24'b0, hrdata[ 7:0]};
-                                2'b10: in_buf[buf_idx] <= {16'b0, hrdata[15:0]};
-                                2'b11: in_buf[buf_idx] <= { 8'b0, hrdata[23:0]};
-                                2'b00: in_buf[buf_idx] <= hrdata;
+                                2'b01: in_buf[buf_idx[5:0]] <= {24'b0, hrdata[ 7:0]};
+                                2'b10: in_buf[buf_idx[5:0]] <= {16'b0, hrdata[15:0]};
+                                2'b11: in_buf[buf_idx[5:0]] <= { 8'b0, hrdata[23:0]};
+                                2'b00: in_buf[buf_idx[5:0]] <= hrdata;
                             endcase
                             htrans  <= HTRANS_IDLE;
                             mac_idx <= 6'b0;
                             state   <= S_MAC;
                         end else begin
-                            in_buf[buf_idx] <= hrdata;
+                            in_buf[buf_idx[5:0]] <= hrdata;
                             buf_idx <= buf_idx + 7'd1;
                             haddr   <= haddr + 32'd4;
                             htrans  <= HTRANS_SEQ;
@@ -413,7 +413,7 @@ module conv1d_accel (
 `endif
                 result_byte <= clipped;
                 hwdata <= {4{clipped}};
-                haddr  <= r_dst_addr + (w_pos * r_c_out) + c_pos;
+                haddr  <= r_dst_addr + ({16'b0, w_pos} * {16'b0, r_c_out}) + {24'b0, c_pos};
                 htrans <= HTRANS_NONSEQ;
                 hburst <= HBURST_SINGLE;
                 hsize  <= HSIZE_BYTE;

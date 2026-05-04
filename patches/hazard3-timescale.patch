@@ -1,0 +1,270 @@
+diff --git a/hdl/arith/hazard3_alu.v b/hdl/arith/hazard3_alu.v
+index 1b798e5..1857b77 100644
+--- a/hdl/arith/hazard3_alu.v
++++ b/hdl/arith/hazard3_alu.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/arith/hazard3_branchcmp.v b/hdl/arith/hazard3_branchcmp.v
+index 8672715..cbae61c 100644
+--- a/hdl/arith/hazard3_branchcmp.v
++++ b/hdl/arith/hazard3_branchcmp.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                        Copyright (C) 2022 Luke Wren                         |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/arith/hazard3_mul_fast.v b/hdl/arith/hazard3_mul_fast.v
+index c9fde6e..5e2ebe3 100644
+--- a/hdl/arith/hazard3_mul_fast.v
++++ b/hdl/arith/hazard3_mul_fast.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/arith/hazard3_muldiv_seq.v b/hdl/arith/hazard3_muldiv_seq.v
+index 1fa4bdb..5577334 100644
+--- a/hdl/arith/hazard3_muldiv_seq.v
++++ b/hdl/arith/hazard3_muldiv_seq.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/arith/hazard3_onehot_encode.v b/hdl/arith/hazard3_onehot_encode.v
+index b33dd9a..b3992f7 100644
+--- a/hdl/arith/hazard3_onehot_encode.v
++++ b/hdl/arith/hazard3_onehot_encode.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                         Copyright (C) 2022 Luke Wren                        |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/arith/hazard3_onehot_priority.v b/hdl/arith/hazard3_onehot_priority.v
+index 238fac2..65c1993 100644
+--- a/hdl/arith/hazard3_onehot_priority.v
++++ b/hdl/arith/hazard3_onehot_priority.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                         Copyright (C) 2022 Luke Wren                        |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/arith/hazard3_onehot_priority_dynamic.v b/hdl/arith/hazard3_onehot_priority_dynamic.v
+index 123cdf8..4b587ce 100644
+--- a/hdl/arith/hazard3_onehot_priority_dynamic.v
++++ b/hdl/arith/hazard3_onehot_priority_dynamic.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                         Copyright (C) 2022 Luke Wren                        |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/arith/hazard3_priority_encode.v b/hdl/arith/hazard3_priority_encode.v
+index 172e72a..20c947f 100644
+--- a/hdl/arith/hazard3_priority_encode.v
++++ b/hdl/arith/hazard3_priority_encode.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/arith/hazard3_shift_barrel.v b/hdl/arith/hazard3_shift_barrel.v
+index 9fb51be..eafd7bf 100644
+--- a/hdl/arith/hazard3_shift_barrel.v
++++ b/hdl/arith/hazard3_shift_barrel.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/debug/cdc/hazard3_apb_async_bridge.v b/hdl/debug/cdc/hazard3_apb_async_bridge.v
+index e98ba0e..3d9cc08 100644
+--- a/hdl/debug/cdc/hazard3_apb_async_bridge.v
++++ b/hdl/debug/cdc/hazard3_apb_async_bridge.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/debug/cdc/hazard3_reset_sync.v b/hdl/debug/cdc/hazard3_reset_sync.v
+index 3dc8c32..5633f2c 100644
+--- a/hdl/debug/cdc/hazard3_reset_sync.v
++++ b/hdl/debug/cdc/hazard3_reset_sync.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/debug/cdc/hazard3_sync_1bit.v b/hdl/debug/cdc/hazard3_sync_1bit.v
+index 1e6af4d..d69a34f 100644
+--- a/hdl/debug/cdc/hazard3_sync_1bit.v
++++ b/hdl/debug/cdc/hazard3_sync_1bit.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/debug/dm/hazard3_dm.v b/hdl/debug/dm/hazard3_dm.v
+index 713c38f..995b7ce 100644
+--- a/hdl/debug/dm/hazard3_dm.v
++++ b/hdl/debug/dm/hazard3_dm.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/debug/dm/hazard3_sbus_to_ahb.v b/hdl/debug/dm/hazard3_sbus_to_ahb.v
+index ab6949b..64e99b3 100644
+--- a/hdl/debug/dm/hazard3_sbus_to_ahb.v
++++ b/hdl/debug/dm/hazard3_sbus_to_ahb.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                        Copyright (C) 2022 Luke Wren                         |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/debug/dtm/hazard3_ecp5_jtag_dtm.v b/hdl/debug/dtm/hazard3_ecp5_jtag_dtm.v
+index bfaca49..142e7e5 100644
+--- a/hdl/debug/dtm/hazard3_ecp5_jtag_dtm.v
++++ b/hdl/debug/dtm/hazard3_ecp5_jtag_dtm.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/debug/dtm/hazard3_jtag_dtm.v b/hdl/debug/dtm/hazard3_jtag_dtm.v
+index 8cc76ab..afb35f7 100644
+--- a/hdl/debug/dtm/hazard3_jtag_dtm.v
++++ b/hdl/debug/dtm/hazard3_jtag_dtm.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/debug/dtm/hazard3_jtag_dtm_core.v b/hdl/debug/dtm/hazard3_jtag_dtm_core.v
+index 58744b0..0d4726c 100644
+--- a/hdl/debug/dtm/hazard3_jtag_dtm_core.v
++++ b/hdl/debug/dtm/hazard3_jtag_dtm_core.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/debug/dtm/hazard3_xilinx7_jtag_dtm.v b/hdl/debug/dtm/hazard3_xilinx7_jtag_dtm.v
+index ac75737..e7a9563 100644
+--- a/hdl/debug/dtm/hazard3_xilinx7_jtag_dtm.v
++++ b/hdl/debug/dtm/hazard3_xilinx7_jtag_dtm.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2025 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/hazard3_core.v b/hdl/hazard3_core.v
+index 84b748b..96b64d3 100644
+--- a/hdl/hazard3_core.v
++++ b/hdl/hazard3_core.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2025 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/hazard3_cpu_1port.v b/hdl/hazard3_cpu_1port.v
+index bf3300a..671a4e0 100644
+--- a/hdl/hazard3_cpu_1port.v
++++ b/hdl/hazard3_cpu_1port.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/hazard3_cpu_2port.v b/hdl/hazard3_cpu_2port.v
+index 7356671..41ab7e9 100644
+--- a/hdl/hazard3_cpu_2port.v
++++ b/hdl/hazard3_cpu_2port.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/hazard3_csr.v b/hdl/hazard3_csr.v
+index cbc889f..99e9187 100644
+--- a/hdl/hazard3_csr.v
++++ b/hdl/hazard3_csr.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/hazard3_decode.v b/hdl/hazard3_decode.v
+index b8bd750..1ce5a70 100644
+--- a/hdl/hazard3_decode.v
++++ b/hdl/hazard3_decode.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2023 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/hazard3_frontend.v b/hdl/hazard3_frontend.v
+index 330fe78..1763bee 100644
+--- a/hdl/hazard3_frontend.v
++++ b/hdl/hazard3_frontend.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/hazard3_instr_decompress.v b/hdl/hazard3_instr_decompress.v
+index ddfab1a..97a48c5 100644
+--- a/hdl/hazard3_instr_decompress.v
++++ b/hdl/hazard3_instr_decompress.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2023 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/hazard3_irq_ctrl.v b/hdl/hazard3_irq_ctrl.v
+index 068e034..6291a45 100644
+--- a/hdl/hazard3_irq_ctrl.v
++++ b/hdl/hazard3_irq_ctrl.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                        Copyright (C) 2022 Luke Wren                         |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/hazard3_pmp.v b/hdl/hazard3_pmp.v
+index 9c1f1fb..6d0474c 100644
+--- a/hdl/hazard3_pmp.v
++++ b/hdl/hazard3_pmp.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                        Copyright (C) 2022 Luke Wren                         |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/hazard3_power_ctrl.v b/hdl/hazard3_power_ctrl.v
+index eab5582..e66d686 100644
+--- a/hdl/hazard3_power_ctrl.v
++++ b/hdl/hazard3_power_ctrl.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                        Copyright (C) 2022 Luke Wren                         |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/hazard3_regfile_1w2r.v b/hdl/hazard3_regfile_1w2r.v
+index 1bd2379..271ea96 100644
+--- a/hdl/hazard3_regfile_1w2r.v
++++ b/hdl/hazard3_regfile_1w2r.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                      Copyright (C) 2021-2022 Luke Wren                      |
+ |                     SPDX-License-Identifier: Apache-2.0                     |
+diff --git a/hdl/hazard3_triggers.v b/hdl/hazard3_triggers.v
+index 0dff196..245d7b6 100644
+--- a/hdl/hazard3_triggers.v
++++ b/hdl/hazard3_triggers.v
+@@ -1,3 +1,4 @@
++`timescale 1ns/1ps
+ /*****************************************************************************\
+ |                        Copyright (C) 2022 Luke Wren                         |
+ |                     SPDX-License-Identifier: Apache-2.0                     |

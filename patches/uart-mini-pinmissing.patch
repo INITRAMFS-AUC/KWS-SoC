@@ -1,0 +1,14 @@
+diff --git a/peris/uart/uart_mini.v b/peris/uart/uart_mini.v
+--- a/peris/uart/uart_mini.v
++++ b/peris/uart/uart_mini.v
+@@ -326,6 +326,10 @@ uart_regs regs (
+ 	.fstat_rxempty_i (rxfifo_empty),
+ 	.fstat_rxover_i  (rxfifo_full && rxfifo_wen),
+ 	.fstat_rxunder_i (rxfifo_empty && rxfifo_ren),
++	.fstat_txover_o  (/* unused sticky flag */),
++	.fstat_txunder_o (/* unused sticky flag */),
++	.fstat_rxover_o  (/* unused sticky flag */),
++	.fstat_rxunder_o (/* unused sticky flag */),
+ 	.tx_o            (txfifo_wdata),
+ 	.tx_wen          (txfifo_wen),
+ 	.rx_i            (rxfifo_rdata),

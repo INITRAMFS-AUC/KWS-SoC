@@ -84,6 +84,29 @@ for patch in "$PATCH_DIR"/*.patch; do
             # libfpga is a nested submodule of Hazard3, with its own git tree
             target="$LIBFPGA"
             ;;
+        hazard3-timescale.patch)
+            # Adds `timescale 1ns/1ps to all Hazard3 HDL files missing it.
+            # Fixes TIMESCALEMOD warnings that can error out ASIC flow.
+            target="$HAZARD3"
+            ;;
+        libfpga-uart-fixes.patch)
+            # Fixes WIDTHTRUNC and WIDTHEXPAND warnings in libfpga:
+            # - uart_mini.v: width mismatches on tx_over_ctr/rx_over_ctr and
+            #   txfifo_level/rxfifo_level
+            # - clkdiv_frac.v: width mismatches on frac_carry and 1'h1 OR
+            # - sync_fifo.v: WIDTHEXPAND on replication
+            target="$LIBFPGA"
+            ;;
+        ms_dmac_width_fixes.patch)
+            # Fixes WIDTHEXPAND warnings in MS_DMAC_AHBL.pp.v:
+            # - CNTR shift/extend to 18 bits
+            # - M_HSIZE expects 3 bits, extend ctrl_*_type_o
+            target="$ROOT/peris/MS_DMAC_AHBL"
+            ;;
+        uart-mini-pinmissing.patch)
+            # Adds missing fstat output port connections to uart_mini.v
+            target="$LIBFPGA"
+            ;;
         *)
             echo "[patches] $name has no known target, skipping" >&2
             continue

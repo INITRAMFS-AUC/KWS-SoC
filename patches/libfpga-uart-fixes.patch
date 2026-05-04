@@ -1,0 +1,22 @@
+diff --git a/peris/uart/uart_mini.v b/peris/uart/uart_mini.v
+index 6f0d46e..26762bb 100644
+--- a/peris/uart/uart_mini.v
++++ b/peris/uart/uart_mini.v
+@@ -103,7 +103,7 @@ wire cts_en;
+ wire tx_busy = tx_state != TX_IDLE || !txfifo_empty;
+ wire cts_with_loop = csr_loopback ? rts : cts;
+ wire hold_tx = txfifo_empty || (cts_en && cts_with_loop);
+-assign txfifo_ren = clk_en && !hold_tx && !tx_over_ctr &&
++assign txfifo_ren = clk_en && !hold_tx && !(|tx_over_ctr) &&
+ 	(tx_state == TX_IDLE || tx_state == TX_STOP);
+ 
+ always @ (posedge clk or negedge rst_n_sync) begin
+@@ -121,7 +121,7 @@ always @ (posedge clk or negedge rst_n_sync) begin
+ 	end else begin
+ 		if (clk_en)
+ 			tx_over_ctr <= tx_over_ctr + 1'b1;
+-		if (clk_en && !tx_over_ctr) begin
++		if (clk_en && !(|tx_over_ctr)) begin
+ 			tx_state <= tx_state + 1'b1;
+ 			case (tx_state)
+ 			TX_IDLE: begin

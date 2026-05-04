@@ -5,6 +5,8 @@
 
 // Example file integrating a Hazard3 processor, processor JTAG + debug
 // components, some memory and a UART.
+`timescale 1ns/1ps
+
 `include "kws_soc_config.vh"
 
 module kws_soc #(
@@ -391,7 +393,7 @@ module kws_soc #(
       .dbg_sbus_wdata            (sbus_wdata),
       .dbg_sbus_rdata            (sbus_rdata),
 
-      .irq      ({uart_irq, dmac_irq}),
+      .irq      ({1'b0, uart_irq, dmac_irq}),
 
       .soft_irq (1'b0),
       .timer_irq(timer_irq),

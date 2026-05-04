@@ -182,7 +182,7 @@ endgenerate
 // AHB State Machine
 
 reg [N_PORTS-1:0] mast_gnt_d;
-assign dst_hready = mast_gnt_d ? |(src_hready & mast_gnt_d) : 1'b1;
+assign dst_hready = |mast_gnt_d ? |(src_hready & mast_gnt_d) : 1'b1;
 
 wire [N_PORTS-1:0] mast_aphase_ends = mast_req_a & src_hready;
 wire [N_PORTS-1:0] buf_wen = mast_aphase_ends & ~(mast_gnt_a & {N_PORTS{dst_hready}});
