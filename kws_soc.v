@@ -875,9 +875,10 @@ module kws_soc #(
       .M_HREADY (dmac_m_hready),
       .M_HRDATA (dmac_m_hrdata),
 
-      // PIRQ unused — i2s_irq now routes to the CPU (IRQ 2); firmware ISR
-      // fires the SW trigger (DMAC->swtrig=1) instead of a hardware PIRQ.
-      .PIRQ    (1'b0)
+      // PIRQ[0] = i2s_irq (FIFO half-full).  Firmware sets CTRL.trigger=4'b0001
+      // for autonomous DMA drain — DMA self-arms each burst with no CPU work.
+      // i2s_irq still also routes to the CPU (IRQ 2) for non-DMA flows.
+      .PIRQ    (i2s_irq)
   );
 
   uart_mini uart_u (

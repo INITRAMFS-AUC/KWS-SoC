@@ -170,11 +170,13 @@ typedef struct {
 #define I2S_CLK_DIV  6
 #endif
 
-/* I2S_CONF bit masks — match peris/i2s/i2s_apb/i2s_itr2/i2s_regs.h */
+/* I2S_CONF bit masks — match peris/i2s/i2s_apb/i2s_itr2/i2s_regs.h.
+ * WIDTH[7:6]: 0=32-bit (1 sample/word), 1=16-bit (2/word), 2=8-bit (4/word).
+ * Q8_EN below is preserved as a convenience alias = WIDTH=8. */
 #define I2S_CONF_IRQ_EN     (1u << 4)
 #define I2S_CONF_DS_EN      (1u << 5)   /* HW 3x downsample (keep 1 of 3)    */
-#define I2S_CONF_Q8_EN      (1u << 6)   /* HW int8 quant: 4 samples per word */
-#define I2S_CONF_SKIP_R_EN  (1u << 7)   /* skip SCK toggling during R slot   */
+#define I2S_CONF_Q8_EN      (2u << 6)   /* WIDTH=8: 4 int8 samples per word  */
+#define I2S_CONF_SKIP_R_EN  (0u)        /* deprecated; receiver no longer has this bit */
 
 static void i2s_init(uint32_t clk_div) {
     /* Q8_EN: HW packs 4 int8 samples per FIFO word — 4× less FIFO/AHB

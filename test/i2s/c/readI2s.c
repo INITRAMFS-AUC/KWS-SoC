@@ -54,7 +54,9 @@ void i2s_configure(uint32_t clk_div, uint8_t int_en, uint8_t ds_en, uint8_t q8_e
     conf_val |= ((clk_div << I2S_CONF_DIV_LSB)    & I2S_CONF_DIV_MASK);
     conf_val |= ((int_en  << I2S_CONF_IRQ_EN_LSB) & I2S_CONF_IRQ_EN_MASK);
     /* conf_val |= ((ds_en   << I2S_CONF_DS_EN_LSB)  & I2S_CONF_DS_EN_MASK); */
-    conf_val |= ((q8_en   << I2S_CONF_Q8_EN_LSB)  & I2S_CONF_Q8_EN_MASK);
+    /* q8_en=1 maps to WIDTH=8 (8-bit packing) in the new width-aware regblock. */
+    if (q8_en)
+        conf_val |= (((uint32_t)I2S_CONF_WIDTH_8 << I2S_CONF_WIDTH_LSB) & I2S_CONF_WIDTH_MASK);
     I2S->conf = conf_val;
 }
 
