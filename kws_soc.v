@@ -263,7 +263,7 @@ module kws_soc #(
   // Crossbar AHB5 master-side outputs (we don't have a real exclusive monitor;
   // the splitter/arbiter return hexokay=1 by default when no slave drives it).
 `ifdef XIP_PLAYBACK
-  wire [4:0]        src_hexokay_xbar;  // {playback, accel, dmac, d-port, i-port}
+  wire [4:0]        src_hexokay_xbar;  // {xip_loader, accel, dmac, d-port, i-port}
 `else
   wire [3:0]        src_hexokay_xbar;  // {accel, dmac, d-port, i-port}
 `endif
@@ -391,7 +391,7 @@ module kws_soc #(
       .dbg_sbus_wdata            (sbus_wdata),
       .dbg_sbus_rdata            (sbus_rdata),
 
-      .irq      ({uart_irq, dmac_irq}),
+      .irq      ({i2s_irq, uart_irq, dmac_irq}),
 
       .soft_irq (1'b0),
       .timer_irq(timer_irq),
@@ -516,58 +516,101 @@ module kws_soc #(
   wire              accel_hresp;
 
 `ifdef XIP_PLAYBACK
-  // XIP sample playback AHB master signals (crossbar master port 4)
-  wire [W_ADDR-1:0] playback_haddr;
-  wire              playback_hwrite;
-  wire [       1:0] playback_htrans;
-  wire [       2:0] playback_hsize;
-  wire [W_DATA-1:0] playback_hrdata;
-  wire              playback_hready;
-  wire              playback_hresp;
+  // xip_loader AHB master signals (crossbar master port 4)
+  wire [W_ADDR-1:0] loader_haddr;
+  wire              loader_hwrite;
+  wire [       1:0] loader_htrans;
+  wire [       2:0] loader_hsize;
+  wire [W_DATA-1:0] loader_hwdata;
+  wire [W_DATA-1:0] loader_hrdata;
+  wire              loader_hready;
+  wire              loader_hresp;
+
+  // Playback SRAM AHB slave signals (crossbar slave port 4 @ 0x2000_0000)
+  wire              pb_sram_hready_resp;
+  wire              pb_sram_hready;
+  wire              pb_sram_hresp;
+  wire [W_ADDR-1:0] pb_sram_haddr;
+  wire              pb_sram_hwrite;
+  wire [       1:0] pb_sram_htrans;
+  wire [       2:0] pb_sram_hsize;
+  wire [       2:0] pb_sram_hburst;
+  wire [       3:0] pb_sram_hprot;
+  wire              pb_sram_hmastlock;
+  wire [W_DATA-1:0] pb_sram_hwdata;
+  wire [W_DATA-1:0] pb_sram_hrdata;
+
+  // Direct read port between playback_buf and i2s_sd_driver
+  wire [      31:0] pb_sram_raddr;
+  wire              pb_sram_ren;
+  wire [W_DATA-1:0] pb_sram_rdata;
+
+  // load_done: asserted by xip_loader once all samples are in playback_buf
+  wire              load_done;
 `endif
 
 `ifdef XIP_PLAYBACK
-  // Bus fabric:
-  // Masters (N_MASTERS=5):
-  //   Master 0 — i-port     SRAM+XIP              CONN[3:0]  = 4'b1001
-  //   Master 1 — d-port     SRAM+Bridge+DMAC+XIP  CONN[7:4]  = 4'b1111
-  //   Master 2 — DMAC       SRAM+Bridge           CONN[11:8] = 4'b0011
-  //   Master 3 — accel      SRAM+XIP              CONN[15:12]= 4'b1001
-  //   Master 4 — playback   XIP only              CONN[19:16]= 4'b1000
-  // CONN_MATRIX_TRANSPOSE[slave*N_MASTERS+master]:
-  //   SRAM[0]    ← accel+dmac+d+i     5'b01111  [4:0]
-  //   Bridge[1]  ← dmac+d-port        5'b00110  [9:5]
-  //   DMACregs[2]← d-port only        5'b00010  [14:10]
-  //   XIP[3]     ← playback+accel+d+i 5'b10011  [19:15]
+  // Bus fabric (XIP_PLAYBACK):
+  // N_MASTERS=5, N_SLAVES=5
+  //
+  // Slaves:
+  //   Slave 0 — SRAM        (0x0000_0000, mask 0xe000_0000)
+  //   Slave 1 — APB bridge  (0x4000_0000, mask 0xe000_0000)
+  //   Slave 2 — DMAC regs   (0x6000_0000, mask 0xe000_0000)
+  //   Slave 3 — XIP flash   (0x8000_0000, mask 0xe000_0000)
+  //   Slave 4 — Playback buf(0x2000_0000, mask 0xe000_0000)
+  //
+  // CONN_MATRIX[master*N_SLAVES + slave] — each row is 5 bits {S4,S3,S2,S1,S0}:
+  //   M0 i-port   : SRAM+XIP              5'b01001  bits [ 4: 0]
+  //   M1 d-port   : all+PB_SRAM           5'b11111  bits [ 9: 5]
+  //   M2 DMAC     : SRAM+Bridge           5'b00011  bits [14:10]
+  //   M3 accel    : SRAM+XIP              5'b01001  bits [19:15]
+  //   M4 xip_loader: XIP+PB_SRAM         5'b11000  bits [24:20]
+  //
+  // CONN_MATRIX_TRANSPOSE[slave*N_MASTERS + master] — each row is 5 bits {M4,M3,M2,M1,M0}:
+  //   S0 SRAM    : ←M0,M1,M2,M3          5'b01111  bits [ 4: 0]
+  //   S1 Bridge  : ←M1,M2                5'b00110  bits [ 9: 5]
+  //   S2 DMACregs: ←M1                   5'b00010  bits [14:10]
+  //   S3 XIP     : ←M0,M1,M3,M4          5'b11011  bits [19:15]
+  //   S4 PB_SRAM : ←M1,M4                5'b10010  bits [24:20]
 
   localparam N_MASTERS_XBAR = 5;
-  localparam CONN_MATRIX_PB       = 20'b1000_1001_0011_1111_1001;
-  localparam CONN_MATRIX_TRANS_PB = 20'b1001_1000_1000_1100_1111;
+  localparam N_SLAVES_XBAR  = 5;
+  localparam CONN_MATRIX_PB       = 25'b11000_01001_00011_11111_01001;
+  localparam CONN_MATRIX_TRANS_PB = 25'b10010_11011_00010_00110_01111;
+  localparam ADDR_MAP_PB  = 160'h20000000_80000000_60000000_40000000_00000000;
+  localparam ADDR_MASK_PB = 160'he0000000_e0000000_e0000000_e0000000_e0000000;
 `else
-  // Bus fabric:
-  // Masters (N_MASTERS=4):
-  //   Master 0 — i-port   SRAM+XIP              CONN[3:0]  = 4'b1001
-  //   Master 1 — d-port   SRAM+Bridge+DMAC+XIP  CONN[7:4]  = 4'b1111
-  //   Master 2 — DMAC     SRAM+Bridge            CONN[11:8] = 4'b0011
-  //   Master 3 — accel    SRAM+XIP               CONN[15:12]= 4'b1001
-  // CONN_MATRIX_TRANSPOSE[slave*N_MASTERS+master]:
-  //   SRAM[0]    ← all 4          4'b1111  [3:0]
-  //   Bridge[1]  ← d-port+dmac   4'b0110  [7:4]
-  //   DMACregs[2]← d-port only   4'b0010  [11:8]
-  //   XIP[3]     ← i+d+accel     4'b1011  [15:12]
+  // Bus fabric (production):
+  // N_MASTERS=4, N_SLAVES=4
+  //
+  // CONN_MATRIX[master*N_SLAVES + slave] — each row is 4 bits {S3,S2,S1,S0}:
+  //   M0 i-port: SRAM+XIP              4'b1001  bits [ 3: 0]
+  //   M1 d-port: all                   4'b1111  bits [ 7: 4]
+  //   M2 DMAC  : SRAM+Bridge           4'b0011  bits [11: 8]
+  //   M3 accel : SRAM+XIP              4'b1001  bits [15:12]
+  //
+  // CONN_MATRIX_TRANSPOSE[slave*N_MASTERS + master]:
+  //   S0 SRAM    : ←all 4   4'b1111  [3:0]
+  //   S1 Bridge  : ←d,dmac  4'b0110  [7:4]
+  //   S2 DMACregs: ←d       4'b0010  [11:8]
+  //   S3 XIP     : ←i,d,acc 4'b1011  [15:12]
 
   localparam N_MASTERS_XBAR = 4;
+  localparam N_SLAVES_XBAR  = 4;
   localparam CONN_MATRIX_PB       = 16'b1001_0011_1111_1001;
   localparam CONN_MATRIX_TRANS_PB = 16'b1011_0010_0110_1111;
+  localparam ADDR_MAP_PB  = 128'h80000000_60000000_40000000_00000000;
+  localparam ADDR_MASK_PB = 128'he0000000_e0000000_e0000000_e0000000;
 `endif
 
   ahbl_crossbar #(
       .N_MASTERS(N_MASTERS_XBAR),
-      .N_SLAVES (4),
+      .N_SLAVES (N_SLAVES_XBAR),
       .W_ADDR   (W_ADDR),
       .W_DATA   (W_DATA),
-      .ADDR_MAP (128'h80000000_60000000_40000000_00000000),
-      .ADDR_MASK(128'he0000000_e0000000_e0000000_e0000000),
+      .ADDR_MAP (ADDR_MAP_PB),
+      .ADDR_MASK(ADDR_MASK_PB),
       .CONN_MATRIX           (CONN_MATRIX_PB),
       .CONN_MATRIX_TRANSPOSE (CONN_MATRIX_TRANS_PB)
   ) xbar_u (
@@ -575,21 +618,21 @@ module kws_soc #(
       .rst_n(rst_n),
 
 `ifdef XIP_PLAYBACK
-      // Masters (N_MASTERS=5): {playback [MSB], accel, dmac, d-port, i-port [LSB]}.
-      .src_hready_resp({playback_hready,  accel_hready,    dmac_m_hready,  d_hready,    i_hready   }),
-      .src_hresp      ({playback_hresp,   accel_hresp,     dmac_m_hresp,   d_hresp,     i_hresp    }),
+      // Masters (N_MASTERS=5): {xip_loader [MSB], accel, dmac, d-port, i-port [LSB]}.
+      .src_hready_resp({loader_hready,  accel_hready,    dmac_m_hready,  d_hready,    i_hready   }),
+      .src_hresp      ({loader_hresp,   accel_hresp,     dmac_m_hresp,   d_hresp,     i_hresp    }),
       .src_hexokay    (src_hexokay_xbar),
-      .src_haddr      ({playback_haddr,   accel_haddr,     dmac_m_haddr,   d_haddr,     i_haddr    }),
-      .src_hwrite     ({playback_hwrite,  accel_hwrite,    dmac_m_hwrite,  d_hwrite,    i_hwrite   }),
-      .src_htrans     ({playback_htrans,  accel_htrans,    dmac_m_htrans,  d_htrans,    i_htrans   }),
-      .src_hsize      ({playback_hsize,   accel_hsize,     dmac_m_hsize,   d_hsize,     i_hsize    }),
-      .src_hburst     ({3'b000,           accel_hburst,    3'b000,         d_hburst,    i_hburst   }),
-      .src_hprot      ({4'b0011,          accel_hprot,     4'b0011,        d_hprot,     i_hprot    }),
-      .src_hmaster    ({8'd0,             8'd0,            8'd0,           d_hmaster,   i_hmaster  }),
-      .src_hmastlock  ({1'b0,             accel_hmastlock, 1'b0,           d_hmastlock, i_hmastlock}),
-      .src_hexcl      ({1'b0,             1'b0,            1'b0,           d_hexcl,     i_hexcl    }),
-      .src_hwdata     ({32'h0,            accel_hwdata,    dmac_m_hwdata,  d_hwdata,    i_hwdata   }),
-      .src_hrdata     ({playback_hrdata,  accel_hrdata,    dmac_m_hrdata,  d_hrdata,    i_hrdata   }),
+      .src_haddr      ({loader_haddr,   accel_haddr,     dmac_m_haddr,   d_haddr,     i_haddr    }),
+      .src_hwrite     ({loader_hwrite,  accel_hwrite,    dmac_m_hwrite,  d_hwrite,    i_hwrite   }),
+      .src_htrans     ({loader_htrans,  accel_htrans,    dmac_m_htrans,  d_htrans,    i_htrans   }),
+      .src_hsize      ({loader_hsize,   accel_hsize,     dmac_m_hsize,   d_hsize,     i_hsize    }),
+      .src_hburst     ({3'b000,         accel_hburst,    3'b000,         d_hburst,    i_hburst   }),
+      .src_hprot      ({4'b0011,        accel_hprot,     4'b0011,        d_hprot,     i_hprot    }),
+      .src_hmaster    ({8'd0,           8'd0,            8'd0,           d_hmaster,   i_hmaster  }),
+      .src_hmastlock  ({1'b0,           accel_hmastlock, 1'b0,           d_hmastlock, i_hmastlock}),
+      .src_hexcl      ({1'b0,           1'b0,            1'b0,           d_hexcl,     i_hexcl    }),
+      .src_hwdata     ({loader_hwdata,  accel_hwdata,    dmac_m_hwdata,  d_hwdata,    i_hwdata   }),
+      .src_hrdata     ({loader_hrdata,  accel_hrdata,    dmac_m_hrdata,  d_hrdata,    i_hrdata   }),
 `else
       // Masters (N_MASTERS=4): {accel [MSB], dmac, d-port, i-port [LSB]}.
       .src_hready_resp({accel_hready,    dmac_m_hready,  d_hready,    i_hready   }),
@@ -608,8 +651,27 @@ module kws_soc #(
       .src_hrdata     ({accel_hrdata,    dmac_m_hrdata,  d_hrdata,    i_hrdata   }),
 `endif
 
-      // Slaves: {xip [MSB], dmac regs, bridge, sram [LSB]}.
-      // No slave drives hexokay; tie off.  dst_hmaster / dst_hexcl unused.
+      // Slaves [MSB..LSB].  No slave drives hexokay; tie off.
+      // dst_hmaster / dst_hexcl unused.
+`ifdef XIP_PLAYBACK
+      // Slaves (N_SLAVES=5): {pb_sram [MSB], xip, dmac regs, bridge, sram [LSB]}.
+      .dst_hready_resp({pb_sram_hready_resp, xip_hready_resp,  dmac_hready_resp, bridge_hready_resp, sram0_hready_resp}),
+      .dst_hready     ({pb_sram_hready,      xip_hready,       dmac_hready,      bridge_hready,      sram0_hready     }),
+      .dst_hresp      ({pb_sram_hresp,       xip_hresp,        1'b0,             bridge_hresp,       sram0_hresp      }),
+      .dst_hexokay    (5'b00000),
+      .dst_haddr      ({pb_sram_haddr,       xip_haddr,        dmac_haddr,       bridge_haddr,       sram0_haddr      }),
+      .dst_hwrite     ({pb_sram_hwrite,      xip_hwrite,       dmac_hwrite,      bridge_hwrite,      sram0_hwrite     }),
+      .dst_htrans     ({pb_sram_htrans,      xip_htrans,       dmac_htrans,      bridge_htrans,      sram0_htrans     }),
+      .dst_hsize      ({pb_sram_hsize,       xip_hsize,        dmac_hsize,       bridge_hsize,       sram0_hsize      }),
+      .dst_hburst     ({pb_sram_hburst,      xip_hburst,       dmac_hburst,      bridge_hburst,      sram0_hburst     }),
+      .dst_hprot      ({pb_sram_hprot,       xip_hprot,        dmac_hprot,       bridge_hprot,       sram0_hprot      }),
+      .dst_hmaster    (/* unused */),
+      .dst_hmastlock  ({pb_sram_hmastlock,   xip_hmastlock,    dmac_hmastlock,   bridge_hmastlock,   sram0_hmastlock  }),
+      .dst_hexcl      (/* unused */),
+      .dst_hwdata     ({pb_sram_hwdata,      xip_hwdata,       dmac_hwdata,      bridge_hwdata,      sram0_hwdata     }),
+      .dst_hrdata     ({pb_sram_hrdata,      xip_hrdata,       dmac_hrdata,      bridge_hrdata,      sram0_hrdata     })
+`else
+      // Slaves (N_SLAVES=4): {xip [MSB], dmac regs, bridge, sram [LSB]}.
       .dst_hready_resp({xip_hready_resp,  dmac_hready_resp, bridge_hready_resp, sram0_hready_resp}),
       .dst_hready     ({xip_hready,       dmac_hready,      bridge_hready,      sram0_hready     }),
       .dst_hresp      ({xip_hresp,        1'b0,             bridge_hresp,       sram0_hresp      }),
@@ -625,6 +687,7 @@ module kws_soc #(
       .dst_hexcl      (/* unused */),
       .dst_hwdata     ({xip_hwdata,       dmac_hwdata,      bridge_hwdata,      sram0_hwdata     }),
       .dst_hrdata     ({xip_hrdata,       dmac_hrdata,      bridge_hrdata,      sram0_hrdata     })
+`endif
   );
 
   // APB layer
@@ -812,8 +875,9 @@ module kws_soc #(
       .M_HREADY (dmac_m_hready),
       .M_HRDATA (dmac_m_hrdata),
 
-      // Peripheral trigger: I2S FIFO-ready fires DMA when CTRL.TRIGGER[0]=1
-      .PIRQ    (i2s_irq)
+      // PIRQ unused — i2s_irq now routes to the CPU (IRQ 2); firmware ISR
+      // fires the SW trigger (DMAC->swtrig=1) instead of a hardware PIRQ.
+      .PIRQ    (1'b0)
   );
 
   uart_mini uart_u (
@@ -837,36 +901,69 @@ module kws_soc #(
       .dreq(  /* unused */)
   );
 
-  // I2S SD input mux: real mic pin vs XIP sample playback
+  // I2S SD input mux: real mic pin vs SRAM-backed playback driver
   wire i2s_sd_internal;
 
 `ifdef XIP_PLAYBACK
-  // XIP sample playback: read samples from XIP flash via AHB bus and
-  // feed them serially to the I2S receiver's sd input.
-  wire xip_player_sd;
-
-  xip_sample_player #(
-      .SAMPLE_XIP_ADDR(32'h8001_0000),  // matches .playback_samples in link.ld
-      .N_SAMPLES      (8000)            // 1 second at 8 kHz
-  ) xip_player_u (
-      .clk       (clk),
-      .rst_n     (rst_n),
-      .sck_ref   (i2s_sck_out),
-      .ws_ref    (i2s_ws_out),
-      .sd_out    (xip_player_sd),
-      // AHB master port (crossbar master slot 4)
-      .m_haddr   (playback_haddr),
-      .m_hwrite  (playback_hwrite),
-      .m_htrans  (playback_htrans),
-      .m_hsize   (playback_hsize),
-      .m_hrdata  (playback_hrdata),
-      .m_hready  (playback_hready),
-      .m_hresp   (playback_hresp)
+  // xip_loader: one-shot AHB master that bulk-copies samples from
+  // XIP flash (0x8001_0000) into the playback SRAM (0x2000_0000) at startup.
+  xip_loader #(
+      .SAMPLE_XIP_ADDR(32'h8001_0000),
+      .PB_SRAM_ADDR   (32'h2000_0000)
+  ) xip_loader_u (
+      .clk      (clk),
+      .rst_n    (rst_n),
+      .load_done(load_done),
+      .m_haddr  (loader_haddr),
+      .m_hwrite (loader_hwrite),
+      .m_htrans (loader_htrans),
+      .m_hsize  (loader_hsize),
+      .m_hwdata (loader_hwdata),
+      .m_hrdata (loader_hrdata),
+      .m_hready (loader_hready),
+      .m_hresp  (loader_hresp)
   );
 
-  assign i2s_sd_internal = xip_player_sd;
+  // playback_buf: dual-port SRAM — AHB slave (written by xip_loader, readable
+  // from d-port for debug) + direct read port for i2s_sd_driver.
+  playback_buf pb_buf_u (
+      .clk              (clk),
+      .rst_n            (rst_n),
+      .ahbls_hready     (pb_sram_hready),
+      .ahbls_hready_resp(pb_sram_hready_resp),
+      .ahbls_hresp      (pb_sram_hresp),
+      .ahbls_haddr      (pb_sram_haddr),
+      .ahbls_hwrite     (pb_sram_hwrite),
+      .ahbls_htrans     (pb_sram_htrans),
+      .ahbls_hsize      (pb_sram_hsize),
+      .ahbls_hburst     (pb_sram_hburst),
+      .ahbls_hprot      (pb_sram_hprot),
+      .ahbls_hmastlock  (pb_sram_hmastlock),
+      .ahbls_hwdata     (pb_sram_hwdata),
+      .ahbls_hrdata     (pb_sram_hrdata),
+      .direct_raddr     (pb_sram_raddr),
+      .direct_ren       (pb_sram_ren),
+      .direct_rdata     (pb_sram_rdata)
+  );
+
+  // i2s_sd_driver: serializes samples from playback_buf to I2S SD line.
+  // Activates only after load_done; loops the sample array continuously.
+  wire i2s_sd_driver_out;
+  i2s_sd_driver i2s_sd_driver_u (
+      .clk      (clk),
+      .rst_n    (rst_n),
+      .load_done(load_done),
+      .sck_ref  (i2s_sck_out),
+      .ws_ref   (i2s_ws_out),
+      .sd_out   (i2s_sd_driver_out),
+      .rd_addr  (pb_sram_raddr),
+      .rd_en    (pb_sram_ren),
+      .rd_data  (pb_sram_rdata)
+  );
+
+  assign i2s_sd_internal = i2s_sd_driver_out;
 `else
-  // Normal operation: use external I2S mic input
+  // Production: use external I2S mic input directly
   assign i2s_sd_internal = i2s_sd;
 `endif
 

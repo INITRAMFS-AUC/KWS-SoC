@@ -22,6 +22,7 @@ MODEL_C_DIR  = model
 STREAMING_MODEL_C_DIR = streaming_model
 MEL_COMPACT_C_DIR = mel_compact
 MEL_COMPACT_INT8_C_DIR = mel_compact_int8
+MEL_COMPACT_INT8_PI_C_DIR = mel_compact_int8_pi
 LR_MODEL_C_DIR = lr_model
 NNOM_DIR     = ../third_party/nnom
 NNOM_INC_DIR = $(NNOM_DIR)/inc
@@ -60,6 +61,11 @@ SRAM_SIZE_BYTES = $(shell echo $$(($(SRAM_DEPTH) * 4)))
 # binary picks up the same value the model build uses.
 I2S_FIFO_DEPTH      ?= 16
 I2S_DMA_BURST_WORDS := $(shell expr $(I2S_FIFO_DEPTH) / 2)
+# Clock divider for apb_i2s_receiver.  Effective sample rate with DS_EN (3×):
+#   clk / (128 * (I2S_CLK_DIV + 1))
+#   36 MHz FPGA: I2S_CLK_DIV=6 → ~48 kHz raw → ~16 kHz effective
+#   12 MHz sim:  I2S_CLK_DIV=1 → ~47 kHz raw → ~16 kHz effective
+I2S_CLK_DIV         ?= 6
 
 # XIP sample playback — passed from root Makefile when XIP_PLAYBACK=1.
 # When set, the generated playback_samples.c is compiled and linked into
@@ -110,6 +116,7 @@ MODEL_CFLAGS = -march=$(RV_ARCH) -mabi=$(RV_ABI) \
                "-DNNOM_LOG(...)=" \
                $(GLOBAL_UART_CONFIG) \
                -DI2S_DMA_BURST_WORDS=$(I2S_DMA_BURST_WORDS) \
+               -DI2S_CLK_DIV=$(I2S_CLK_DIV) \
                -I$(COMMON_DIR) \
                -I$(NNOM_INC_DIR) -I$(NNOM_PORT_DIR)
 
@@ -140,6 +147,7 @@ SRAM_TARGETS = \
 	$(BUILD_DIR)/bridge_bug_test_sram.elf     $(BUILD_DIR)/bridge_bug_test_sram.dis     $(BUILD_DIR)/bridge_bug_test_sram.bin \
 	$(BUILD_DIR)/snooper_test_sram.elf        $(BUILD_DIR)/snooper_test_sram.dis        $(BUILD_DIR)/snooper_test_sram.bin \
 	$(BUILD_DIR)/readI2s_sram.elf             $(BUILD_DIR)/readI2s_sram.dis             $(BUILD_DIR)/readI2s_sram.bin \
+	$(BUILD_DIR)/recordI2s_sram.elf           $(BUILD_DIR)/recordI2s_sram.dis           $(BUILD_DIR)/recordI2s_sram.bin \
 	$(BUILD_DIR)/malloc_simple_test_sram.elf  $(BUILD_DIR)/malloc_simple_test_sram.dis  $(BUILD_DIR)/malloc_simple_test_sram.bin \
 	$(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_torture_test_sram.dis $(BUILD_DIR)/malloc_torture_test_sram.bin \
 	$(BUILD_DIR)/memcpy_simple_test_sram.elf  $(BUILD_DIR)/memcpy_simple_test_sram.dis  $(BUILD_DIR)/memcpy_simple_test_sram.bin \
@@ -153,6 +161,7 @@ SRAM_TARGETS = \
 XIP_TARGETS = \
 	$(BUILD_DIR)/hello_world_xip.elf     $(BUILD_DIR)/hello_world_xip.dis     $(BUILD_DIR)/hello_world_xip.bin \
 	$(BUILD_DIR)/readI2s_xip.elf         $(BUILD_DIR)/readI2s_xip.dis         $(BUILD_DIR)/readI2s_xip.bin \
+	$(BUILD_DIR)/recordI2s_xip.elf       $(BUILD_DIR)/recordI2s_xip.dis       $(BUILD_DIR)/recordI2s_xip.bin \
 	$(BUILD_DIR)/flash_read_test_xip.elf       $(BUILD_DIR)/flash_read_test_xip.dis       $(BUILD_DIR)/flash_read_test_xip.bin \
 	$(BUILD_DIR)/snooper_test_xip.elf          $(BUILD_DIR)/snooper_test_xip.dis          $(BUILD_DIR)/snooper_test_xip.bin \
 	$(BUILD_DIR)/tests_xip.elf                 $(BUILD_DIR)/tests_xip.dis                 $(BUILD_DIR)/tests_xip.bin \
@@ -165,6 +174,7 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf       $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis       $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin \
 	$(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.bin \
 	$(BUILD_DIR)/mel_compact_int8_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_xip_accel.bin \
+	$(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.bin \
 	$(BUILD_DIR)/accel_test_xip.elf                  $(BUILD_DIR)/accel_test_xip.dis                  $(BUILD_DIR)/accel_test_xip.bin \
 	$(BUILD_DIR)/lr_model_xip.elf                    $(BUILD_DIR)/lr_model_xip.dis                    $(BUILD_DIR)/lr_model_xip.bin \
 	$(BUILD_DIR)/lr_model_xip_accel.elf              $(BUILD_DIR)/lr_model_xip_accel.dis              $(BUILD_DIR)/lr_model_xip_accel.bin
@@ -184,6 +194,8 @@ uart:   $(BUILD_DIR)/hello_world_sram.elf $(BUILD_DIR)/hello_world_sram.dis $(BU
         $(BUILD_DIR)/hello_world_xip.elf  $(BUILD_DIR)/hello_world_xip.dis  $(BUILD_DIR)/hello_world_xip.bin
 i2s:    $(BUILD_DIR)/readI2s_sram.elf     $(BUILD_DIR)/readI2s_sram.dis     $(BUILD_DIR)/readI2s_sram.bin \
         $(BUILD_DIR)/readI2s_xip.elf      $(BUILD_DIR)/readI2s_xip.dis      $(BUILD_DIR)/readI2s_xip.bin
+record-i2s: $(BUILD_DIR)/recordI2s_sram.elf $(BUILD_DIR)/recordI2s_sram.dis $(BUILD_DIR)/recordI2s_sram.bin \
+            $(BUILD_DIR)/recordI2s_xip.elf  $(BUILD_DIR)/recordI2s_xip.dis  $(BUILD_DIR)/recordI2s_xip.bin
 flash:  $(BUILD_DIR)/flash_read_test_xip.elf $(BUILD_DIR)/flash_read_test_xip.dis $(BUILD_DIR)/flash_read_test_xip.bin
 malloc: $(BUILD_DIR)/malloc_simple_test_sram.elf  $(BUILD_DIR)/malloc_simple_test_sram.dis  $(BUILD_DIR)/malloc_simple_test_sram.bin \
 	$(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_torture_test_sram.dis $(BUILD_DIR)/malloc_torture_test_sram.bin \
@@ -200,6 +212,7 @@ model-streaming: $(BUILD_DIR)/streaming_model_xip.elf $(BUILD_DIR)/streaming_mod
 model-mel-compact: $(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin
 model-mel-compact-accel: $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.bin
 model-mel-compact-int8-accel: $(BUILD_DIR)/mel_compact_int8_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_xip_accel.bin
+model-mel-compact-int8-pi-accel: $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.bin
 model-lr: $(BUILD_DIR)/lr_model_xip.elf $(BUILD_DIR)/lr_model_xip.dis $(BUILD_DIR)/lr_model_xip.bin
 model-lr-accel: $(BUILD_DIR)/lr_model_xip_accel.elf $(BUILD_DIR)/lr_model_xip_accel.dis $(BUILD_DIR)/lr_model_xip_accel.bin
 # SRAM model artifacts intentionally disabled:
@@ -225,6 +238,9 @@ $(BUILD_DIR)/snooper_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/snooper_tes
 $(BUILD_DIR)/readI2s_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/readI2s.o $(BUILD_DIR)/uart.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
+$(BUILD_DIR)/recordI2s_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/recordI2s.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
+	$(LD) $(SRAM_LDFLAGS) -o $@ $^
+
 $(BUILD_DIR)/malloc_simple_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/malloc_simple_test.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/malloc.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
@@ -242,6 +258,9 @@ $(BUILD_DIR)/hello_world_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/hello_world.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/readI2s_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/readI2s.o $(BUILD_DIR)/uart.o
+	$(LD) $(XIP_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/recordI2s_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/recordI2s.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/flash_read_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/flash_read_test.o
@@ -310,6 +329,9 @@ $(BUILD_DIR)/snooper_test.o: $(UART_C_DIR)/snooper_test.c $(ROOT_MAKEFILE)
 $(BUILD_DIR)/readI2s.o: $(I2S_C_DIR)/readI2s.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
 
+$(BUILD_DIR)/recordI2s.o: $(I2S_C_DIR)/recordI2s.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -DI2S_CLK_DIV=$(I2S_CLK_DIV) $(if $(RECORD_N_SAMPLES),-DRECORD_N_SAMPLES=$(RECORD_N_SAMPLES),) -o $@ $<
+
 $(BUILD_DIR)/uart.o: $(I2S_C_DIR)/uart.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
 
@@ -369,7 +391,7 @@ clean:
 	rm -f $(COMMON_DIR)/*.d
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact model-mel-compact-accel model-mel-compact-int8-accel model-lr model-lr-accel xip-testbench mel-compact mel-compact-accel mel-compact-int8-accel lr-model lr-model-accel
+.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact model-mel-compact-accel model-mel-compact-int8-accel model-mel-compact-int8-pi-accel model-lr model-lr-accel xip-testbench mel-compact mel-compact-accel mel-compact-int8-accel mel-compact-int8-pi-accel lr-model lr-model-accel
 
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)
@@ -505,6 +527,32 @@ $(BUILD_DIR)/mel_compact_int8_xip_accel.elf: \
 
 mel-compact-int8-accel: $(BUILD_DIR)/mel_compact_int8_xip_accel.elf
 model-mel-compact-int8-accel: $(BUILD_DIR)/mel_compact_int8_xip_accel.elf
+
+# ── mel_compact_int8_pi — Conv1D hardware accelerator variant (int8 pi model) ─
+#
+# Same flow as mel-compact-int8-accel but uses the pi-variant weights from
+# mel_compact_int8_pi/.
+# Build:  make mel-compact-int8-pi-accel   or   make model-mel-compact-int8-pi-accel
+
+MEL_INT8_PI_ACCEL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+                   -DNNOM_STATIC_BUF_KB=36 \
+                   -DKWS_WEIGHTS_HEADER='"mel_compact_int8_pi.h"' \
+                   -DKWS_MODEL_NAME='"mel_compact_int8_pi_accel"' \
+                   -I$(MEL_COMPACT_INT8_PI_C_DIR)
+
+$(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_MEL_ACCEL) | $(BUILD_DIR)
+	$(CC) $(MEL_INT8_PI_ACCEL_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+mel-compact-int8-pi-accel: $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf
+model-mel-compact-int8-pi-accel: $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf
 
 # ── lr_model — KWS model with Conv1D layers ──────────────────────────────
 #

@@ -16,9 +16,10 @@
  * COUNT register semantics: COUNT = N-1 for N transfers.
  * Auto-increment encoding: 0=none, 1=+1 byte/step, 2=+2, 4=+4 (word/step).
  *
- * IRQ mapping (kws_soc .irq = {uart_irq, dmac_irq}):
+ * IRQ mapping (kws_soc .irq = {i2s_irq, uart_irq, dmac_irq}):
  *   IRQ 0 = dmac_irq  → MEIEA group 0 bit 16
  *   IRQ 1 = uart_irq  → MEIEA group 0 bit 17
+ *   IRQ 2 = i2s_irq   → MEIEA group 0 bit 18
 */
 
 #include <stdint.h>
@@ -58,12 +59,14 @@ static inline void      csr_mie_en(void)               { asm volatile ("csrsi ms
 static inline void      csr_mie_dis(void)              { asm volatile ("csrci mstatus, 8"); }
 
 /*
- * Hazard3 MEIEA CSR (0xbe0): per-IRQ enable array (requires EXTENSION_XH3IRQ=1).
- * IRQs grouped 16 per write: wdata_raw[4:0]=group index, wdata[16+(irq%16)]=enable.
- * IRQ 0 = dmac_irq → bit 16 of group 0.
+ * Hazard3 MEIEA (0xbe0): one csrw sets the entire enable mask for group 0.
+ * MEIPA (0xfe0): read-only pending bits for group 0.
+ * bit 16 = dmac_irq (IRQ 0), bit 17 = uart_irq (IRQ 1), bit 18 = i2s_irq (IRQ 2).
  */
-static inline void csr_meiea_dmac_en(void)  { asm volatile ("csrw 0xbe0, %0" :: "r"(1u << 16)); }
-static inline void csr_meiea_dmac_dis(void) { asm volatile ("csrw 0xbe0, %0" :: "r"(0u)); }
+static inline uint32_t csr_meipa_read(void) { uint32_t v; asm volatile ("csrr %0, 0xbe1" : "=r"(v)); return v; }
+/* Enable both dmac_irq and i2s_irq together (single write replaces group mask). */
+static inline void csr_meiea_t4_en(void)  { asm volatile ("csrw 0xbe0, %0" :: "r"((1u << 16) | (1u << 18))); }
+static inline void csr_meiea_t4_dis(void) { asm volatile ("csrw 0xbe0, %0" :: "r"(0u)); }
 
 /* ---- helpers ---- */
 
@@ -161,71 +164,100 @@ static void test3_large_copy(void)
     uart_printf("  --> %s\r\n\r\n", pass ? "PASS" : "FAIL");
 }
 
-/* ---- Test 4: PIRQ-triggered DMA — I2S FIFO → SRAM, continuous ---- */
+/* ---- Test 4: SW-triggered DMA — i2s_irq→CPU→swtrig→DMA→dmac_irq→CPU ---- */
 
 /*
- * ISR for dmac_irq (IRQ 0) — continuous mode.
- * Clear ICR, advance DADDR to the next batch slot, leave EN=1.
- * DMA auto-re-arms on the next i2s_irq with no CPU re-arm gap.
- * Only disables EN after the final burst.
+ * Combined ISR for test 4.  Dispatches on MEIPA:
+ *   bit 16 (dmac_irq): burst done — clear ICR, advance DADDR or stop.
+ *   bit 18 (i2s_irq):  FIFO half-full — fire next SW DMA burst.
+ * dmac handled before i2s so DADDR is updated before the next swtrig.
  */
-static void __attribute__((interrupt("machine"))) dmac_isr(void)
+/*
+ * Combined ISR for test 4.  Dispatches on MEIPA:
+ *   bit 16 (dmac_irq): burst done — clear ICR, advance DADDR, re-enable i2s_irq.
+ *   bit 18 (i2s_irq):  FIFO half-full — fire one SW burst, then mask i2s_irq.
+ *
+ * i2s_irq is level-sensitive: it stays high until the FIFO drops below half-full.
+ * Masking it after swtrig prevents the CPU from spinning in the ISR while the
+ * DMA burst is in progress (which would starve the DMA of AHB bus access).
+ * The dmac_irq handler re-enables i2s_irq once the burst is complete.
+ * dmac is handled before i2s so DADDR is correct before the next swtrig.
+ */
+static void __attribute__((interrupt("machine"))) t4_isr(void)
 {
-    *(volatile uint32_t *)(DMAC_BASE + DMAC_ICR_OFFS) = 1u;
-    int n = t4_batch_done + 1;
-    t4_batch_done = n;
-    if (n < T4_N_BATCHES) {
-        /* Point DMA at next slot — safe: DMA is IDLE, next PIRQ is ~1 ms away */
-        MS_DMAC_setDestinationAddr(DMAC_BASE, (int)(t4_capture + (uint32_t)n * 4u));
-        /* EN stays 1 → DMA re-arms automatically on next i2s_irq */
-    } else {
-        MS_DMAC_enable(DMAC_BASE, 0); /* all bursts done */
+    uint32_t meipa = csr_meipa_read();
+
+    if (meipa & (1u << 16)) {
+        /* dmac_irq: burst complete — clear ICR, advance DADDR, re-arm i2s_irq */
+        *(volatile uint32_t *)(DMAC_BASE + DMAC_ICR_OFFS) = 1u;
+        int n = t4_batch_done + 1;
+        t4_batch_done = n;
+        if (n < T4_N_BATCHES) {
+            MS_DMAC_setDestinationAddr(DMAC_BASE, (int)(t4_capture + (uint32_t)n * 4u));
+            csr_meiea_t4_en();   /* re-enable i2s_irq (bit 18) for next burst */
+        } else {
+            MS_DMAC_enable(DMAC_BASE, 0);
+        }
+    }
+
+    if (meipa & (1u << 18)) {
+        /* i2s_irq: FIFO half-full — fire one burst, mask i2s_irq until burst done */
+        if (t4_batch_done < T4_N_BATCHES) {
+            MS_DMAC_setSWTrigger(DMAC_BASE, 1);
+            /* Mask i2s_irq: keep only dmac_irq enabled while burst is in flight */
+            asm volatile ("csrw 0xbe0, %0" :: "r"(1u << 16));
+        }
     }
 }
 
-static void test4_pirq_i2s_dma(void)
+static void test4_sw_i2s_dma(void)
 {
-    uart_puts("[Test 4] PIRQ continuous DMA: I2S FIFO \xe2\x86\x92 SRAM (EN=1 throughout)\r\n");
-    uart_printf("  Capturing 0x%x bursts x 4 words = 0x%x samples\r\n",
+    uart_puts("[Test 4] SW-triggered DMA: i2s_irq\xe2\x86\x92CPU\xe2\x86\x92swtrig\xe2\x86\x92DMA\xe2\x86\x92dmac_irq\r\n");
+    uart_printf("  Capturing 0x%x bursts x 4 words = 0x%x words\r\n",
                 (uint32_t)T4_N_BATCHES, (uint32_t)(T4_N_BATCHES * 4));
     uart_puts("  (Compare hex values against sim/debug_audio.hex)\r\n\r\n");
 
     /*
-     * CTRL for PIRQ mode:
+     * CTRL for SW trigger mode:
      *   EN=1         bit  0
-     *   TRIGGER=0001 bits 11:8  → armed on PIRQ[0] (i2s_irq)
+     *   TRIGGER=0000 bits 11:8  → SW trigger (swtrig=1 from i2s_irq ISR)
      *   STYPE=2      bits 17:16 → word reads from FIFO
-     *   SAI=0        bits 20:18 → fixed source (FIFO register, no increment)
+     *   SAI=0        bits 20:18 → fixed source (FIFO, no increment)
      *   DTYPE=2      bits 25:24 → word writes to SRAM
-     *   DAI=4        bits 28:26 → +4 B per step (word increment)
+     *   DAI=4        bits 28:26 → +4 B per step
      */
-    uint32_t ctrl_pirq = (1u  <<  0)
-                       | (1u  <<  8)
-                       | (2u  << 16)
-                       | (0u  << 18)
-                       | (2u  << 24)
-                       | (4u  << 26);
+    uint32_t ctrl_sw = (1u  <<  0)
+                     | (0u  <<  8)
+                     | (2u  << 16)
+                     | (0u  << 18)
+                     | (2u  << 24)
+                     | (4u  << 26);
 
-    /* Configure I2S */
+    /* Configure I2S: IRQ_EN so i2s_irq fires to CPU when FIFO is half-full */
     volatile i2s_hw_t *i2s = (volatile i2s_hw_t *)I2S_BASE;
     i2s->conf = (4u << I2S_CONF_DIV_LSB) | (1u << I2S_CONF_IRQ_EN_LSB);
 
-    /* Install ISR; enable dmac_irq (IRQ 0: MEIEA group 0 bit 16) */
+    /* Tests 1-3 left the DMAC's sticky icr_done bit set (they polled SWTRIG,
+     * never cleared ICR).  Clear it now so the first ISR entry isn't a stale
+     * dmac_irq that advances DADDR past burst 0. */
+    *(volatile uint32_t *)(DMAC_BASE + DMAC_ICR_OFFS) = 1u;
+
+    /* Install combined ISR; enable dmac_irq (bit 16) + i2s_irq (bit 18) */
     uintptr_t saved_mtvec = csr_get_mtvec();
-    csr_set_mtvec(dmac_isr);
-    csr_meiea_dmac_en();
+    csr_set_mtvec(t4_isr);
+    csr_meiea_t4_en();
     csr_meie_en();
 
-    /* Fill entire capture buffer with sentinels before arming */
+    /* Fill capture buffer with sentinels */
     for (int i = 0; i < T4_N_BATCHES * 4; i++) t4_capture[i] = 0x5A5A5A5Au;
     t4_batch_done = 0;
 
-    /* Arm DMA once — EN stays 1 between bursts, ISR advances DADDR */
-    MS_DMAC_setControlReg(DMAC_BASE, (int)(ctrl_pirq & ~1u)); /* EN=0 while configuring */
+    /* Arm DMA — EN=1, TRIGGER=0; each i2s_irq ISR fires one swtrig burst */
+    MS_DMAC_setControlReg(DMAC_BASE, (int)(ctrl_sw & ~1u)); /* EN=0 while configuring */
     MS_DMAC_setSourceAddr(DMAC_BASE, (int)I2S_FIFO_REG);
-    MS_DMAC_setDestinationAddr(DMAC_BASE, (int)t4_capture);   /* first slot */
-    MS_DMAC_setCount(DMAC_BASE, 3);                            /* COUNT=3 → 4 transfers (matches I2S FIFO fill per IRQ) */
-    MS_DMAC_enable(DMAC_BASE, 1);                              /* EN=1, armed */
+    MS_DMAC_setDestinationAddr(DMAC_BASE, (int)t4_capture);
+    MS_DMAC_setCount(DMAC_BASE, 3);   /* COUNT=3 → 4 transfers per burst */
+    MS_DMAC_enable(DMAC_BASE, 1);
     csr_mie_en();
 
     /* CPU work loop — runs concurrently with all DMA bursts */
@@ -258,7 +290,7 @@ static void test4_pirq_i2s_dma(void)
     uart_printf("  Total CPU work: 0x%x LCG iters, final state=0x%x\r\n",
                 cpu_iters, cpu_state);
 
-    csr_meiea_dmac_dis();
+    csr_meiea_t4_dis();
     csr_meie_dis();
     csr_set_mtvec((void (*)(void))saved_mtvec);
     i2s->conf = 0; /* stop I2S */
@@ -275,7 +307,7 @@ int main(void)
     test1_word_memcpy();
     test2_word_fill();
     test3_large_copy();
-    test4_pirq_i2s_dma();
+    test4_sw_i2s_dma();
 
     uart_printf("=== All 4 tests %s ===\r\n",
                 all_pass ? "PASSED" : "FAILED");

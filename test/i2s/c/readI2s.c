@@ -53,7 +53,7 @@ void i2s_configure(uint32_t clk_div, uint8_t int_en, uint8_t ds_en, uint8_t q8_e
     uint32_t conf_val = 0;
     conf_val |= ((clk_div << I2S_CONF_DIV_LSB)    & I2S_CONF_DIV_MASK);
     conf_val |= ((int_en  << I2S_CONF_IRQ_EN_LSB) & I2S_CONF_IRQ_EN_MASK);
-    conf_val |= ((ds_en   << I2S_CONF_DS_EN_LSB)  & I2S_CONF_DS_EN_MASK);
+    /* conf_val |= ((ds_en   << I2S_CONF_DS_EN_LSB)  & I2S_CONF_DS_EN_MASK); */
     conf_val |= ((q8_en   << I2S_CONF_Q8_EN_LSB)  & I2S_CONF_Q8_EN_MASK);
     I2S->conf = conf_val;
 }

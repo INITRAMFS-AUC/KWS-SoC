@@ -91,7 +91,7 @@ DMAC_BASE_ADDR ?= 0x60000000
 DMAC_RTL_DIR := $(ROOT_DIR)/peris/MS_DMAC_AHBL/hdl/rtl
 
 # UART config
-UART_BAUD_RATE ?= 9600
+UART_BAUD_RATE ?= 115200
 # The remaining are hardcoded in uart_mini and thus useless
 UART_DATA_WIDTH := 8
 UART_PARITY := N

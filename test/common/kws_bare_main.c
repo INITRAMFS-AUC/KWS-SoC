@@ -38,12 +38,11 @@
  *
  * PIPELINE
  * --------
- *  i2s_irq (FIFO half-full)  →  HW DMA burst writes packed words
- *  straight into nnom_input_data[ring_pos..]  →  dmac_irq (FC=1)  →
- *  ISR advances DMA daddr by burst*4 bytes and bumps a counter; on
- *  the last burst it disables DMA and signals main.  Main wakes
- *  via WFI, runs inference (NNoM reads nnom_input_data directly,
- *  no memcpy), prints DETECT/CYCLES/IRQS, re-arms DMA.
+ *  i2s_irq (FIFO half-full) → CPU trap (IRQ 2) → ISR writes swtrig=1
+ *  → DMA burst reads I2S_DMA_BURST_WORDS words into audio_ring
+ *  → dmac_irq (IRQ 0) → ISR advances daddr, bumps bytes_written.
+ *  Main waits via WFI until the ring holds a full second, snapshots
+ *  it into nnom_input_data, runs inference, prints DETECT/CYCLES/IRQS.
  *
  *  HW Q8 in apb_i2s_receiver packs LSB=oldest, so on this little-
  *  endian RV32 each 32-bit AHB write lands in time order — no
@@ -54,8 +53,8 @@
  *
  * REGISTER MAP (KWS-SoC)
  *  UART  0x40004000   uart_mini (115200 8N1, CLK_MHZ FPGA / sim)
- *  I2S   0x40008000   apb_i2s_receiver (INMP441 MEMS mic, 8 kHz mono)
- *  DMAC  0x60000000   MS_DMAC_AHBL (PIRQ[0]=i2s_irq)
+ *  I2S   0x40008000   apb_i2s_receiver (INMP441 MEMS mic, 16 kHz mono)
+ *  DMAC  0x60000000   MS_DMAC_AHBL (SW-triggered by i2s_irq CPU ISR)
  *
  * CLASSES (index order must match the weights header):
  *  0=down 1=go 2=left 3=no 4=off 5=on 6=right 7=stop 8=up 9=yes 10=unknown
@@ -160,20 +159,20 @@ typedef struct {
  *
  *   sample_rate = clk / (128 * (cfg_div + 1))
  *
- *   36 MHz FPGA, 8 kHz target → cfg_div = 36e6 / (128 * 8000) - 1 = 35
- *   12 MHz sim,  8 kHz target → cfg_div = 12e6 / (128 * 8000) - 1 = 11
+ *   36 MHz FPGA, ~48 kHz raw → cfg_div = 6
+ *   12 MHz sim,  ~47 kHz raw → cfg_div = 1
  *
- * Earlier comments here had `36M / (8000 * 32 * 2) = 70`, which forgot
- * the 2× for the SCK half-period and silently gave 4 kHz capture —
- * 1 sec of audio took 2 sec of sim time.  Don't repeat that mistake.
- * Override on the make line (e.g. -DI2S_CLK_DIV=11 for 12 MHz sim). */
+ * DS_EN with 3× decimation (apb_i2s_receiver.v) keeps 1 of every 3 samples
+ * → effective 16 kHz.
+ *
+ * Override on the make line (e.g. -DI2S_CLK_DIV=1 for 12 MHz sim). */
 #ifndef I2S_CLK_DIV
-#define I2S_CLK_DIV  17
+#define I2S_CLK_DIV  6
 #endif
 
 /* I2S_CONF bit masks — match peris/i2s/i2s_apb/i2s_itr2/i2s_regs.h */
 #define I2S_CONF_IRQ_EN     (1u << 4)
-#define I2S_CONF_DS_EN      (1u << 5)   /* HW 2x downsample (skip every L)   */
+#define I2S_CONF_DS_EN      (1u << 5)   /* HW 3x downsample (keep 1 of 3)    */
 #define I2S_CONF_Q8_EN      (1u << 6)   /* HW int8 quant: 4 samples per word */
 #define I2S_CONF_SKIP_R_EN  (1u << 7)   /* skip SCK toggling during R slot   */
 
@@ -186,8 +185,8 @@ static void i2s_init(uint32_t clk_div) {
      *        SCK during the R slot, halving SCK toggle activity (mic +
      *        I2S peripheral) for free.  Requires the matching RTL patch
      *        in peris/i2s/i2s_apb/i2s_itr2/apb_i2s_receiver.v.
-     * DS_EN: not enabled — would halve the audio rate to 4 kHz, which
-     *        the model isn't trained for.  Keep cfg_div=35 → 8 kHz. */
+     * DS_EN: enabled — with cfg_div=6 the raw rate is ~48 kHz; DS_EN
+     *        keeps 1 of every 3 samples (3× decimation) → ~16 kHz effective. */
     I2S->conf = ((clk_div & 0xFFFFFFu) << 8)
               | I2S_CONF_IRQ_EN
               | I2S_CONF_DS_EN
@@ -211,18 +210,18 @@ typedef struct {
 #define DMAC_BASE  0x60000000UL
 #define DMAC       ((dmac_hw_t *)DMAC_BASE)
 
-/* PIRQ[0]-triggered word transfer: fixed source (FIFO), incrementing dest.
+/* SW-triggered word transfer: fixed source (FIFO), incrementing dest.
  *   bit 0      EN=1
- *   bits 11:8  TRIGGER = 1 (PIRQ[0]=i2s_irq)
+ *   bits 11:8  TRIGGER = 0 (SW — i2s_irq CPU ISR writes swtrig=1)
  *   bits 17:16 STYPE   = 2 (word)
  *   bits 20:18 SAI     = 0 (no source increment — FIFO)
  *   bits 25:24 DTYPE   = 2 (word)
  *   bits 28:26 DAI     = 4 (+4B per word) */
-#define DMAC_CTRL_I2S_PIRQ \
-    ((1u <<  0) | (1u <<  8) | (2u << 16) | (0u << 18) | (2u << 24) | (4u << 26))
+#define DMAC_CTRL_I2S_SW \
+    ((1u <<  0) | (0u <<  8) | (2u << 16) | (0u << 18) | (2u << 24) | (4u << 26))
 
 #define DMA_BURST_BYTES   (I2S_DMA_BURST_WORDS * 4)
-#define SAMPLES_PER_CLIP  8000     /* 1 second at 8 kHz, int8 Q7 */
+#define SAMPLES_PER_CLIP  16000    /* 1 second at 16 kHz, int8 Q7 */
 #define NUM_CLASSES       11
 
 /* Audio capture ring buffer.
@@ -245,22 +244,19 @@ typedef struct {
  *
  * Sizing.  KWS_RING_SAMPLES is a power of 2 (cheap modular wrap) and
  * must be >= SAMPLES_PER_CLIP plus enough headroom that the DMA can't
- * overtake an in-progress memcpy.  At 8 kHz the memcpy of 8000 bytes
- * takes ~24K cycles (byte loop), during which the DMA writes ~5 bytes —
- * 192 bytes (8192 - 8000) is overkill.  When the Conv1D accelerator
- * lands and inference drops to ~100 ms, bump to 16384 so the
- * sliding-window head can stay 800+ samples ahead of the inference
- * window without overwriting the active snapshot. */
+ * overtake an in-progress memcpy.  At 16 kHz the memcpy of 16000 bytes
+ * takes ~48K cycles (byte loop), during which the DMA writes ~10 bytes —
+ * 384 bytes (16384 - 16000) is sufficient headroom. */
 #ifndef KWS_RING_SAMPLES
-#define KWS_RING_SAMPLES 8192
+#define KWS_RING_SAMPLES 16384
 #endif
 #define KWS_RING_MASK (KWS_RING_SAMPLES - 1)
 
 /* Sliding step: bytes between consecutive inferences.
  *   - Today (4 s inference): SAMPLES_PER_CLIP = no overlap; inferences
  *     run back-to-back as fast as model_run allows.
- *   - With accelerator (~100 ms inference): set to 160-320 (= 20-40 ms
- *     at 8 kHz) to detect words straddling natural clip boundaries. */
+ *   - With accelerator (~100 ms inference): set to 320-640 (= 20-40 ms
+ *     at 16 kHz) to detect words straddling natural clip boundaries. */
 #ifndef KWS_STEP_SAMPLES
 #define KWS_STEP_SAMPLES SAMPLES_PER_CLIP
 #endif
@@ -268,11 +264,11 @@ typedef struct {
 __attribute__((aligned(4))) static volatile int8_t audio_ring[KWS_RING_SAMPLES];
 
 static void dma_arm(void) {
-    DMAC->control = DMAC_CTRL_I2S_PIRQ & ~1u;       /* EN=0 while reconfiguring */
+    DMAC->control = DMAC_CTRL_I2S_SW & ~1u;          /* EN=0 while reconfiguring */
     DMAC->saddr   = I2S_FIFO_PA;
     DMAC->daddr   = (uint32_t)(uintptr_t)audio_ring;
     DMAC->count   = (uint32_t)(I2S_DMA_BURST_WORDS - 1); /* COUNT = N-1 for N transfers */
-    DMAC->control = DMAC_CTRL_I2S_PIRQ;              /* EN=1 — armed on PIRQ[0] */
+    DMAC->control = DMAC_CTRL_I2S_SW;                /* EN=1 — armed for SW trigger */
 }
 
 /* ── RISC-V CSR helpers ──────────────────────────────────────────────────── */
@@ -292,10 +288,24 @@ static inline void csr_enable_meie(void) {
 static inline void csr_enable_mie(void) {
     asm volatile ("csrsi mstatus, 8");
 }
-static inline void csr_meiea_dmac_en(void) {
-    /* Unmask dmac_irq (IRQ 0) in Hazard3 MEIEA — required with XH3IRQ=1.
-     * kws_soc.v wires irq = {uart_irq[2], i2s_irq[1], dmac_irq[0]}.
-     * IRQ 0 → MEIEA group 0 bit 16. */
+static inline uint32_t csr_meipa_read(void) {
+    /* Hazard3 XH3IRQ MEIPA (0xfe0): pending external IRQ bits for group 0.
+     * bit 16 = dmac_irq (IRQ 0), bit 17 = uart_irq (IRQ 1), bit 18 = i2s_irq (IRQ 2). */
+    uint32_t v;
+    asm volatile ("csrr %0, 0xfe0" : "=r"(v));
+    return v;
+}
+static inline void csr_meiea_kws_en(void) {
+    /* Unmask dmac_irq (IRQ 0, bit 16) and i2s_irq (IRQ 2, bit 18) in
+     * Hazard3 MEIEA group 0.  A single csrw replaces the whole group mask,
+     * so both bits must be set together.
+     * kws_soc.v: .irq({i2s_irq, uart_irq, dmac_irq}) — IRQ 2 = i2s_irq. */
+    asm volatile ("csrw 0xbe0, %0" :: "r"((1u << 16) | (1u << 18)));
+}
+/* Mask i2s_irq while a DMA burst is in flight: keeps dmac_irq enabled so the
+ * burst-complete handler can re-arm.  i2s_irq is level-sensitive — without this
+ * mask the CPU would spin in the ISR and starve the DMA of AHB bus access. */
+static inline void csr_meiea_kws_i2s_dis(void) {
     asm volatile ("csrw 0xbe0, %0" :: "r"(1u << 16));
 }
 
@@ -318,7 +328,7 @@ static uint8_t nnom_static_buf[NNOM_STATIC_BUF_KB * 1024];
 
 /* ── Audio capture state ─────────────────────────────────────────────────── */
 /* `bytes_written` is a 32-bit monotonic counter of bytes the DMA has
- * deposited into audio_ring.  At 8 kHz it wraps every ~6 days, plenty for
+ * deposited into audio_ring.  At 16 kHz it wraps every ~3 days, plenty for
  * any realistic deployment.  Main loop compares against
  * `bytes_at_next_inference` to decide when the next 1-second window is
  * available; the comparison uses unsigned subtraction so it handles the
@@ -334,26 +344,31 @@ static const char * const class_names[NUM_CLASSES] = {
 
 /* ── Machine trap handler ────────────────────────────────────────────────── */
 /*
- *  1. i2s_irq asserts (FIFO half-full) → DMA bursts I2S_DMA_BURST_WORDS
- *     packed words straight into audio_ring at the current daddr.
- *  2. DMA frame completes → dmac_irq fires.
- *  3. ISR clears ICR, advances daddr by one burst (wrapping to start of
- *     audio_ring at the end), and bumps bytes_written.  No byte
- *     unpacking, no end-of-clip handshake — Q8 LSB-oldest packing means
- *     each 32-bit AHB word is already in memory time-order, and the
- *     wrap-around ring lets the DMA stream forever without firmware
- *     intervention between clips.
- *  4. The trailing read-back of DMAC->control acts as an AHB fence so
- *     the ICR clear is observed by the DMA before `mret` retires; without
- *     it the lean ISR (~10 cycles) returns while the AHB write is still
- *     posted, MEIP stays asserted past the instruction boundary, and
- *     Hazard3 re-traps us immediately for the same edge.
+ *  Dispatches on Hazard3 XH3IRQ MEIPA (CSR 0xfe0, group 0):
+ *
+ *  i2s_irq path (IRQ 2, MEIPA bit 18):
+ *  1. i2s_irq asserts (FIFO half-full) → CPU trap → ISR writes swtrig=1,
+ *     then masks i2s_irq in MEIEA (keeps only dmac_irq enabled).
+ *     Masking is required because i2s_irq is level-sensitive: without it
+ *     the CPU would spin re-entering the ISR and starve the DMA of AHB access.
+ *
+ *  dmac_irq path (IRQ 0, MEIPA bit 16):
+ *  3. DMA burst completes → dmac_irq → ISR clears ICR, advances daddr
+ *     by one burst (wrapping at the end of audio_ring), bumps bytes_written.
+ *  4. The read-back of DMAC->control is an AHB fence ensuring the ICR
+ *     write reaches the peripheral before mret so Hazard3 does not
+ *     immediately re-trap on the still-posted IRQ edge.
+ *
+ *  dmac is handled before i2s: if both bits are pending simultaneously
+ *  (burst completed while entering the handler), DADDR is updated before
+ *  the next swtrig fires so the new burst lands in the correct ring slot.
  */
 void __attribute__((interrupt("machine"), aligned(4))) kws_trap_handler(void) {
-    uint32_t mcause, mepc, mtval;
+    uint32_t mcause;
     asm volatile ("csrr %0, mcause" : "=r"(mcause));
 
     if (!(mcause & 0x80000000u)) {
+        uint32_t mepc, mtval;
         asm volatile ("csrr %0, mepc"  : "=r"(mepc));
         asm volatile ("csrr %0, mtval" : "=r"(mtval));
         uart_puts("EXCEPTION cause=");
@@ -366,18 +381,29 @@ void __attribute__((interrupt("machine"), aligned(4))) kws_trap_handler(void) {
         while (1);
     }
 
-    DMAC->icr = 1u;   /* clear ICR latch so IRQ de-asserts before mret */
+    uint32_t meipa = csr_meipa_read();
 
-    uint32_t next_daddr = DMAC->daddr + DMA_BURST_BYTES;
-    if (next_daddr >= (uint32_t)(uintptr_t)audio_ring + KWS_RING_SAMPLES) {
-        next_daddr = (uint32_t)(uintptr_t)audio_ring;
+    if (meipa & (1u << 16)) {
+        /* dmac_irq: burst complete — advance ring write pointer, re-arm i2s_irq */
+        DMAC->icr = 1u;
+
+        uint32_t next_daddr = DMAC->daddr + DMA_BURST_BYTES;
+        if (next_daddr >= (uint32_t)(uintptr_t)audio_ring + KWS_RING_SAMPLES)
+            next_daddr = (uint32_t)(uintptr_t)audio_ring;
+        DMAC->daddr = next_daddr;
+
+        bytes_written += DMA_BURST_BYTES;
+        i2s_irq_count++;
+
+        (void)DMAC->control;   /* AHB read-back fence */
+        csr_meiea_kws_en();    /* re-enable i2s_irq for next burst */
     }
-    DMAC->daddr = next_daddr;
 
-    bytes_written += DMA_BURST_BYTES;
-    i2s_irq_count++;
-
-    (void)DMAC->control;   /* AHB read-back fence — see comment above */
+    if (meipa & (1u << 18)) {
+        /* i2s_irq: FIFO half-full — fire one burst, mask i2s_irq until burst done */
+        DMAC->swtrig = 1u;
+        csr_meiea_kws_i2s_dis();
+    }
 }
 
 /* ── main ────────────────────────────────────────────────────────────────── */
@@ -406,7 +432,7 @@ int main(void) {
 #endif
     csr_set_mtvec(kws_trap_handler);
     csr_enable_meie();
-    csr_meiea_dmac_en();
+    csr_meiea_kws_en();   /* enable dmac_irq (IRQ 0) + i2s_irq (IRQ 2) */
     dma_arm();
     i2s_init(I2S_CLK_DIV);
     uart_puts("I2S started\r\n");
