@@ -649,6 +649,19 @@ test-mel-compact:
 test-mel-compact-accel:
 	$(MAKE) -C test mel-compact-accel XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
 
+test-mel-compact-int8-accel:
+	$(MAKE) -C test mel-compact-int8-accel XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
+
+test-mel-compact-int8-peak-norm-accel:
+	$(MAKE) -C test mel-compact-int8-peak-norm-accel XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
+
+test-mel-compact-int8-peak-norm-dump:
+	$(MAKE) -C test mel-compact-int8-peak-norm-dump XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
+
+test-mel-compact-int8-peak-norm-dump-full:
+	$(MAKE) -C test mel-compact-int8-peak-norm-dump-full XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
+	$(MAKE) -C test spikedebug/down_audio_16k_mic.hex XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
+
 test-lr-model-accel:
 	$(MAKE) -C test lr-model-accel XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
 
