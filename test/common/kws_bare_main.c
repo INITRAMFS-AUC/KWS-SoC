@@ -264,11 +264,41 @@ typedef struct {
 #endif
 #define KWS_RING_MASK (KWS_RING_SAMPLES - 1)
 
-/* Sliding step: ring-rate bytes between consecutive inferences.  At the ring
- * rate (16 kHz int8), RING_SAMPLES_PER_CLIP = no overlap; smaller values let
- * a fast accelerator catch words straddling clip boundaries. */
-#ifndef KWS_STEP_SAMPLES
-#define KWS_STEP_SAMPLES RING_SAMPLES_PER_CLIP
+/* Sliding-window step config.
+ *
+ * Each iteration of the inference loop computes:
+ *
+ *     step = clamp(max(KWS_MIN_STEP_RING_BYTES, inference_cycles / cycles_per_ring_byte),
+ *                  1, RING_SAMPLES_PER_CLIP)
+ *     bytes_at_next_inference += step
+ *     snap_start = bytes_at_next_inference - RING_SAMPLES_PER_CLIP
+ *
+ * Properties:
+ *   - 20 ms minimum cadence (KWS_MIN_STEP_RING_BYTES = 20 ms × ring_rate).
+ *     Faster inference doesn't slide faster than 20 ms — gives the CPU
+ *     idle time between bursts when inference is unusually quick.
+ *   - 1-clip maximum step.  Clamping at RING_SAMPLES_PER_CLIP guarantees
+ *     that consecutive windows are contiguous (no gap), so every audio
+ *     byte is part of at least one window.
+ *   - When inference is slower than RING_SAMPLES_PER_CLIP / ring_rate
+ *     (≈ 1 s), the firmware can't keep up — bytes_written runs ahead
+ *     of bytes_at_next_inference faster than it can be processed.  The
+ *     loop detects this (gap > RING_SAMPLES_PER_CLIP), prints an
+ *     AUDIO_LOSS warning, and resyncs bytes_at_next_inference to the
+ *     latest possible window.  Audio between the old and new windows
+ *     is forfeit.  Only matters for SW-only model paths today.
+ *
+ * Override either floor with -DKWS_MIN_STEP_RING_BYTES=N or pin to a
+ * fixed step with -DKWS_STEP_SAMPLES=N (legacy knob; disables the
+ * dynamic computation entirely). */
+#ifndef KWS_MIN_STEP_RING_BYTES
+#define KWS_MIN_STEP_RING_BYTES (RING_HZ / 50)   /* 20 ms at 16 kHz = 320 */
+#endif
+
+#ifdef CLK_MHZ
+#define CYCLES_PER_RING_BYTE ((uint32_t)((CLK_MHZ) * 1000000UL) / RING_HZ)
+#else
+#define CYCLES_PER_RING_BYTE 2250u  /* 36 MHz / 16 kHz; matches the FPGA build */
 #endif
 
 __attribute__((aligned(4))) static volatile int8_t audio_ring[KWS_RING_SAMPLES];
@@ -420,11 +450,15 @@ int main(void) {
     int dumped = 0;
 #endif
 
-    /* `bytes_at_next_inference` is the bytes_written threshold the main
-     * loop waits on before snapshotting the next 1-second window.  It
-     * starts at RING_SAMPLES_PER_CLIP (= 16000 ring-rate bytes = 1 s of
-     * audio) and advances by KWS_STEP_SAMPLES after each inference. */
+    /* `bytes_at_next_inference` is the bytes_written threshold that
+     * marks the END of the next snapshot's window.  Initialised to one
+     * full clip (so iteration 0 waits for the first 1 s of audio); each
+     * subsequent iteration advances it by the dynamic `step_bytes`
+     * computed at the bottom of the loop.  Snapshots are anchored to
+     * this counter, NOT to bytes_written, so the window position tracks
+     * the explicit step regardless of how far the DMA has run ahead. */
     uint32_t bytes_at_next_inference = RING_SAMPLES_PER_CLIP;
+    uint32_t step_bytes              = RING_SAMPLES_PER_CLIP; /* iter-0 default */
     int last_pred    = NUM_CLASSES - 1;
     int debounce_cnt = 0;
 
@@ -442,9 +476,23 @@ int main(void) {
 #endif
 
     while (1) {
-        /* Wait until we have enough new bytes for the next inference. */
+        /* Wait until bytes_written reaches the END of the next window. */
         while ((int32_t)(bytes_written - bytes_at_next_inference) < 0) {
             asm volatile ("wfi");
+        }
+
+        /* Audio-loss guard.  If bytes_written has run more than one
+         * RING_SAMPLES_PER_CLIP ahead of bytes_at_next_inference, the
+         * inference can't keep up and the ring has overwritten bytes
+         * we still need.  Snap the threshold forward to the latest
+         * possible window and shout about it.  Subsequent windows will
+         * pick up from there. */
+        if ((int32_t)(bytes_written - bytes_at_next_inference) > (int32_t)RING_SAMPLES_PER_CLIP) {
+            uint32_t lost = (bytes_written - bytes_at_next_inference) - RING_SAMPLES_PER_CLIP;
+            uart_puts("AUDIO_LOSS bytes=");
+            uart_putdec((int)lost);
+            uart_puts("\r\n");
+            bytes_at_next_inference = bytes_written;  /* resync to "latest 16000 bytes" */
         }
 
 #ifdef USE_MCYCLE_CSR
@@ -453,21 +501,16 @@ int main(void) {
         uint32_t cycles_capture = cyc_capture_end - cyc_capture_start;
 #endif
 
-        /* Snapshot the most recent RING_SAMPLES_PER_CLIP bytes from the
-         * ring AND decimate ÷2 into nnom_input_data — receiver delivers
-         * 16 kHz int8, model wants 8 kHz int8, so we keep every other
-         * sample.  Freeze `total` first so that DMA progress during the
-         * snapshot doesn't shift the window; the ring is sized so the
-         * DMA can't overtake the snapshot region during the copy
-         * (see KWS_RING_SAMPLES rationale above). */
-        uint32_t total = bytes_written;
-        uint32_t snap_start_ring = (total - RING_SAMPLES_PER_CLIP) & KWS_RING_MASK;
+        /* Snapshot the next window — anchored to bytes_at_next_inference,
+         * NOT to the floating bytes_written, so the window position
+         * tracks the explicit step.  Decimate ÷2 into nnom_input_data
+         * (receiver delivers 16 kHz int8; model wants 8 kHz int8). */
+        uint32_t snap_start_byte = bytes_at_next_inference - RING_SAMPLES_PER_CLIP;
+        uint32_t snap_start_ring = snap_start_byte & KWS_RING_MASK;
         for (int j = 0; j < MODEL_SAMPLES_PER_CLIP; j++) {
             uint32_t ring_idx = (snap_start_ring + (uint32_t)(j * 2)) & KWS_RING_MASK;
             nnom_input_data[j] = audio_ring[ring_idx];
         }
-
-        bytes_at_next_inference += KWS_STEP_SAMPLES;
 
 #ifdef KWS_DEBUG_DUMP_FIRST_CLIP
         /* Dump the FIRST captured window over UART in the same hex-word
@@ -490,15 +533,34 @@ int main(void) {
         }
 #endif
 
-#ifdef USE_MCYCLE_CSR
-        uint32_t cyc_start, cyc_end;
-        asm volatile ("csrr %0, mcycle" : "=r"(cyc_start));
-#endif
+        /* Always measure inference cycles for the step computation
+         * (regardless of USE_MCYCLE_CSR — that flag only gates the
+         * UART CYCLES_INFER print). */
+        uint32_t step_cyc_start, step_cyc_end;
+        asm volatile ("csrr %0, mcycle" : "=r"(step_cyc_start));
         model_run(model);
+        asm volatile ("csrr %0, mcycle" : "=r"(step_cyc_end));
 #ifdef USE_MCYCLE_CSR
-        asm volatile ("csrr %0, mcycle" : "=r"(cyc_end));
-        uint32_t cycles = cyc_end - cyc_start;
+        uint32_t cycles = step_cyc_end - step_cyc_start;
 #endif
+
+        /* Dynamic sliding step.
+         *   step = clamp(max(KWS_MIN_STEP_RING_BYTES, inference_in_bytes), 1, RING_SAMPLES_PER_CLIP)
+         * The min floor (default 20 ms) gives idle time when inference
+         * is unusually fast.  The clamp at RING_SAMPLES_PER_CLIP keeps
+         * consecutive windows contiguous (no audio gaps).  When the
+         * un-clamped step would have exceeded RING_SAMPLES_PER_CLIP
+         * (inference > 1 s), the next iteration's WFI loop will detect
+         * the gap and emit AUDIO_LOSS. */
+#ifdef KWS_STEP_SAMPLES
+        step_bytes = KWS_STEP_SAMPLES;
+#else
+        uint32_t inference_cycles = step_cyc_end - step_cyc_start;
+        step_bytes = (inference_cycles + CYCLES_PER_RING_BYTE - 1) / CYCLES_PER_RING_BYTE;
+        if (step_bytes < KWS_MIN_STEP_RING_BYTES) step_bytes = KWS_MIN_STEP_RING_BYTES;
+        if (step_bytes > RING_SAMPLES_PER_CLIP)   step_bytes = RING_SAMPLES_PER_CLIP;
+#endif
+        bytes_at_next_inference += step_bytes;
 
         int    pred      = 0;
         int8_t max_score = nnom_output_data[0];
