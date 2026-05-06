@@ -183,6 +183,7 @@ SRAM_TARGETS = \
 	$(BUILD_DIR)/snooper_test_sram.elf        $(BUILD_DIR)/snooper_test_sram.dis        $(BUILD_DIR)/snooper_test_sram.bin \
 	$(BUILD_DIR)/readI2s_sram.elf             $(BUILD_DIR)/readI2s_sram.dis             $(BUILD_DIR)/readI2s_sram.bin \
 	$(BUILD_DIR)/recordI2s_sram.elf           $(BUILD_DIR)/recordI2s_sram.dis           $(BUILD_DIR)/recordI2s_sram.bin \
+	$(BUILD_DIR)/dataflow_test_sram.elf       $(BUILD_DIR)/dataflow_test_sram.dis       $(BUILD_DIR)/dataflow_test_sram.bin \
 	$(BUILD_DIR)/malloc_simple_test_sram.elf  $(BUILD_DIR)/malloc_simple_test_sram.dis  $(BUILD_DIR)/malloc_simple_test_sram.bin \
 	$(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_torture_test_sram.dis $(BUILD_DIR)/malloc_torture_test_sram.bin \
 	$(BUILD_DIR)/memcpy_simple_test_sram.elf  $(BUILD_DIR)/memcpy_simple_test_sram.dis  $(BUILD_DIR)/memcpy_simple_test_sram.bin \
@@ -203,6 +204,7 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/hello_world_xip.elf     $(BUILD_DIR)/hello_world_xip.dis     $(BUILD_DIR)/hello_world_xip.bin \
 	$(BUILD_DIR)/readI2s_xip.elf         $(BUILD_DIR)/readI2s_xip.dis         $(BUILD_DIR)/readI2s_xip.bin \
 	$(BUILD_DIR)/recordI2s_xip.elf       $(BUILD_DIR)/recordI2s_xip.dis       $(BUILD_DIR)/recordI2s_xip.bin \
+	$(BUILD_DIR)/dataflow_test_xip.elf   $(BUILD_DIR)/dataflow_test_xip.dis   $(BUILD_DIR)/dataflow_test_xip.bin \
 	$(BUILD_DIR)/flash_read_test_xip.elf       $(BUILD_DIR)/flash_read_test_xip.dis       $(BUILD_DIR)/flash_read_test_xip.bin \
 	$(BUILD_DIR)/snooper_test_xip.elf          $(BUILD_DIR)/snooper_test_xip.dis          $(BUILD_DIR)/snooper_test_xip.bin \
 	$(BUILD_DIR)/tests_xip.elf                 $(BUILD_DIR)/tests_xip.dis                 $(BUILD_DIR)/tests_xip.bin \
@@ -237,6 +239,8 @@ i2s:    $(BUILD_DIR)/readI2s_sram.elf     $(BUILD_DIR)/readI2s_sram.dis     $(BU
         $(BUILD_DIR)/readI2s_xip.elf      $(BUILD_DIR)/readI2s_xip.dis      $(BUILD_DIR)/readI2s_xip.bin
 record-i2s: $(BUILD_DIR)/recordI2s_sram.elf $(BUILD_DIR)/recordI2s_sram.dis $(BUILD_DIR)/recordI2s_sram.bin \
             $(BUILD_DIR)/recordI2s_xip.elf  $(BUILD_DIR)/recordI2s_xip.dis  $(BUILD_DIR)/recordI2s_xip.bin
+dataflow-test: $(BUILD_DIR)/dataflow_test_sram.elf $(BUILD_DIR)/dataflow_test_sram.dis $(BUILD_DIR)/dataflow_test_sram.bin \
+               $(BUILD_DIR)/dataflow_test_xip.elf  $(BUILD_DIR)/dataflow_test_xip.dis  $(BUILD_DIR)/dataflow_test_xip.bin
 flash:  $(BUILD_DIR)/flash_read_test_xip.elf $(BUILD_DIR)/flash_read_test_xip.dis $(BUILD_DIR)/flash_read_test_xip.bin
 malloc: $(BUILD_DIR)/malloc_simple_test_sram.elf  $(BUILD_DIR)/malloc_simple_test_sram.dis  $(BUILD_DIR)/malloc_simple_test_sram.bin \
 	$(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_torture_test_sram.dis $(BUILD_DIR)/malloc_torture_test_sram.bin \
@@ -317,6 +321,21 @@ $(BUILD_DIR)/recordI2s_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/recordI2s.o $(B
 
 $(BUILD_DIR)/recordI2s.o: $(I2S_C_DIR)/recordI2s.c $(ROOT_MAKEFILE)
 	$(CC) $(CFLAGS) -o $@ $<
+
+# ── Dataflow self-test (mic → I2S → DMA → snap[]) ────────────────────────────
+# Drives the counter stimulus from sim/counter_16k.hex through the same
+# capture path kws_bare_main.c uses, then byte-checks the snapshot against
+# the expected pattern.  Prints DATAFLOW_PASS or DATAFLOW_FAIL i=N
+# got=0xXX exp=0xYY on the first mismatch — pin-points which chain link
+# (mic, RX core, WIDTH=8 byte select, FIFO pack, DMA, ÷2 snapshot) failed.
+$(BUILD_DIR)/dataflow_test.o: $(I2S_C_DIR)/dataflow_test.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) $(if $(I2S_CLK_DIV),-DI2S_CLK_DIV=$(I2S_CLK_DIV),) -o $@ $<
+
+$(BUILD_DIR)/dataflow_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dataflow_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
+	$(LD) $(SRAM_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/dataflow_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dataflow_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
+	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/flash_read_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/flash_read_test.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
@@ -455,7 +474,7 @@ clean:
 	rm -f $(COMMON_DIR)/*.d
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy \
+.PHONY: all clean sram xip sanity uart i2s record-i2s dataflow-test flash malloc malloc-simple malloc-torture memcpy \
         model-strided-s16-nodil model-streaming model-mel-compact model-mel-compact-accel \
         model-mel-compact-int8 model-mel-compact-int8-accel \
         model-kws-lr model-kws-lr-accel accel-test xip-testbench
