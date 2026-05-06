@@ -28,7 +28,10 @@ MEMCPY_C_DIR = memcpy/c
 MODEL_DIR             = model
 STRIDED_MODEL_C_DIR   = $(MODEL_DIR)/strided_s16_nodil
 MEL_COMPACT_C_DIR     = $(MODEL_DIR)/mel_compact_4blk_ch36
+MEL_INT8_C_DIR        = $(MODEL_DIR)/mel_compact_int8
+KWS_LR_C_DIR          = $(MODEL_DIR)/kws_lr
 STREAMING_MODEL_C_DIR = $(MODEL_DIR)/streaming
+ACCEL_C_DIR           = accel
 NNOM_DIR     = ../nnom
 NNOM_INC_DIR = $(NNOM_DIR)/inc
 NNOM_PORT_DIR = $(NNOM_DIR)/port
@@ -48,6 +51,36 @@ NNOM_PORT_DIR = $(NNOM_DIR)/port
 NNOM_SRCS_MODEL = $(wildcard $(NNOM_DIR)/src/core/*.c) \
                   $(wildcard $(NNOM_DIR)/src/layers/*.c) \
                   $(wildcard $(NNOM_DIR)/src/backends/*.c)
+
+# NNoM source set for the Conv1D-accelerated builds.  Two changes vs the
+# baseline NNOM_SRCS_MODEL:
+#   1. Drop nnom_conv2d.c so its conv2d_run symbol doesn't collide with
+#      common/nnom_conv1d_hw.c's HW-shim conv2d_run; the linker then resolves
+#      every call directly into the shim (no -Wl,--wrap needed — LTO can
+#      inline through the call-site, which the wrap form blocks).
+#   2. Trim the layer list to what the int8 KWS models actually traverse
+#      (no LSTM/GRU/concat/dw/dilated/etc.).  --gc-sections would drop them
+#      anyway, but keeping the source list minimal cuts compile time and
+#      keeps any debug `printf` in the unused layers from being elaborated.
+NNOM_SRCS_ACCEL = \
+    $(NNOM_DIR)/src/core/nnom.c \
+    $(NNOM_DIR)/src/core/nnom_layers.c \
+    $(NNOM_DIR)/src/core/nnom_tensor.c \
+    $(NNOM_DIR)/src/core/nnom_utils.c \
+    $(NNOM_DIR)/src/layers/nnom_activation.c \
+    $(NNOM_DIR)/src/layers/nnom_avgpool.c \
+    $(NNOM_DIR)/src/layers/nnom_baselayer.c \
+    $(NNOM_DIR)/src/layers/nnom_dense.c \
+    $(NNOM_DIR)/src/layers/nnom_flatten.c \
+    $(NNOM_DIR)/src/layers/nnom_global_pool.c \
+    $(NNOM_DIR)/src/layers/nnom_input.c \
+    $(NNOM_DIR)/src/layers/nnom_maxpool.c \
+    $(NNOM_DIR)/src/layers/nnom_output.c \
+    $(NNOM_DIR)/src/layers/nnom_reshape.c \
+    $(NNOM_DIR)/src/layers/nnom_softmax.c \
+    $(NNOM_DIR)/src/backends/nnom_local.c \
+    $(NNOM_DIR)/src/backends/nnom_local_q15.c \
+    $(COMMON_DIR)/nnom_conv1d_hw.c
 
 # Header include paths (relative to this Makefile's directory)
 I2S_REGS_DIR  = ../peris/i2s/i2s_apb/i2s_itr2
@@ -79,13 +112,26 @@ CFLAGS += -I$(DMAC_FW_DIR)
 CFLAGS += -I$(I2S_C_DIR)
 CFLAGS += -DI2S_DMA_BURST_WORDS=$(I2S_DMA_BURST_WORDS)
 
+# XIP audio playback flow (gated by root Makefile XIP_PLAYBACK=1).
+# When enabled, scripts/hex_to_c_array.py emits test/build/playback_samples.c,
+# which is compiled and linked into every XIP firmware so that a 1-second
+# (or N-second when XIP_N_SAMPLES is set) audio buffer is placed in flash at
+# 0x8001_0000 — read by peris/xip/xip_sample_player.v.
+XIP_PLAYBACK        ?= 0
+PLAYBACK_SAMPLES_C  ?=
+ifeq ($(XIP_PLAYBACK),1)
+  PLAYBACK_OBJ := $(BUILD_DIR)/playback_samples.o
+else
+  PLAYBACK_OBJ :=
+endif
+
 # Linker flags:
 #   SRAM_LDFLAGS – all sections (text/rodata/data/bss) in SRAM at 0x00000000.
 #                  Required for GDB `load`; string literals live at their SRAM VMA.
 #   XIP_LDFLAGS  – text+rodata in FLASH (0x80000000), data+bss in SRAM.
 #                  Required for standalone boot; string literals live at their flash VMA.
 SRAM_LDFLAGS = -T $(COMMON_DIR)/sram_link.ld --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
-XIP_LDFLAGS  = -T $(COMMON_DIR)/link.ld      --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
+XIP_LDFLAGS  = -T $(COMMON_DIR)/link.ld      --defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES) $(PLAYBACK_OBJ)
 
 # Shared compilation and link flags for all model (NNoM) targets.
 # `-g` adds DWARF debug info to the ELF only — `objcopy -O binary` strips
@@ -120,7 +166,13 @@ MODEL_LDFLAGS_COMMON = -march=$(RV_ARCH) -mabi=$(RV_ABI) \
                        -nostdlib \
                        -Wl,--gc-sections
 MODEL_LDFLAGS_SRAM   = $(MODEL_LDFLAGS_COMMON) -Wl,-T,$(COMMON_DIR)/sram_link.ld -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
-MODEL_LDFLAGS_XIP    = $(MODEL_LDFLAGS_COMMON) -Wl,-T,$(COMMON_DIR)/link.ld     -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES)
+MODEL_LDFLAGS_XIP    = $(MODEL_LDFLAGS_COMMON) -Wl,-T,$(COMMON_DIR)/link.ld     -Wl,--defsym=SRAM_SIZE=$(SRAM_SIZE_BYTES) $(PLAYBACK_OBJ)
+
+# Accelerator builds use plain MODEL_LDFLAGS_XIP — symbol substitution for
+# conv2d_run happens by simply omitting nnom_conv2d.c from NNOM_SRCS_ACCEL,
+# which lets common/nnom_conv1d_hw.c's definition resolve naturally.
+# (Earlier revisions used -Wl,--wrap=conv2d_run; that form blocks LTO from
+# inlining through the call-site and added ~800K cycles of inference time.)
 
 # --- TARGET LISTS ---
 # *_sram: GDB workflow — `make gdb`, then `load build/<test>_sram.elf`, then `continue`
@@ -130,6 +182,7 @@ SRAM_TARGETS = \
 	$(BUILD_DIR)/bridge_bug_test_sram.elf     $(BUILD_DIR)/bridge_bug_test_sram.dis     $(BUILD_DIR)/bridge_bug_test_sram.bin \
 	$(BUILD_DIR)/snooper_test_sram.elf        $(BUILD_DIR)/snooper_test_sram.dis        $(BUILD_DIR)/snooper_test_sram.bin \
 	$(BUILD_DIR)/readI2s_sram.elf             $(BUILD_DIR)/readI2s_sram.dis             $(BUILD_DIR)/readI2s_sram.bin \
+	$(BUILD_DIR)/recordI2s_sram.elf           $(BUILD_DIR)/recordI2s_sram.dis           $(BUILD_DIR)/recordI2s_sram.bin \
 	$(BUILD_DIR)/malloc_simple_test_sram.elf  $(BUILD_DIR)/malloc_simple_test_sram.dis  $(BUILD_DIR)/malloc_simple_test_sram.bin \
 	$(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_torture_test_sram.dis $(BUILD_DIR)/malloc_torture_test_sram.bin \
 	$(BUILD_DIR)/memcpy_simple_test_sram.elf  $(BUILD_DIR)/memcpy_simple_test_sram.dis  $(BUILD_DIR)/memcpy_simple_test_sram.bin \
@@ -149,6 +202,7 @@ SRAM_TARGETS = \
 XIP_TARGETS = \
 	$(BUILD_DIR)/hello_world_xip.elf     $(BUILD_DIR)/hello_world_xip.dis     $(BUILD_DIR)/hello_world_xip.bin \
 	$(BUILD_DIR)/readI2s_xip.elf         $(BUILD_DIR)/readI2s_xip.dis         $(BUILD_DIR)/readI2s_xip.bin \
+	$(BUILD_DIR)/recordI2s_xip.elf       $(BUILD_DIR)/recordI2s_xip.dis       $(BUILD_DIR)/recordI2s_xip.bin \
 	$(BUILD_DIR)/flash_read_test_xip.elf       $(BUILD_DIR)/flash_read_test_xip.dis       $(BUILD_DIR)/flash_read_test_xip.bin \
 	$(BUILD_DIR)/snooper_test_xip.elf          $(BUILD_DIR)/snooper_test_xip.dis          $(BUILD_DIR)/snooper_test_xip.bin \
 	$(BUILD_DIR)/tests_xip.elf                 $(BUILD_DIR)/tests_xip.dis                 $(BUILD_DIR)/tests_xip.bin \
@@ -158,11 +212,17 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/strided_s16_nodil_xip.elf     $(BUILD_DIR)/strided_s16_nodil_xip.dis     $(BUILD_DIR)/strided_s16_nodil_xip.bin \
 	$(BUILD_DIR)/streaming_model_xip.elf       $(BUILD_DIR)/streaming_model_xip.dis       $(BUILD_DIR)/streaming_model_xip.bin \
 	$(BUILD_DIR)/dma_test_xip.elf              $(BUILD_DIR)/dma_test_xip.dis              $(BUILD_DIR)/dma_test_xip.bin \
-	$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin
+	$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf       $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis       $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin \
+	$(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.bin \
+	$(BUILD_DIR)/mel_compact_int8_xip.elf            $(BUILD_DIR)/mel_compact_int8_xip.dis            $(BUILD_DIR)/mel_compact_int8_xip.bin \
+	$(BUILD_DIR)/mel_compact_int8_xip_accel.elf      $(BUILD_DIR)/mel_compact_int8_xip_accel.dis      $(BUILD_DIR)/mel_compact_int8_xip_accel.bin \
+	$(BUILD_DIR)/kws_lr_xip.elf                      $(BUILD_DIR)/kws_lr_xip.dis                      $(BUILD_DIR)/kws_lr_xip.bin \
+	$(BUILD_DIR)/kws_lr_xip_accel.elf                $(BUILD_DIR)/kws_lr_xip_accel.dis                $(BUILD_DIR)/kws_lr_xip_accel.bin \
+	$(BUILD_DIR)/accel_test_xip.elf                  $(BUILD_DIR)/accel_test_xip.dis                  $(BUILD_DIR)/accel_test_xip.bin
 
 ALL_TARGETS = $(SRAM_TARGETS) $(XIP_TARGETS)
 
-all: $(BUILD_DIR) $(ALL_TARGETS)
+all: $(BUILD_DIR) $(PLAYBACK_OBJ) $(ALL_TARGETS)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -175,6 +235,8 @@ uart:   $(BUILD_DIR)/hello_world_sram.elf $(BUILD_DIR)/hello_world_sram.dis $(BU
         $(BUILD_DIR)/hello_world_xip.elf  $(BUILD_DIR)/hello_world_xip.dis  $(BUILD_DIR)/hello_world_xip.bin
 i2s:    $(BUILD_DIR)/readI2s_sram.elf     $(BUILD_DIR)/readI2s_sram.dis     $(BUILD_DIR)/readI2s_sram.bin \
         $(BUILD_DIR)/readI2s_xip.elf      $(BUILD_DIR)/readI2s_xip.dis      $(BUILD_DIR)/readI2s_xip.bin
+record-i2s: $(BUILD_DIR)/recordI2s_sram.elf $(BUILD_DIR)/recordI2s_sram.dis $(BUILD_DIR)/recordI2s_sram.bin \
+            $(BUILD_DIR)/recordI2s_xip.elf  $(BUILD_DIR)/recordI2s_xip.dis  $(BUILD_DIR)/recordI2s_xip.bin
 flash:  $(BUILD_DIR)/flash_read_test_xip.elf $(BUILD_DIR)/flash_read_test_xip.dis $(BUILD_DIR)/flash_read_test_xip.bin
 malloc: $(BUILD_DIR)/malloc_simple_test_sram.elf  $(BUILD_DIR)/malloc_simple_test_sram.dis  $(BUILD_DIR)/malloc_simple_test_sram.bin \
 	$(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_torture_test_sram.dis $(BUILD_DIR)/malloc_torture_test_sram.bin \
@@ -195,6 +257,18 @@ model-streaming: \
 model-mel-compact: \
 	$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf  $(BUILD_DIR)/mel_compact_4blk_ch36_xip.dis  $(BUILD_DIR)/mel_compact_4blk_ch36_xip.bin \
 	$(BUILD_DIR)/mel_compact_4blk_ch36_sram.elf $(BUILD_DIR)/mel_compact_4blk_ch36_sram.dis $(BUILD_DIR)/mel_compact_4blk_ch36_sram.bin
+model-mel-compact-accel: \
+	$(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.bin
+model-mel-compact-int8: \
+	$(BUILD_DIR)/mel_compact_int8_xip.elf       $(BUILD_DIR)/mel_compact_int8_xip.dis       $(BUILD_DIR)/mel_compact_int8_xip.bin
+model-mel-compact-int8-accel: \
+	$(BUILD_DIR)/mel_compact_int8_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_xip_accel.bin
+model-kws-lr: \
+	$(BUILD_DIR)/kws_lr_xip.elf                 $(BUILD_DIR)/kws_lr_xip.dis                 $(BUILD_DIR)/kws_lr_xip.bin
+model-kws-lr-accel: \
+	$(BUILD_DIR)/kws_lr_xip_accel.elf           $(BUILD_DIR)/kws_lr_xip_accel.dis           $(BUILD_DIR)/kws_lr_xip_accel.bin
+accel-test: \
+	$(BUILD_DIR)/accel_test_xip.elf             $(BUILD_DIR)/accel_test_xip.dis             $(BUILD_DIR)/accel_test_xip.bin
 dma:    $(BUILD_DIR)/dma_test_sram.elf    $(BUILD_DIR)/dma_test_sram.dis    $(BUILD_DIR)/dma_test_sram.bin \
         $(BUILD_DIR)/dma_test_xip.elf     $(BUILD_DIR)/dma_test_xip.dis     $(BUILD_DIR)/dma_test_xip.bin
 xip-testbench:
@@ -216,6 +290,9 @@ $(BUILD_DIR)/snooper_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/snooper_tes
 $(BUILD_DIR)/readI2s_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/readI2s.o $(BUILD_DIR)/uart.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
+$(BUILD_DIR)/recordI2s_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/recordI2s.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
+	$(LD) $(SRAM_LDFLAGS) -o $@ $^
+
 $(BUILD_DIR)/malloc_simple_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/malloc_simple_test.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/malloc.o
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
@@ -234,6 +311,12 @@ $(BUILD_DIR)/hello_world_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/hello_world.o
 
 $(BUILD_DIR)/readI2s_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/readI2s.o $(BUILD_DIR)/uart.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/recordI2s_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/recordI2s.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
+	$(LD) $(XIP_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/recordI2s.o: $(I2S_C_DIR)/recordI2s.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<
 
 $(BUILD_DIR)/flash_read_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/flash_read_test.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
@@ -372,7 +455,10 @@ clean:
 	rm -f $(COMMON_DIR)/*.d
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact xip-testbench
+.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy \
+        model-strided-s16-nodil model-streaming model-mel-compact model-mel-compact-accel \
+        model-mel-compact-int8 model-mel-compact-int8-accel \
+        model-kws-lr model-kws-lr-accel accel-test xip-testbench
 
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)
@@ -442,3 +528,89 @@ $(BUILD_DIR)/mel_compact_4blk_ch36_sram.elf: \
 mel-compact: \
 	$(BUILD_DIR)/mel_compact_4blk_ch36_xip.elf \
 	$(BUILD_DIR)/mel_compact_4blk_ch36_sram.elf
+
+# ── Conv1D-accelerated mel_compact (HW shim via --wrap=conv2d_run) ───────────
+$(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_ACCEL) | $(BUILD_DIR)
+	$(CC) $(MEL_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+# ── mel_compact_int8 (SW + accel variants) ──────────────────────────────────
+MEL_INT8_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+                  -DNNOM_STATIC_BUF_KB=36 \
+                  -DKWS_WEIGHTS_HEADER='"mel_compact_int8_weights.h"' \
+                  -DKWS_MODEL_NAME='"mel_compact_int8"' \
+                  -I$(MEL_INT8_C_DIR)
+
+$(BUILD_DIR)/mel_compact_int8_xip.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
+	$(CC) $(MEL_INT8_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_int8_xip.bin
+	$(CROSS_COMPILE)size $@
+
+$(BUILD_DIR)/mel_compact_int8_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_ACCEL) | $(BUILD_DIR)
+	$(CC) $(MEL_INT8_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_int8_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+# ── kws_lr (SW + accel variants) ────────────────────────────────────────────
+KWS_LR_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+                -DNNOM_STATIC_BUF_KB=36 \
+                -DKWS_WEIGHTS_HEADER='"lr_weights.h"' \
+                -DKWS_MODEL_NAME='"kws_lr"' \
+                -I$(KWS_LR_C_DIR)
+
+$(BUILD_DIR)/kws_lr_xip.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_MODEL) | $(BUILD_DIR)
+	$(CC) $(KWS_LR_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/kws_lr_xip.bin
+	$(CROSS_COMPILE)size $@
+
+$(BUILD_DIR)/kws_lr_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_ACCEL) | $(BUILD_DIR)
+	$(CC) $(KWS_LR_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/kws_lr_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+# ── Standalone Conv1D accelerator unit test ─────────────────────────────────
+# Pure SRAM test (no I2S, no NNoM): exercises 3 hand-written conv1d cases
+# directly through the APB driver in test/common/accel_conv1d.h.  TC1/TC2
+# fail with HSIZE_WORD on stride×C_in non-aligned to 4 — known accelerator
+# limitation, kept as a documented regression marker (see test/accel/README.md).
+$(BUILD_DIR)/accel_test.o: $(ACCEL_C_DIR)/accel_test.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -I$(COMMON_DIR) -o $@ $<
+
+$(BUILD_DIR)/accel_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/accel_test.o $(COMMON_DIR)/uart_utils.o $(BUILD_DIR)/memset.o
+	$(LD) $(XIP_LDFLAGS) -o $@ $^
+
+# ── XIP audio playback firmware glue (only built when XIP_PLAYBACK=1) ────────
+# scripts/hex_to_c_array.py emits PLAYBACK_SAMPLES_C; root Makefile wires it.
+$(BUILD_DIR)/playback_samples.o: $(PLAYBACK_SAMPLES_C) $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) -o $@ $<

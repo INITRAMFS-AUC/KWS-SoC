@@ -179,14 +179,69 @@ VERILOG_MACROS += $(UART_VERILOG_MACROS)
 # Optional bus-snooper debug peripheral. Set DEBUG_SNOOPER=1 in the
 # environment (e.g. `make DEBUG_SNOOPER=1 sim-verilator …`) to:
 #   - define DEBUG_SNOOPER for Verilog elaboration (instantiates the
-#     snooper at 0x4000_C000, switches apb_splitter to N_SLAVES=4)
+#     snooper at 0x4000_E000, with apb_splitter slot 4)
 #   - tell scripts/apply_patches.sh to apply the debug-snooper-* patches
 #     (CPU dbg_* output ports + ahb_sync_sram EXTRA_RD_WAIT parameter)
+# The Conv1D accelerator now occupies 0x4000_C000 unconditionally; the
+# snooper relocated to 0x4000_E000 so the two coexist.
 # Default off — production builds do not pay the snooper's M10K / area cost.
 DEBUG_SNOOPER ?=
 ifneq ($(DEBUG_SNOOPER),)
   VERILOG_MACROS += DEBUG_SNOOPER
   export DEBUG_SNOOPER
+endif
+
+# Conv1D accelerator $display() debug taps (peris/conv1d_accel/conv1d_accel.v).
+# Off by default — accelerator inference prints a START / per-byte WT / done
+# trace which is great for bisecting RTL bugs and very noisy in production.
+# Set ACCEL_DEBUG=1 to enable.
+ACCEL_DEBUG ?= 0
+ifeq ($(ACCEL_DEBUG),1)
+  VERILOG_MACROS += ACCEL_DEBUG
+endif
+
+# I2S Q8-quantization byte-select (peris/i2s/i2s_apb/i2s_itr2/apb_i2s_receiver.v).
+# When cfg_q8_en is set in firmware, the receiver picks 1 byte out of the
+# 24-bit captured audio to pack into the FIFO.  Choose which:
+#   Q8_SEL=MID  raw[23:16] = audio[16:9]   ← default, matches main's history
+#   Q8_SEL=MSB  raw[30:23] = audio[23:16]  (sign + top 7 bits, full dynamic range)
+#   Q8_SEL=LSB  raw[14:7]  = audio[7:0]    (low 8 — fine detail, no sign)
+# Useful for A/B'ing which slice is the right Q8 quantization for our
+# trained int8 KWS models.  Compile-time only (no runtime register).
+Q8_SEL ?= MID
+ifeq ($(Q8_SEL),MSB)
+  VERILOG_MACROS += Q8_SEL_MSB
+else ifeq ($(Q8_SEL),LSB)
+  VERILOG_MACROS += Q8_SEL_LSB
+else ifneq ($(Q8_SEL),MID)
+  $(error Q8_SEL must be MSB, MID, or LSB (got '$(Q8_SEL)'))
+endif
+
+# XIP audio playback feature (peris/xip/xip_sample_player.v).  When
+# XIP_PLAYBACK=1, the player is instantiated as a 5th AHB master that
+# reads samples from XIP flash at 0x8001_0000 and feeds them serially
+# into the I2S receiver's sd input — replaces the external mic pin in
+# simulation/FPGA-bring-up flows.  Off by default.
+XIP_PLAYBACK ?= 0
+
+# Path to the audio hex file used for playback.  Replace with any 1-second
+# clip (e.g. sim/go_0000.hex, sim/no_0000.hex) to test different inputs.
+PLAYBACK_SAMPLES_HEX        ?= sim/playback_samples.hex
+PLAYBACK_SAMPLES_C          := test/build/playback_samples.c
+
+# Number of 1-second 8 kHz clips in the playback hex file.  scripts/wav_to_hex.py
+# writes this automatically to a .count sidecar beside the hex.  Override on
+# the command line if you generate the hex externally.
+PLAYBACK_SAMPLES_COUNT_FILE := $(PLAYBACK_SAMPLES_HEX:.hex=.count)
+PLAYBACK_SAMPLES_NUMBER     ?= $(shell cat $(PLAYBACK_SAMPLES_COUNT_FILE) 2>/dev/null || echo 1)
+
+ifeq ($(XIP_PLAYBACK),1)
+  VERILOG_MACROS += XIP_PLAYBACK
+  # Total 32-bit words in the XIP-resident sample array = clips × 8000.
+  # Passed as a Verilog macro so xip_sample_player.v's N_SAMPLES is set
+  # automatically without editing the RTL.
+  VERILOG_MACROS += XIP_N_SAMPLES=$(shell expr $(PLAYBACK_SAMPLES_NUMBER) \* 8000)
+  export XIP_PLAYBACK PLAYBACK_SAMPLES_C
 endif
 
 # Critical-word-first / early-restart in the XIP cache is always
