@@ -15,16 +15,53 @@ Priority ladder:
   visibility; real bug somewhere in NNoM static-memory init that LTO
   is masking.
 
+- **Test-stimulus provenance unknown — classification regression
+  deferred**.  After bumping `peris/i2s` to the protocol-correct
+  RX core (skips the leading Z SCK cycle, captures the 24 audio
+  bits at `shifter[23:0]`), every keyword in `sim/<key>_0000.hex`
+  classifies as `unknown`.  Root cause is a stimulus-vs-receiver
+  alignment offset: the existing hex files use the legacy
+  `(int32_t)q7 << 16` convention which puts the q7 byte at bits
+  [23:16] — under the new RX that maps to `audio[16:9]`, not the
+  byte the firmware reads with `(int8_t)(fifo >> 16)`.  Two open
+  questions block the fix: (a) what was the original audio source
+  (16-bit Google Speech Commands, real 24-bit INMP441, something
+  else), and (b) what byte slice was the model trained on.  Until
+  we can answer both, regenerating hexes via
+  `scripts/realign_q7_hex.py` is just guesswork.  Stimuli stay as-is
+  for cycle-count regression; classification correctness gets
+  validated end-to-end on real INMP441 silicon when that path is
+  brought up.
+
+- **`peris/i2s` `q8-sel-flag` branch needs to be pushed upstream**.
+  The submodule pointer in this repo is at the local commit
+  `4335f2f` (adds the compile-time `Q8_SEL` flag for byte selection
+  under WIDTH=8).  Until the branch is pushed to the i2s remote, a
+  fresh `git submodule update --init` on someone else's checkout
+  will fail to find the SHA.  Push to `origin` on the i2s remote
+  and verify cloning works from scratch.
+
+- **Conv1D accelerator input-misalignment limitation (TC1/TC2)**.
+  `test/accel/accel_test.c` runs three hand-written cases through
+  `accel_conv1d.h`.  TC1 (C_in=1, C_out=2, K_w=3, stride=1, W_in=5)
+  and TC2 (C_in=1, C_out=1, K_w=65, stride=1, W_in=68) fail because
+  HSIZE_WORD input reads aren't word-aligned when stride×C_in is not
+  a multiple of 4.  TC3 (C_in=4) passes — the production
+  `mel_compact_4blk_ch36` and `mel_compact_int8` paths only exercise
+  C_in=4 layers, so this is latent until a model with C_in not %4
+  reaches the accelerator.  Fix: detect mis-alignment in the
+  accelerator, fall back to HSIZE_BYTE reads (slower but correct).
+  Fail-fast in `nnom_conv1d_hw.c` is the firmware-side stopgap.
+
 ## Deferred (waiting on external dep)
 
-- **ring_buf overflow / lost audio between clips**.  Trap handler
-  silently drops samples once `ring_pos == SAMPLES_PER_CLIP`; today
-  inference takes ~3× longer than one capture window so we lose ~3
-  clips of audio between every processed clip.  **Deferred while the
-  team's Conv1D accelerator lands** — once inference fits inside one
-  capture window, the gap closes naturally and most of this becomes
-  moot.  Re-evaluate after accelerator merge; if inference still
-  > capture, do double-buffering (ring = 2× clip).
+- **ring_buf overflow / lost audio between clips — RE-EVALUATE NOW
+  THAT ACCELERATOR LANDED**.  Inference is now ~1.08M cycles for
+  `mel_compact_int8_xip_accel` (vs ~46M SW), well inside one capture
+  window, so the gap that motivated this entry is closed for the
+  accelerated path.  Confirm under real workloads (non-back-to-back
+  inferences, sliding window enabled per the entry below) and close
+  this when verified.  SW-only models still have the gap.
 
 ## P1 — perf / power
 
@@ -56,8 +93,40 @@ Priority ladder:
   109.86M → 105.0M and CYCLES_CAPTURE matches the audio rate
   exactly.  Phase B (HW skip-R-slot) and Phase C (testbench)
   tracked separately above.
-- **Flip on sliding-window inference once the Conv1D accelerator
-  lands.** Trigger: a `model_run` cycle count that fits comfortably
+- **Conv1D accelerator landed — `mel_compact_int8_xip_accel` at
+  1.08M cycles**.  Merged on branch `merge-conv1d-accel` (this PR).
+  RTL: `peris/conv1d_accel/conv1d_accel.v` (4-MAC datapath, ping-
+  pong input buffers, word-aligned weight bursts).  Firmware:
+  `test/common/nnom_conv1d_hw.c` shim replaces NNoM's `conv2d_run`.
+  Build target: `make model-mel-compact-int8-accel`.  Verified
+  CYCLES_INFER:
+      mel_compact_int8_xip       (SW)          ~46M
+      mel_compact_int8_xip_accel (HW conv1d)   1.08M  (≥ 42× speedup)
+  perf gate met (target 1.09M).  Classification on existing test
+  stimuli is `unknown` for all clips — see the test-stimulus
+  provenance entry under P0.
+
+- **Conv1D accel: clock/data gating opportunities (P1 follow-up)**.
+  The 4-MAC datapath toggles every cycle in S_MAC regardless of
+  `r_busy`; weight RF (`wt_buf`) is written every weight-load
+  state.  Wrapping the multipliers in a state-derived clock-enable
+  and gating `wt_buf` write-enable when `state ∉ {S_WT_DATA}` saves
+  switching power on the inactive cycles.  Bias / per-channel
+  shift registers latch only at `S_BIAS_DATA` / `S_SHIFT_DATA` —
+  already inherently gated, but worth confirming with a power
+  report on the next ASIC pass.  The debug counter `dbg_ctr` is
+  now `\`ifdef ACCEL_DEBUG`-gated (no toggling 21-bit counter when
+  undefined).
+
+- **Per-channel `SHIFT_ADDR` is wired but unused**.  The accelerator
+  exposes `SHIFT_ADDR` (0x20) for per-channel right-shift arrays,
+  but every model in tree today shares one scalar shift across all
+  C_out.  Exercise it with a per-channel-quantized model so the
+  tested code path matches the synthesised one.  Otherwise the
+  per-channel logic is silently dead until a future model needs it.
+
+- **Flip on sliding-window inference now that the Conv1D accelerator
+  is in tree.** Trigger: a `model_run` cycle count that fits comfortably
   inside the 20-40 ms / 720K-1.44M-cycle window we want to slide
   by.  Action, in order:
     1. Bump `KWS_RING_SAMPLES` from 8192 to 16384 in
@@ -217,6 +286,34 @@ Priority ladder:
   HSEL from the AHB address because the splitter doesn't honour the
   master's HSEL cleanly.  Fix the splitter to pass HSEL through and
   remove the workaround wire.
+
+- **APB splitter slot map is hand-coded — make config-driven**.
+  `kws_soc.v` now embeds an 80-bit `ADDR_MAP` / `ADDR_MASK` for
+  five APB slots (timer / uart / i2s / accel / snooper).  Adding a
+  6th slave or changing region sizes means editing the literals by
+  hand.  Move the slot map into a Verilog header (or a small
+  Python codegen) keyed by a peripheral list, the way `peris.f`
+  already enumerates the peripheral RTL.  Same SSoT pattern as the
+  RV_ARCH plumbing.
+
+- **Conditional N_MASTERS in kws_soc.v duplicates the crossbar
+  port-list**.  The `\`ifdef XIP_PLAYBACK` branch carries 5
+  master concats (playback + accel + dmac + d + i); the `\`else`
+  branch carries 4 (no playback).  ~14 lines duplicated per
+  branch.  Fold into a tie-off pattern (`playback_*` always
+  declared, hardwired to IDLE/0 when `XIP_PLAYBACK` undefined,
+  `N_MASTERS=5` always) so the crossbar instance has one set of
+  port assignments.  Tiny synthesis cost (extra dead inputs) for
+  a much cleaner source.
+
+- **Defer-or-drop the `Q8_SEL` Makefile knob if upstream commits
+  the i2s `q8-sel-flag` branch**.  Today the parent project ships a
+  `Q8_SEL=MSB|MID|LSB` knob that propagates through `VERILOG_MACROS`
+  to the i2s submodule's compile-time byte selector.  If the
+  submodule's `q8-sel-flag` branch is merged into i2s `main`, the
+  flag becomes a project-local choice the user can make once and
+  forget.  If we ever determine the byte slice that matches the
+  trained model and pin it, drop the knob entirely.
 - **`fpga_top.v` CLK_MHZ duplication** (TODO at `quartus/fpga_top.v:60`).
   The `CLK_MHZ` parameter on the `kws_soc` instantiation is a magic
   number that has to track the PLL.  Wire it from the same root
