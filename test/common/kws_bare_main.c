@@ -69,6 +69,12 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifdef KWS_DUMP_LAYERS
+/* Pulled in only for the spike-comparison dump build.  The dump callback
+ * walks layer->out->tensor and uses default_layer_names[] from NNoM. */
+#include "nnom.h"
+#endif
+
 #ifndef KWS_WEIGHTS_HEADER
 #  error "KWS_WEIGHTS_HEADER must be passed via -D (e.g. '\"strided_s16_nodil_weights.h\"')"
 #endif
@@ -127,6 +133,57 @@ static void uart_puthex(uint32_t v) {
         uart_putc(h[(v >> s) & 0xfu]);
 }
 
+#ifdef KWS_DUMP_LAYERS
+/* LF-only helpers for the spike-style activations dump.  Match
+ * test/spikedebug/kws_spike_debug.c byte-for-byte: no '\r', lowercase hex,
+ * "%02x"-style padding only on bytes (uint8). */
+static void uart_putc_lf(char c)             { uart_putc(c); }
+static void uart_puts_lf(const char *s)      { while (*s) uart_putc(*s++); }
+static void uart_putu_lf(uint32_t v) {
+    char b[12]; int i = 0;
+    if (v == 0) { uart_putc('0'); return; }
+    while (v > 0) { b[i++] = (char)('0' + (v % 10)); v /= 10; }
+    while (i > 0) uart_putc(b[--i]);
+}
+static void uart_putd_lf(int32_t v) {
+    if (v < 0) { uart_putc('-'); uart_putu_lf((uint32_t)(-v)); }
+    else       { uart_putu_lf((uint32_t)v); }
+}
+static void uart_puthex_byte_lf(uint8_t b) {
+    static const char h[] = "0123456789abcdef";
+    uart_putc(h[(b >> 4) & 0xF]);
+    uart_putc(h[b & 0xF]);
+}
+
+static int kws_layer_idx = 0;
+static nnom_status_t kws_layer_dump_cb(nnom_model_t *m, nnom_layer_t *layer) {
+    (void)m;
+    nnom_tensor_t *t = layer->out->tensor;
+    uint32_t n = 1;
+    for (int d = 0; d < (int)t->num_dim; d++) n *= t->dim[d];
+
+    uart_puts_lf("LAYER_");        uart_putu_lf((uint32_t)kws_layer_idx);
+    uart_puts_lf(" type=");        uart_puts_lf(default_layer_names[layer->type]);
+    uart_puts_lf(" shape=[");
+    for (int d = 0; d < (int)t->num_dim; d++) {
+        if (d) uart_putc_lf(',');
+        uart_putu_lf((uint32_t)t->dim[d]);
+    }
+    uart_puts_lf("] q_dec=");
+    uart_putd_lf(t->q_dec ? (int32_t)t->q_dec[0] : -1);
+    uart_puts_lf(" n=");           uart_putu_lf(n);
+    uart_putc_lf('\n');
+
+    const uint8_t *p = (const uint8_t *)t->p_data;
+    for (uint32_t i = 0; i < n; i++) {
+        uart_puthex_byte_lf(p[i]);
+        uart_putc_lf('\n');
+    }
+    kws_layer_idx++;
+    return NN_SUCCESS;
+}
+#endif
+
 /* ── I2S (KWS-SoC apb_i2s_receiver at 0x40008000) ──────────────────────── */
 
 typedef struct {
@@ -181,6 +238,21 @@ typedef struct {
 #define I2S_CONF_DS_EN      (1u << 5)   /* HW 3x downsample (keep 1 of 3)    */
 #define I2S_CONF_WIDTH_8    (2u << 6)   /* 4 int8 samples per FIFO word      */
 
+/* HW 3× decimator gate.
+ *
+ * Default 0: receiver runs at ~16 kHz raw (cfg_div=17 → 15.625 kHz) and
+ *            main() does a firmware ÷2 into the 8 kHz model input.  This
+ *            is the production path with our 16 kHz mic stimulus / FPGA mic.
+ * Set to 1: HW keeps 1 of every 3 raw samples (3× decimation).  Use when
+ *           the mic runs at ~48 kHz raw (cfg_div tuned so that
+ *           clk / (128 * (cfg_div+1)) ≈ 48 kHz).  The post-DS rate is
+ *           ~16 kHz; pair with KWS_MODEL_HZ=8000 (default) so main() does
+ *           the final ÷2 to 8 kHz, OR with KWS_MODEL_HZ=16000 for a 16 kHz
+ *           model (peak-norm).  Override per-model via the build flags. */
+#ifndef KWS_DS_EN
+#define KWS_DS_EN 0
+#endif
+
 static void i2s_init(uint32_t clk_div) {
     /* WIDTH=8: HW packs 4 int8 samples per FIFO word — 4× less FIFO/AHB
      *          traffic per second of audio.  Receiver writes
@@ -188,13 +260,15 @@ static void i2s_init(uint32_t clk_div) {
      *          (newest at MSB, oldest at LSB), so on little-endian RV32 the
      *          bytes land in audio_ring[] in time order — no firmware
      *          byte-shuffle needed.
-     * DS_EN:   NOT enabled — we run the receiver at ~16 kHz raw directly
-     *          (cfg_div=17 → 15.625 kHz) and let main() do the ÷2 into
-     *          nnom_input_data for the 8 kHz model input.  Engaging
-     *          HW DS_EN here would 3× decimate again, dropping the
-     *          model rate to ~5 kHz. */
+     * DS_EN:   compile-time gate (KWS_DS_EN above).  Default 0 — we run
+     *          the receiver at ~16 kHz raw and let main() do the ÷2 into
+     *          nnom_input_data for the 8 kHz model.  Set to 1 for 48 kHz
+     *          mic + HW ÷3 + firmware ÷2 paths. */
     I2S->conf = ((clk_div & 0xFFFFFFu) << 8)
               | I2S_CONF_IRQ_EN
+#if KWS_DS_EN
+              | I2S_CONF_DS_EN
+#endif
               | I2S_CONF_WIDTH_8;
 }
 
@@ -230,10 +304,23 @@ typedef struct {
 /* Audio rates: receiver delivers ~16 kHz int8 to audio_ring (3× HW decimate
  * from ~48 kHz mic); main loop decimates ÷2 again into the 8 kHz int8 model
  * input.  Keep these as named constants so the snapshot math reads clean. */
-#define MODEL_HZ               8000
-#define RING_HZ                (MODEL_HZ * 2)        /* = 16000 */
-#define MODEL_SAMPLES_PER_CLIP MODEL_HZ              /* = 8000  bytes (= int8 samples) */
-#define RING_SAMPLES_PER_CLIP  RING_HZ               /* = 16000 bytes captured per clip */
+/* Audio rate parameterization.
+ *
+ * RING_HZ        Receiver-output rate (after any HW DS_EN).  Fixed by the
+ *                I2S pipeline: 16 kHz today (16 kHz raw, no HW DS, OR
+ *                48 kHz raw + HW ÷3).
+ * KWS_MODEL_HZ   Rate the model expects.  Default 8 kHz (1-second clip
+ *                = MODEL_SAMPLES_PER_CLIP=8000 int8 samples).  16 kHz
+ *                models (peak-norm variant) override with -DKWS_MODEL_HZ=16000.
+ * KWS_DECIMATE   Snapshot-loop stride (RING_HZ / KWS_MODEL_HZ).  1 for
+ *                16 kHz models, 2 for 8 kHz models (firmware ÷2). */
+#define RING_HZ                16000
+#ifndef KWS_MODEL_HZ
+#define KWS_MODEL_HZ           8000
+#endif
+#define KWS_DECIMATE           (RING_HZ / KWS_MODEL_HZ)   /* 1 or 2 */
+#define MODEL_SAMPLES_PER_CLIP 8000
+#define RING_SAMPLES_PER_CLIP  (MODEL_SAMPLES_PER_CLIP * KWS_DECIMATE)
 #define NUM_CLASSES            11
 
 /* Audio capture ring buffer.
@@ -302,6 +389,54 @@ typedef struct {
 #endif
 
 __attribute__((aligned(4))) static volatile int8_t audio_ring[KWS_RING_SAMPLES];
+
+/* Rolling peak-normalization (firmware-side AGC).  Opt-in.
+ *
+ * Tracks a running |peak| envelope over the int8 audio stream and rescales
+ * each sample so the output spans roughly [-127, 127] regardless of input
+ * loudness.  Updated as samples are *consumed* by the snapshot loop, so the
+ * envelope state is per-stream, not per-clip — it carries across inference
+ * boundaries and behaves like an AGC.
+ *
+ *   attack:  instantaneous (any new |s| > peak immediately raises it).
+ *   release: peak -= peak >> SHIFT each sample → exp decay τ ≈ (1<<SHIFT)/fs.
+ *            At fs=8 kHz, SHIFT=10 → ~128 ms; SHIFT=12 → ~512 ms.
+ *   floor:   minimum peak; prevents /0 and absurd boost on silence.
+ *
+ * Cost: ~10-20 cycles per snapshot byte.  At MODEL_SAMPLES_PER_CLIP=8000
+ * that's ~120K cycles per inference (~0.5 % of a 30 ms accel run).
+ *
+ * Disabled by default; build with -DKWS_AGC_ENABLE=1 to turn it on.
+ * Tuning knobs: -DKWS_AGC_RELEASE_SHIFT=N -DKWS_AGC_FLOOR=N. */
+#ifndef KWS_AGC_ENABLE
+#define KWS_AGC_ENABLE 0
+#endif
+#ifndef KWS_AGC_RELEASE_SHIFT
+#define KWS_AGC_RELEASE_SHIFT 10
+#endif
+#ifndef KWS_AGC_FLOOR
+#define KWS_AGC_FLOOR 8
+#endif
+
+#if KWS_AGC_ENABLE
+static int16_t kws_agc_peak = KWS_AGC_FLOOR;
+
+static inline int8_t kws_agc_normalize(int8_t s) {
+    int16_t a = (s < 0) ? (int16_t)(-(int16_t)s) : (int16_t)s;
+    if (a > kws_agc_peak) {
+        kws_agc_peak = a;                       /* attack: instant       */
+    } else {
+        kws_agc_peak -= kws_agc_peak >> KWS_AGC_RELEASE_SHIFT;
+        if (kws_agc_peak < KWS_AGC_FLOOR) kws_agc_peak = KWS_AGC_FLOOR;
+    }
+    int16_t scaled = (int16_t)(((int32_t)s * 127) / kws_agc_peak);
+    if (scaled >  127) scaled =  127;
+    if (scaled < -128) scaled = -128;
+    return (int8_t)scaled;
+}
+#else
+static inline int8_t kws_agc_normalize(int8_t s) { return s; }
+#endif
 
 static void dma_arm(void) {
     DMAC->control = DMAC_CTRL_I2S_PIRQ & ~1u;        /* EN=0 while reconfiguring */
@@ -435,6 +570,14 @@ int main(void) {
     }
     uart_puts("Model loaded\r\n");
 
+#ifdef KWS_DUMP_LAYERS
+    /* Single-shot mode for diff-against-Spike: register the per-layer
+     * activation dump callback (defined at file scope) before the first
+     * model_run.  Output format mirrors test/spikedebug/kws_spike_debug.c
+     * byte-for-byte (LF-only, "%02x"-padded bytes). */
+    model_set_callback(model, kws_layer_dump_cb);
+#endif
+
 #ifdef USE_MCYCLE_CSR
     csr_enable_cycle_counter();
 #endif
@@ -503,13 +646,16 @@ int main(void) {
 
         /* Snapshot the next window — anchored to bytes_at_next_inference,
          * NOT to the floating bytes_written, so the window position
-         * tracks the explicit step.  Decimate ÷2 into nnom_input_data
-         * (receiver delivers 16 kHz int8; model wants 8 kHz int8). */
+         * tracks the explicit step.  Decimate ÷KWS_DECIMATE into
+         * nnom_input_data (=2 for 8 kHz models, =1 for 16 kHz models).
+         * Optional AGC normalization is applied per sample (no-op when
+         * KWS_AGC_ENABLE=0, the default). */
         uint32_t snap_start_byte = bytes_at_next_inference - RING_SAMPLES_PER_CLIP;
         uint32_t snap_start_ring = snap_start_byte & KWS_RING_MASK;
         for (int j = 0; j < MODEL_SAMPLES_PER_CLIP; j++) {
-            uint32_t ring_idx = (snap_start_ring + (uint32_t)(j * 2)) & KWS_RING_MASK;
-            nnom_input_data[j] = audio_ring[ring_idx];
+            uint32_t ring_idx =
+                (snap_start_ring + (uint32_t)(j * KWS_DECIMATE)) & KWS_RING_MASK;
+            nnom_input_data[j] = kws_agc_normalize((int8_t)audio_ring[ring_idx]);
         }
 
 #ifdef KWS_DEBUG_DUMP_FIRST_CLIP
@@ -531,6 +677,19 @@ int main(void) {
             uart_puts("RB_END\r\n");
             asm volatile ("ebreak");
         }
+#endif
+
+#ifdef KWS_DUMP_LAYERS
+        /* Single-shot dump: quiesce the audio path before inference.
+         * The Conv1D accelerator drives heavy AHB traffic (writes
+         * activations to SRAM, reads weights from XIP); concurrent DMA
+         * bursts from the I2S receiver collide with it and stall
+         * inference badly (observed: stuck mid-LAYER_8 for minutes in
+         * sim).  Disable the mic, EN=0 the DMA, mask the dmac_irq
+         * before model_run; halt after the dump. */
+        I2S->conf      = 0;        /* stop SCK/WS — halts the FIFO push */
+        DMAC->control &= ~1u;      /* DMA EN=0 — drop any pending PIRQ  */
+        asm volatile ("csrci mstatus, 8");  /* global IRQs off          */
 #endif
 
         /* Always measure inference cycles for the step computation
@@ -579,14 +738,33 @@ int main(void) {
         }
         int debounced = (debounce_cnt >= KWS_DEBOUNCE_COUNT) ? pred : (NUM_CLASSES - 1);
 
-        uart_puts("IRQS:");
-        uart_putdec(i2s_irq_count);
-        uart_puts("\r\n");
-        uart_puts("DETECT:");
-        uart_puts(class_names[debounced]);
-        uart_puts(", ");
-        uart_putdec(debounced);
-        uart_puts("\r\n");
+        /* Per-clip print gating.
+         *   KWS_DUMP_LAYERS: suppress everything except the layer dump
+         *                    + final PRED line (matches Spike harness).
+         *   KWS_QUIET:       only print clips that resolved to a *real*
+         *                    word (not "unknown" — the last class).  Cuts
+         *                    the per-clip line storm on long captures of
+         *                    mostly silence; reduces UART overhead and
+         *                    helps the AUDIO_LOSS guard stay quiet too.
+         *   default:         print every iteration. */
+#ifdef KWS_DUMP_LAYERS
+        const int print_clip = 0;
+#elif defined(KWS_QUIET)
+        const int print_clip = (debounced != (NUM_CLASSES - 1));
+#else
+        const int print_clip = 1;
+#endif
+
+        if (print_clip) {
+            uart_puts("IRQS:");
+            uart_putdec(i2s_irq_count);
+            uart_puts("\r\n");
+            uart_puts("DETECT:");
+            uart_puts(class_names[debounced]);
+            uart_puts(", ");
+            uart_putdec(debounced);
+            uart_puts("\r\n");
+        }
 #ifdef USE_MCYCLE_CSR
         /* Three counters per clip:
          *   CYCLES_CAPTURE  I2S + DMA + ISR window (CPU mostly WFI).
@@ -596,18 +774,32 @@ int main(void) {
          *   CYCLES_TOTAL    capture + inference, the end-to-end cost
          *                    per clip (what matters for energy and
          *                    real-time latency budgets). */
-        uart_puts("CYCLES_CAPTURE:");
-        uart_putdec((int)cycles_capture);
-        uart_puts("\r\nCYCLES_INFER:");
-        uart_putdec((int)cycles);
-        uart_puts("\r\nCYCLES_TOTAL:");
-        uart_putdec((int)(cycles_capture + cycles));
-        uart_puts("\r\nCYCLES:");      /* legacy alias = CYCLES_INFER */
-        uart_putdec((int)cycles);
-        uart_puts("\r\n");
+        if (print_clip) {
+            uart_puts("CYCLES_CAPTURE:");
+            uart_putdec((int)cycles_capture);
+            uart_puts("\r\nCYCLES_INFER:");
+            uart_putdec((int)cycles);
+            uart_puts("\r\nCYCLES_TOTAL:");
+            uart_putdec((int)(cycles_capture + cycles));
+            uart_puts("\r\nCYCLES:");      /* legacy alias = CYCLES_INFER */
+            uart_putdec((int)cycles);
+            uart_puts("\r\n");
+        }
 
         /* Restart the capture-window timer for the next clip. */
         asm volatile ("csrr %0, mcycle" : "=r"(cyc_capture_start));
+#endif
+
+#ifdef KWS_DUMP_LAYERS
+        /* Single-shot dump: emit the spike-style PRED line and halt — no
+         * second inference, no continued capture.  Final line matches
+         * test/spikedebug/kws_spike_debug.c::printf("PRED:%d (%s)\n", ...). */
+        uart_puts_lf("PRED:");
+        uart_putu_lf((uint32_t)pred);
+        uart_puts_lf(" (");
+        uart_puts_lf(class_names[pred]);
+        uart_puts_lf(")\n");
+        while (1) asm volatile ("wfi");
 #endif
     }
 
