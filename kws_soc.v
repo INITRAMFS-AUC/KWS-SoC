@@ -262,7 +262,12 @@ module kws_soc #(
 
   // Crossbar AHB5 master-side outputs (we don't have a real exclusive monitor;
   // the splitter/arbiter return hexokay=1 by default when no slave drives it).
-  wire [2:0]        src_hexokay_xbar;  // {dmac, d-port, i-port}
+  // Width follows N_MASTERS: 4 normally, 5 with `XIP_PLAYBACK.
+`ifdef XIP_PLAYBACK
+  wire [4:0]        src_hexokay_xbar;  // {playback, accel, dmac, d-port, i-port}
+`else
+  wire [3:0]        src_hexokay_xbar;  // {accel, dmac, d-port, i-port}
+`endif
   assign d_hexokay = src_hexokay_xbar[1];
 
   wire              pwrup_req;
@@ -393,7 +398,9 @@ module kws_soc #(
       .dbg_sbus_wdata            (sbus_wdata),
       .dbg_sbus_rdata            (sbus_rdata),
 
-      .irq      ({uart_irq, dmac_irq}),
+      // Hazard3 irq vector is 3 bits wide (NUM_IRQS=3 in hazard3_config.vh).
+      // Slot 2 is reserved for the conv1d accel (firmware polls today; tied 0).
+      .irq      ({1'b0, uart_irq, dmac_irq}),
 
       .soft_irq (1'b0),
       .timer_irq(timer_irq),
@@ -418,27 +425,34 @@ module kws_soc #(
   // - System timer at.. 0x4000_0000
   // - UART at.......... 0x4000_4000
   // - I2S at........... 0x4000_8000
+  // - Conv1D accel at.. 0x4000_C000   (8 kB region)
+  // - Bus snooper at... 0x4000_E000   (8 kB region, gated by `DEBUG_SNOOPER)
   // - DMAC at.......... 0x6000_0000
   // - XIP Flash at..... 0x8000_0000
   //
-  // Masters (N_MASTERS=3):
+  // Masters (N_MASTERS=4, or 5 with `XIP_PLAYBACK):
   //   Master 0 — i-port (instruction fetch)  — LSB slice
   //   Master 1 — d-port (load/store + SBA)
-  //   Master 2 — DMAC master port            — MSB slice
+  //   Master 2 — DMAC master port
+  //   Master 3 — Conv1D accel master port
+  //   Master 4 — XIP sample player           — MSB slice (only if `XIP_PLAYBACK)
   //
-  // Slaves (N_SLAVES=4):
+  // Slaves (N_SLAVES=4 on AHB crossbar, unchanged):
   //   Slave 0 — SRAM        (0x0000_0000, mask 0xe000_0000)
   //   Slave 1 — APB bridge  (0x4000_0000, mask 0xe000_0000)
   //   Slave 2 — DMAC regs   (0x6000_0000, mask 0xe000_0000)
   //   Slave 3 — XIP flash   (0x8000_0000, mask 0xe000_0000)
 
   // CONN_MATRIX[master*N_SLAVES + slave] — which masters can reach which slaves
-  // Master 0 (i-port): SRAM[0]=1, Bridge[1]=0, DMACregs[2]=0, XIP[3]=1 → 4'b1001 → bits [ 3:0]
-  // Master 1 (d-port): SRAM[0]=1, Bridge[1]=1, DMACregs[2]=1, XIP[3]=1 → 4'b1111 → bits [ 7:4]
-  // Master 2 (dmac) : SRAM[0]=1, Bridge[1]=1, DMACregs[2]=0, XIP[3]=0 → 4'b0011 → bits [11:8]
+  // Master 0 (i-port):  SRAM[0]=1, Bridge[1]=0, DMACregs[2]=0, XIP[3]=1 → 4'b1001 → bits [ 3:0]
+  // Master 1 (d-port):  SRAM[0]=1, Bridge[1]=1, DMACregs[2]=1, XIP[3]=1 → 4'b1111 → bits [ 7:4]
+  // Master 2 (dmac):    SRAM[0]=1, Bridge[1]=1, DMACregs[2]=0, XIP[3]=0 → 4'b0011 → bits [11:8]
+  // Master 3 (accel):   SRAM[0]=1, Bridge[1]=0, DMACregs[2]=0, XIP[3]=1 → 4'b1001 → bits [15:12]
+  // Master 4 (playback):SRAM[0]=0, Bridge[1]=0, DMACregs[2]=0, XIP[3]=1 → 4'b1000 → bits [19:16]   (XIP_PLAYBACK only)
   // CONN_MATRIX_TRANSPOSE[slave*N_MASTERS + master]:
-  // SRAM←{dmac,d,i}=3'b111 [2:0], Bridge←{dmac,d,i}=3'b110 [5:3],
-  // DMACregs←{dmac,d,i}=3'b010 [8:6], XIP←{dmac,d,i}=3'b011 [11:9]
+  // SRAM←{accel,dmac,d,i}=4'b1111 [3:0],   Bridge←{accel,dmac,d,i}=4'b0110 [7:4],
+  // DMACregs←{accel,dmac,d,i}=4'b0010 [11:8], XIP←{accel,dmac,d,i}=4'b1011 [15:12]
+  // (TRANSPOSE bits widen to 5'b{playback,accel,dmac,d,i} per slave when `XIP_PLAYBACK)
 
   // --- Slave-side wires ---
 
@@ -504,35 +518,92 @@ module kws_soc #(
   wire [W_DATA-1:0] dmac_m_hrdata;
   wire              dmac_m_hresp; // crossbar drives this; DMAC master ignores HRESP
 
+  // Conv1D accelerator AHB master signals (crossbar master port 3)
+  wire [W_ADDR-1:0] accel_haddr;
+  wire              accel_hwrite;
+  wire [       1:0] accel_htrans;
+  wire [       2:0] accel_hsize;
+  wire [       2:0] accel_hburst;
+  wire [W_DATA-1:0] accel_hwdata;
+  wire              accel_hready;
+  wire [W_DATA-1:0] accel_hrdata;
+  wire              accel_hresp;
+
+`ifdef XIP_PLAYBACK
+  // XIP sample-player AHB master signals (crossbar master port 4, gated).
+  // The player is a read-only AHB master: it does not drive HWDATA or HBURST.
+  wire [W_ADDR-1:0] playback_haddr;
+  wire              playback_hwrite;        // tied 0 by the player; included in concat for shape
+  wire [       1:0] playback_htrans;
+  wire [       2:0] playback_hsize;
+  wire [W_DATA-1:0] playback_hwdata = 32'h0; // read-only master, no writes
+  wire              playback_hready;
+  wire [W_DATA-1:0] playback_hrdata;
+  wire              playback_hresp;
+`endif
+
   ahbl_crossbar #(
-      .N_MASTERS(3),
+`ifdef XIP_PLAYBACK
+      .N_MASTERS             (5),
+      // Master 4 (playback): SRAM=0 Bridge=0 DMACregs=0 XIP=1 → 4'b1000 → bits[19:16]
+      .CONN_MATRIX           (20'b1000_1001_0011_1111_1001),
+      // SRAM   ← {pb,accel,dmac,d,i}=5'b01111 [4:0]
+      // Bridge ← {pb,accel,dmac,d,i}=5'b00110 [9:5]
+      // DMAC   ← {pb,accel,dmac,d,i}=5'b00010 [14:10]
+      // XIP    ← {pb,accel,dmac,d,i}=5'b11011 [19:15]
+      .CONN_MATRIX_TRANSPOSE (20'b11011_00010_00110_01111),
+`else
+      .N_MASTERS             (4),
+      // Master 3 (accel):    SRAM=1 Bridge=0 DMACregs=0 XIP=1 → 4'b1001 → bits[15:12]
+      .CONN_MATRIX           (16'b1001_0011_1111_1001),
+      // SRAM   ← {accel,dmac,d,i}=4'b1111 [3:0]
+      // Bridge ← {accel,dmac,d,i}=4'b0110 [7:4]
+      // DMAC   ← {accel,dmac,d,i}=4'b0010 [11:8]
+      // XIP    ← {accel,dmac,d,i}=4'b1011 [15:12]
+      .CONN_MATRIX_TRANSPOSE (16'b1011_0010_0110_1111),
+`endif
       .N_SLAVES (4),
       .W_ADDR   (W_ADDR),
       .W_DATA   (W_DATA),
       .ADDR_MAP (128'h80000000_60000000_40000000_00000000),
-      .ADDR_MASK(128'he0000000_e0000000_e0000000_e0000000),
-      .CONN_MATRIX           (12'b0011_1111_1001),
-      .CONN_MATRIX_TRANSPOSE (12'b011_010_110_111)
+      .ADDR_MASK(128'he0000000_e0000000_e0000000_e0000000)
   ) xbar_u (
       .clk  (clk),
       .rst_n(rst_n),
 
-      // Masters: {dmac [MSB], d-port, i-port [LSB]}.
-      // DMAC master has no exclusive monitor / hmaster, so tie those off.
-      .src_hready_resp({dmac_m_hready,  d_hready,    i_hready   }),
-      .src_hresp      ({dmac_m_hresp,   d_hresp,     i_hresp    }),
+      // Masters: {playback [MSB] (XIP_PLAYBACK only), accel, dmac, d-port, i-port [LSB]}.
+      // DMAC + accel + playback masters have no exclusive monitor / hmaster, so tie those off.
+`ifdef XIP_PLAYBACK
+      .src_hready_resp({playback_hready, accel_hready, dmac_m_hready,  d_hready,    i_hready   }),
+      .src_hresp      ({playback_hresp,  accel_hresp,  dmac_m_hresp,   d_hresp,     i_hresp    }),
       .src_hexokay    (src_hexokay_xbar),
-      .src_haddr      ({dmac_m_haddr,   d_haddr,     i_haddr    }),
-      .src_hwrite     ({dmac_m_hwrite,  d_hwrite,    i_hwrite   }),
-      .src_htrans     ({dmac_m_htrans,  d_htrans,    i_htrans   }),
-      .src_hsize      ({dmac_m_hsize,   d_hsize,     i_hsize    }),
-      .src_hburst     ({3'b000,         d_hburst,    i_hburst   }),
-      .src_hprot      ({4'b0011,        d_hprot,     i_hprot    }),
-      .src_hmaster    ({8'd0,           d_hmaster,   i_hmaster  }),
-      .src_hmastlock  ({1'b0,           d_hmastlock, i_hmastlock}),
-      .src_hexcl      ({1'b0,           d_hexcl,     i_hexcl    }),
-      .src_hwdata     ({dmac_m_hwdata,  d_hwdata,    i_hwdata   }),
-      .src_hrdata     ({dmac_m_hrdata,  d_hrdata,    i_hrdata   }),
+      .src_haddr      ({playback_haddr,  accel_haddr,  dmac_m_haddr,   d_haddr,     i_haddr    }),
+      .src_hwrite     ({playback_hwrite, accel_hwrite, dmac_m_hwrite,  d_hwrite,    i_hwrite   }),
+      .src_htrans     ({playback_htrans, accel_htrans, dmac_m_htrans,  d_htrans,    i_htrans   }),
+      .src_hsize      ({playback_hsize,  accel_hsize,  dmac_m_hsize,   d_hsize,     i_hsize    }),
+      .src_hburst     ({3'b000,          accel_hburst, 3'b000,         d_hburst,    i_hburst   }),
+      .src_hprot      ({4'b0011,         4'b0011,      4'b0011,        d_hprot,     i_hprot    }),
+      .src_hmaster    ({8'd0,            8'd0,         8'd0,           d_hmaster,   i_hmaster  }),
+      .src_hmastlock  ({1'b0,            1'b0,         1'b0,           d_hmastlock, i_hmastlock}),
+      .src_hexcl      ({1'b0,            1'b0,         1'b0,           d_hexcl,     i_hexcl    }),
+      .src_hwdata     ({playback_hwdata, accel_hwdata, dmac_m_hwdata,  d_hwdata,    i_hwdata   }),
+      .src_hrdata     ({playback_hrdata, accel_hrdata, dmac_m_hrdata,  d_hrdata,    i_hrdata   }),
+`else
+      .src_hready_resp({accel_hready, dmac_m_hready,  d_hready,    i_hready   }),
+      .src_hresp      ({accel_hresp,  dmac_m_hresp,   d_hresp,     i_hresp    }),
+      .src_hexokay    (src_hexokay_xbar),
+      .src_haddr      ({accel_haddr,  dmac_m_haddr,   d_haddr,     i_haddr    }),
+      .src_hwrite     ({accel_hwrite, dmac_m_hwrite,  d_hwrite,    i_hwrite   }),
+      .src_htrans     ({accel_htrans, dmac_m_htrans,  d_htrans,    i_htrans   }),
+      .src_hsize      ({accel_hsize,  dmac_m_hsize,   d_hsize,     i_hsize    }),
+      .src_hburst     ({accel_hburst, 3'b000,         d_hburst,    i_hburst   }),
+      .src_hprot      ({4'b0011,      4'b0011,        d_hprot,     i_hprot    }),
+      .src_hmaster    ({8'd0,         8'd0,           d_hmaster,   i_hmaster  }),
+      .src_hmastlock  ({1'b0,         1'b0,           d_hmastlock, i_hmastlock}),
+      .src_hexcl      ({1'b0,         1'b0,           d_hexcl,     i_hexcl    }),
+      .src_hwdata     ({accel_hwdata, dmac_m_hwdata,  d_hwdata,    i_hwdata   }),
+      .src_hrdata     ({accel_hrdata, dmac_m_hrdata,  d_hrdata,    i_hrdata   }),
+`endif
 
       // Slaves: {xip [MSB], dmac regs, bridge, sram [LSB]}.
       // No slave drives hexokay; tie off.  dst_hmaster / dst_hexcl unused.
@@ -591,6 +662,26 @@ module kws_soc #(
   wire        i2s_pready;
   wire        i2s_pslverr;
 
+  // Conv1D accelerator APB slave wires (slot 3 @ 0x4000_C000, 8 KB region)
+  wire        accel_psel;
+  wire        accel_penable;
+  wire        accel_pwrite;
+  wire [15:0] accel_paddr;
+  wire [31:0] accel_pwdata;
+  wire [31:0] accel_prdata;
+  wire        accel_pready;
+  wire        accel_pslverr;
+
+  // Bus snooper APB slave wires (slot 4 @ 0x4000_E000, 8 KB region, gated by `DEBUG_SNOOPER)
+  wire        snoop_psel;
+  wire        snoop_penable;
+  wire        snoop_pwrite;
+  wire [15:0] snoop_paddr;
+  wire [31:0] snoop_pwdata;
+  wire [31:0] snoop_prdata;
+  wire        snoop_pready;
+  wire        snoop_pslverr;
+
   ahbl_to_apb apb_bridge_u (
       .clk  (clk),
       .rst_n(rst_n),
@@ -618,11 +709,21 @@ module kws_soc #(
       .apbm_pslverr(bridge_pslverr)
   );
 
+  // APB slot map (paddr is 16-bit; bridge masks the 32-bit haddr down to bridge_paddr[15:0]):
+  //   timer:   0x0000-0x3FFF  (16 KB)  MAP=0x0000  MASK=0xC000
+  //   uart:    0x4000-0x7FFF  (16 KB)  MAP=0x4000  MASK=0xC000
+  //   i2s:     0x8000-0xBFFF  (16 KB)  MAP=0x8000  MASK=0xC000
+  //   accel:   0xC000-0xDFFF  ( 8 KB)  MAP=0xC000  MASK=0xE000
+  //   snooper: 0xE000-0xFFFF  ( 8 KB)  MAP=0xE000  MASK=0xE000
+  // Snooper's APB slot is always allocated; the slave is only instantiated when
+  // `DEBUG_SNOOPER is defined.  When undefined, the slot is tied off below
+  // (snoop_pready=1, prdata=0) so the splitter still mux's cleanly.
   apb_splitter #(
-      .N_SLAVES (3),
+      .N_SLAVES (5),
       .W_ADDR   (16),
-      .ADDR_MAP (48'h4000_8000_0000),
-      .ADDR_MASK(48'hc000_c000_c000)
+      // Per-slot ADDR_MAP / ADDR_MASK, packed slot-MSB-first: snooper, accel, i2s, uart, timer
+      .ADDR_MAP (80'hE000_C000_8000_4000_0000),
+      .ADDR_MASK(80'hE000_E000_C000_C000_C000)
   ) inst_apb_splitter (
       .apbs_paddr   (bridge_paddr),
       .apbs_psel    (bridge_psel),
@@ -633,14 +734,14 @@ module kws_soc #(
       .apbs_prdata  (bridge_prdata),
       .apbs_pslverr (bridge_pslverr),
 
-      .apbm_paddr   ({uart_paddr,   i2s_paddr,   timer_paddr  }),
-      .apbm_psel    ({uart_psel,    i2s_psel,    timer_psel   }),
-      .apbm_penable ({uart_penable, i2s_penable, timer_penable}),
-      .apbm_pwrite  ({uart_pwrite,  i2s_pwrite,  timer_pwrite }),
-      .apbm_pwdata  ({uart_pwdata,  i2s_pwdata,  timer_pwdata }),
-      .apbm_pready  ({uart_pready,  i2s_pready,  timer_pready }),
-      .apbm_prdata  ({uart_prdata,  i2s_prdata,  timer_prdata }),
-      .apbm_pslverr ({uart_pslverr, i2s_pslverr, timer_pslverr})
+      .apbm_paddr   ({snoop_paddr,    accel_paddr,    i2s_paddr,    uart_paddr,    timer_paddr  }),
+      .apbm_psel    ({snoop_psel,     accel_psel,     i2s_psel,     uart_psel,     timer_psel   }),
+      .apbm_penable ({snoop_penable,  accel_penable,  i2s_penable,  uart_penable,  timer_penable}),
+      .apbm_pwrite  ({snoop_pwrite,   accel_pwrite,   i2s_pwrite,   uart_pwrite,   timer_pwrite }),
+      .apbm_pwdata  ({snoop_pwdata,   accel_pwdata,   i2s_pwdata,   uart_pwdata,   timer_pwdata }),
+      .apbm_pready  ({snoop_pready,   accel_pready,   i2s_pready,   uart_pready,   timer_pready }),
+      .apbm_prdata  ({snoop_prdata,   accel_prdata,   i2s_prdata,   uart_prdata,   timer_prdata }),
+      .apbm_pslverr ({snoop_pslverr,  accel_pslverr,  i2s_pslverr,  uart_pslverr,  timer_pslverr})
   );
 
   // ----------------------------------------------------------------------------
@@ -756,6 +857,42 @@ module kws_soc #(
       .dreq(  /* unused */)
   );
 
+  // I2S SD input mux: real mic pin vs XIP sample playback (when `XIP_PLAYBACK).
+  wire i2s_sd_internal;
+
+`ifdef XIP_PLAYBACK
+  // XIP sample playback: read pre-recorded samples from XIP flash via AHB and
+  // feed them serially to the I2S receiver's sd input.  The player taps the
+  // receiver's own sck_out / ws_out so the receiver still drives I2S timing.
+  wire xip_player_sd;
+
+  xip_sample_player #(
+      .SAMPLE_XIP_ADDR(32'h8001_0000)  // matches .playback_samples in test/common/link.ld
+      // N_SAMPLES is set automatically via `XIP_N_SAMPLES (root Makefile derives
+      // it from PLAYBACK_SAMPLES_NUMBER × 8000); falls back to 8000 (1 clip).
+  ) xip_player_u (
+      .clk      (clk),
+      .rst_n    (rst_n),
+      .sck_ref  (i2s_sck_out),
+      .ws_ref   (i2s_ws_out),
+      .sd_out   (xip_player_sd),
+
+      // AHB master port (crossbar master slot 4)
+      .m_haddr  (playback_haddr),
+      .m_hwrite (playback_hwrite),
+      .m_htrans (playback_htrans),
+      .m_hsize  (playback_hsize),
+      .m_hrdata (playback_hrdata),
+      .m_hready (playback_hready),
+      .m_hresp  (playback_hresp)
+  );
+
+  assign i2s_sd_internal = xip_player_sd;
+`else
+  // Normal operation: external I2S mic input pin
+  assign i2s_sd_internal = i2s_sd;
+`endif
+
   // FIFO_DEPTH comes from the root Makefile (-DI2S_FIFO_DEPTH=N).  The
   // firmware DMA burst (test/common/kws_bare_main.c) is derived as N/2
   // from the same source so the two stay in lock-step — see task #13.
@@ -767,7 +904,7 @@ module kws_soc #(
   ) apb_i2s_receiver_inst (
       .clk          (clk),
       .rst_n        (rst_n),
-      .sd           (i2s_sd),
+      .sd           (i2s_sd_internal),
       .apbs_psel    (i2s_psel),
       .apbs_penable (i2s_penable),
       .apbs_pwrite  (i2s_pwrite),
@@ -780,6 +917,92 @@ module kws_soc #(
       .ws_out       (i2s_ws_out),
       .i2s_irq      (i2s_irq)
   );
+
+  // ----------------------------------------------------------------------------
+  // Conv1D hardware accelerator (always instantiated)
+  //   APB slave  @ 0x4000_C000 (8 KB region; uses paddr[7:2] register decode)
+  //   AHB master @ crossbar port 3 (reads input/weights/bias from SRAM/XIP,
+  //                                  writes output bytes to SRAM)
+  // Done bit is polled by firmware (no IRQ).
+  conv1d_accel accel_u (
+      .clk       (clk),
+      .rst_n     (rst_n),
+
+      // APB slave (control / status / config registers)
+      .paddr     (accel_paddr),
+      .psel      (accel_psel),
+      .penable   (accel_penable),
+      .pwrite    (accel_pwrite),
+      .pwdata    (accel_pwdata),
+      .prdata    (accel_prdata),
+      .pready    (accel_pready),
+      .pslverr   (accel_pslverr),
+
+      // AHB-Lite master (DMA reads/writes)
+      .haddr     (accel_haddr),
+      .hburst    (accel_hburst),
+      .hsize     (accel_hsize),
+      .htrans    (accel_htrans),
+      .hwrite    (accel_hwrite),
+      .hwdata    (accel_hwdata),
+      // hprot / hmastlock are constants inside the module (4'b0011, 1'b0).
+      // Master concat above hard-codes the same values, so these outputs are unused.
+      .hprot     (/* unused — accel concat hard-codes 4'b0011 */),
+      .hmastlock (/* unused — accel concat hard-codes 1'b0    */),
+      .hrdata    (accel_hrdata),
+      .hready    (accel_hready),
+      .hresp     (accel_hresp)
+  );
+
+  // ----------------------------------------------------------------------------
+  // Bus snooper (debug, gated by `DEBUG_SNOOPER)
+  //   APB slave @ 0x4000_E000 (8 KB region).  When DEBUG_SNOOPER is undefined
+  //   the slot is tied off so the splitter still mux's cleanly.
+`ifdef DEBUG_SNOOPER
+  bus_snooper snooper_u (
+      .clk          (clk),
+      .rst_n        (rst_n),
+
+      .apbs_psel    (snoop_psel),
+      .apbs_penable (snoop_penable),
+      .apbs_pwrite  (snoop_pwrite),
+      .apbs_paddr   (snoop_paddr),
+      .apbs_pwdata  (snoop_pwdata),
+      .apbs_prdata  (snoop_prdata),
+      .apbs_pready  (snoop_pready),
+      .apbs_pslverr (snoop_pslverr),
+
+      // AHB bridge taps (passive — never driven by snooper).
+      // Snooper expects bridge_haddr[15:0]; main carries 32-bit bridge_haddr.
+      .bridge_haddr  (bridge_haddr[15:0]),
+      .bridge_hwrite (bridge_hwrite),
+      .bridge_htrans (bridge_htrans),
+      .bridge_hwdata (bridge_hwdata),
+      .bridge_hready (bridge_hready),
+
+      // CPU d-port aphase taps + dbg_* taps come from the patched Hazard3
+      // (scripts/apply_patches.sh applies debug-snooper-hazard3_taps.patch when
+      //  DEBUG_SNOOPER=1).  Until those patches are wired into hazard3_cpu_2port
+      //  here, hold the inputs tied off — the bus_snooper still captures
+      //  bridge-side traffic, just without CPU forwarding context.
+      .dport_haddr        (32'h0),
+      .dport_hwrite       (1'b0),
+      .dport_htrans       (2'b00),
+      .dbg_bus_aph_req_d  (1'b0),
+      .dbg_xm_memop       (5'h10),  // NONE
+      .dbg_m_bus_stall    (1'b0),
+      .dbg_m_wdata        (32'h0),
+      .dbg_mw_rd          (5'h0),
+      .dbg_xm_rs2         (5'h0),
+      .dbg_xm_result      (32'h0),
+      .dbg_mw_result      (32'h0)
+  );
+`else
+  // Snooper APB slot tied off so the splitter mux's cleanly.
+  assign snoop_prdata  = 32'h0;
+  assign snoop_pready  = 1'b1;
+  assign snoop_pslverr = 1'b0;
+`endif
 
 
   // Microsecond timebase for timer
