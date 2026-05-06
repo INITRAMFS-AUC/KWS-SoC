@@ -201,19 +201,23 @@ ifeq ($(ACCEL_DEBUG),1)
 endif
 
 # I2S Q8-quantization byte-select (peris/i2s/i2s_apb/i2s_itr2/apb_i2s_receiver.v).
-# When cfg_q8_en is set in firmware, the receiver picks 1 byte out of the
-# 24-bit captured audio to pack into the FIFO.  Choose which:
-#   Q8_SEL=MID  raw[23:16] = audio[16:9]   ← default, matches main's history
-#   Q8_SEL=MSB  raw[30:23] = audio[23:16]  (sign + top 7 bits, full dynamic range)
-#   Q8_SEL=LSB  raw[14:7]  = audio[7:0]    (low 8 — fine detail, no sign)
-# Useful for A/B'ing which slice is the right Q8 quantization for our
-# trained int8 KWS models.  Compile-time only (no runtime register).
-Q8_SEL ?= MID
-ifeq ($(Q8_SEL),MSB)
-  VERILOG_MACROS += Q8_SEL_MSB
+# Under the protocol-correct i2s_rx_core (skips 1 leading Z, captures 24 audio
+# bits at shifter[23:0]), WIDTH=8 packs one of three byte slices into the
+# FIFO.  Choose which:
+#   Q8_SEL=MSB  raw[23:16] = audio[23:16]  ← default, sign + top 7 bits.
+#                                            What the int8 KWS models are
+#                                            trained against.
+#   Q8_SEL=MID  raw[15:8]  = audio[15:8]   middle byte (legacy main behaviour
+#                                            BEFORE the alignment fix landed).
+#   Q8_SEL=LSB  raw[7:0]   = audio[7:0]    low byte, fine detail, no sign.
+# Useful for A/B'ing which slice the trained model expects.  Compile-time
+# only (no runtime register).
+Q8_SEL ?= MSB
+ifeq ($(Q8_SEL),MID)
+  VERILOG_MACROS += Q8_SEL_MID
 else ifeq ($(Q8_SEL),LSB)
   VERILOG_MACROS += Q8_SEL_LSB
-else ifneq ($(Q8_SEL),MID)
+else ifneq ($(Q8_SEL),MSB)
   $(error Q8_SEL must be MSB, MID, or LSB (got '$(Q8_SEL)'))
 endif
 
