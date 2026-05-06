@@ -476,3 +476,70 @@ Waiting for connection on port 9824
 Connected
 Hello World!
 ```
+
+## Full Verilator sim flow
+
+```bash
+# One-shot rebuild — RTL changes touched receiver, regs, kws_soc.v.
+make clean
+
+# Build all firmware binaries (test/build/*.bin) with the model's int8 path.
+# I2S_CLK_DIV is the only knob that changes between sim and FPGA frequencies.
+# CLK_MHZ defaults to 36; UART_BAUD_RATE defaults to 115200; I2S_FIFO_DEPTH=16.
+# kws_bare_main.c hard-codes WIDTH=8 itself, so no I2S_WIDTH_MODE here.
+make test \
+    I2S_CLK_DIV=5            # 36 MHz / (128*6) = 46.875 kHz raw → 15.6 kHz ring → 7.8 kHz model
+
+# Build the Verilator simulator with matching CLK_MHZ / UART_BAUD_RATE.
+make sim_verilator           # consumes the same CLK_MHZ and UART_BAUD_RATE the firmware used
+
+# Run the model firmware end-to-end.
+make sim-verilator NO_JTAG=1 \
+    FLASH=test/build/mel_compact_int8_xip_accel.bin \
+    MIC=sim/playback_samples.hex \
+    I2S_CLK_DIV=5            # repeat overrides — sim-verilator depends on `test`, which would otherwise rebuild with defaults
+```
+
+For just `recordI2s` (separate test, doesn't touch the model build):
+
+```bash
+make test \
+    I2S_CLK_DIV=5 \
+    RECORD_N_SAMPLES=8000 \
+    I2S_WIDTH_MODE=I2S_CONF_WIDTH_8     # match the int8 path
+
+make sim-verilator NO_JTAG=1 \
+    FLASH=test/build/recordI2s_xip.bin \
+    MIC=sim/playback_samples.hex \
+    I2S_CLK_DIV=5 RECORD_N_SAMPLES=8000 I2S_WIDTH_MODE=I2S_CONF_WIDTH_8
+```
+
+## Synthesis (Quartus)
+
+```bash
+make clean
+
+# Build the firmware first — Quartus bakes the .bin into the bitstream's flash image.
+# Same I2S_CLK_DIV applies; CLK_MHZ defaults to 36 (DE10S PLL target).
+make test I2S_CLK_DIV=5
+
+# (Re)generate the PLL IP only when CLK_MHZ changes. Skip if 36 MHz is fine.
+# make gen_pll CLK_MHZ=36 FPGA_FAMILY="Cyclone V"
+
+# Synth → fit → assemble → SOF.
+make config map fit asm \
+    CLK_MHZ=36 \
+    FPGA_FAMILY="Cyclone V" \
+    FPGA_PART=5CSXFC6D6F31C6 \
+    FPGA_BOARD=DE10S \
+    I2S_CLK_DIV=5
+
+# Static timing report (optional but recommended on first synth):
+make sta check_timing
+```
+
+## Currently best FPGA run configuration
+
+```bash
+make clean && make test-mel-compact-int8-peak-norm-accel I2S_CLK_DIV=17
+```

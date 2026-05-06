@@ -694,6 +694,26 @@ test:
 test-dma:
 	$(MAKE) -C test dma
 
+# Convenience wrappers for the most-used model build targets, exposed at the
+# repo root so the README invocations (e.g.
+#     make test-mel-compact-int8-peak-norm-accel I2S_CLK_DIV=17
+# ) work without `-C test`.  Each target just forwards to test/Makefile.
+test-mel-compact-accel:
+	$(MAKE) -C test mel-compact-accel
+test-mel-compact-int8-accel:
+	$(MAKE) -C test mel-compact-int8-accel
+test-mel-compact-int8-pi-accel:
+	$(MAKE) -C test mel-compact-int8-pi-accel
+test-mel-compact-int8-peak-norm-accel:
+	$(MAKE) -C test mel-compact-int8-peak-norm-accel
+test-mel-compact-int8-peak-norm-dump:
+	$(MAKE) -C test mel-compact-int8-peak-norm-dump
+test-mel-compact-int8-peak-norm-dump-full:
+	$(MAKE) -C test mel-compact-int8-peak-norm-dump-full
+	$(MAKE) -C test spikedebug/down_audio_16k_mic.hex
+test-lr-model-accel:
+	$(MAKE) -C test lr-model-accel
+
 testbench:
 	# TODO: Make a python script that runs all testbenches using vvp and checks their output and gives a report
 	$(MAKE) -C test xip-testbench

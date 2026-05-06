@@ -29,6 +29,8 @@ MODEL_DIR             = model
 STRIDED_MODEL_C_DIR   = $(MODEL_DIR)/strided_s16_nodil
 MEL_COMPACT_C_DIR     = $(MODEL_DIR)/mel_compact_4blk_ch36
 MEL_INT8_C_DIR        = $(MODEL_DIR)/mel_compact_int8
+MEL_INT8_PI_C_DIR     = $(MODEL_DIR)/mel_compact_int8_pi
+MEL_INT8_PEAK_NORM_C_DIR = $(MODEL_DIR)/mel_compact_int8_peak_norm
 KWS_LR_C_DIR          = $(MODEL_DIR)/kws_lr
 STREAMING_MODEL_C_DIR = $(MODEL_DIR)/streaming
 ACCEL_C_DIR           = accel
@@ -220,6 +222,8 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.dis $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.bin \
 	$(BUILD_DIR)/mel_compact_int8_xip.elf            $(BUILD_DIR)/mel_compact_int8_xip.dis            $(BUILD_DIR)/mel_compact_int8_xip.bin \
 	$(BUILD_DIR)/mel_compact_int8_xip_accel.elf      $(BUILD_DIR)/mel_compact_int8_xip_accel.dis      $(BUILD_DIR)/mel_compact_int8_xip_accel.bin \
+	$(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf   $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.dis   $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.bin \
+	$(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.bin \
 	$(BUILD_DIR)/kws_lr_xip.elf                      $(BUILD_DIR)/kws_lr_xip.dis                      $(BUILD_DIR)/kws_lr_xip.bin \
 	$(BUILD_DIR)/kws_lr_xip_accel.elf                $(BUILD_DIR)/kws_lr_xip_accel.dis                $(BUILD_DIR)/kws_lr_xip_accel.bin \
 	$(BUILD_DIR)/accel_test_xip.elf                  $(BUILD_DIR)/accel_test_xip.dis                  $(BUILD_DIR)/accel_test_xip.bin
@@ -271,6 +275,14 @@ model-mel-compact-int8: \
 	$(BUILD_DIR)/mel_compact_int8_xip.elf       $(BUILD_DIR)/mel_compact_int8_xip.dis       $(BUILD_DIR)/mel_compact_int8_xip.bin
 model-mel-compact-int8-accel: \
 	$(BUILD_DIR)/mel_compact_int8_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_xip_accel.bin
+model-mel-compact-int8-pi-accel: \
+	$(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.bin
+model-mel-compact-int8-peak-norm-accel: \
+	$(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.bin
+model-mel-compact-int8-peak-norm-dump: \
+	$(BUILD_DIR)/mel_compact_int8_peak_norm_dump_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_peak_norm_dump_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_peak_norm_dump_xip_accel.bin
+model-mel-compact-int8-peak-norm-dump-full: \
+	$(BUILD_DIR)/mel_compact_int8_peak_norm_dump_full_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_peak_norm_dump_full_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_peak_norm_dump_full_xip_accel.bin
 model-kws-lr: \
 	$(BUILD_DIR)/kws_lr_xip.elf                 $(BUILD_DIR)/kws_lr_xip.dis                 $(BUILD_DIR)/kws_lr_xip.bin
 model-kws-lr-accel: \
@@ -503,6 +515,12 @@ clean:
 .PHONY: all clean sram xip sanity uart i2s record-i2s dataflow-test slide-test flash malloc malloc-simple malloc-torture memcpy \
         model-strided-s16-nodil model-streaming model-mel-compact model-mel-compact-accel \
         model-mel-compact-int8 model-mel-compact-int8-accel \
+        model-mel-compact-int8-pi-accel \
+        model-mel-compact-int8-peak-norm-accel \
+        model-mel-compact-int8-peak-norm-dump \
+        model-mel-compact-int8-peak-norm-dump-full \
+        mel-compact-int8-pi-accel mel-compact-int8-peak-norm-accel \
+        mel-compact-int8-peak-norm-dump mel-compact-int8-peak-norm-dump-full \
         model-kws-lr model-kws-lr-accel accel-test xip-testbench
 
 # Include dependency files
@@ -531,6 +549,28 @@ ifeq ($(KWS_DEBUG_DUMP_FIRST_CLIP),1)
 endif
 ifeq ($(USE_MCYCLE_CSR),1)
   KWS_EXTRA_CFLAGS += -DUSE_MCYCLE_CSR=1
+endif
+ifneq ($(KWS_DEBOUNCE_COUNT),)
+  KWS_EXTRA_CFLAGS += -DKWS_DEBOUNCE_COUNT=$(KWS_DEBOUNCE_COUNT)
+endif
+# AGC is OPT-IN here (polarity reversed from upstream NDMCR_AWR_DEV which made
+# it default-on via KWS_AGC_DISABLE).  Pass KWS_AGC_ENABLE=1 to turn on the
+# rolling peak-normalization path; KWS_AGC_RELEASE_SHIFT and KWS_AGC_FLOOR
+# tune its envelope.
+ifeq ($(KWS_AGC_ENABLE),1)
+  KWS_EXTRA_CFLAGS += -DKWS_AGC_ENABLE=1
+endif
+ifneq ($(KWS_AGC_RELEASE_SHIFT),)
+  KWS_EXTRA_CFLAGS += -DKWS_AGC_RELEASE_SHIFT=$(KWS_AGC_RELEASE_SHIFT)
+endif
+ifneq ($(KWS_AGC_FLOOR),)
+  KWS_EXTRA_CFLAGS += -DKWS_AGC_FLOOR=$(KWS_AGC_FLOOR)
+endif
+# Suppress per-clip output when the post-debounce label is "unknown".
+# Useful for long captures of mostly silence — the UART only prints when
+# the model actually detects a keyword.
+ifeq ($(KWS_QUIET),1)
+  KWS_EXTRA_CFLAGS += -DKWS_QUIET=1
 endif
 MEL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
              -DNNOM_STATIC_BUF_KB=36 \
@@ -614,6 +654,138 @@ $(BUILD_DIR)/mel_compact_int8_xip_accel.elf: \
 	$(CC) $(MEL_INT8_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
 	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_int8_xip_accel.bin
 	$(CROSS_COMPILE)size $@
+
+mel-compact-int8: $(BUILD_DIR)/mel_compact_int8_xip.elf
+mel-compact-int8-accel: $(BUILD_DIR)/mel_compact_int8_xip_accel.elf
+
+# ── mel_compact_int8_pi — int8 model fine-tuned on Barbary mic data (Pi pipeline)
+#    Same audio path as mel_compact_int8 (8 kHz model, 16 kHz mic + firmware ÷2).
+MEL_INT8_PI_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+                     -DNNOM_STATIC_BUF_KB=36 \
+                     -DKWS_WEIGHTS_HEADER='"mel_compact_int8_pi.h"' \
+                     -DKWS_MODEL_NAME='"mel_compact_int8_pi"' \
+                     -I$(MEL_INT8_PI_C_DIR)
+
+$(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_ACCEL) | $(BUILD_DIR)
+	$(CC) $(MEL_INT8_PI_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+mel-compact-int8-pi-accel: $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf
+
+# ── mel_compact_int8_peak_norm — int8 model + rolling peak-normalisation ────
+#
+# Fine-tuned on Barbary (INMP441) data using the int8 peak-norm pipeline.
+# Like mel-compact-int8-accel BUT: KWS_DS_EN=0 (no HW downsample; the mic
+# already runs at 16 kHz raw → 16 kHz ring) and the firmware ÷2 in
+# kws_bare_main.c brings it to the model's 8 kHz expectation.  Firmware
+# AGC is opt-in via KWS_AGC_ENABLE=1 (the upstream "default-on" polarity is
+# inverted here per merge decision).
+# Build:  make mel-compact-int8-peak-norm-accel
+MEL_INT8_PEAK_NORM_ACCEL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+                   -DNNOM_STATIC_BUF_KB=36 \
+                   -DKWS_WEIGHTS_HEADER='"mel_compact_int8_peak_norm_weights.h"' \
+                   -DKWS_MODEL_NAME='"mel_compact_int8_peak_norm_accel"' \
+                   -DKWS_DS_EN=0 \
+                   -DKWS_MODEL_HZ=8000 \
+                   -I$(MEL_INT8_PEAK_NORM_C_DIR)
+
+$(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_ACCEL) | $(BUILD_DIR)
+	$(CC) $(MEL_INT8_PEAK_NORM_ACCEL_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+mel-compact-int8-peak-norm-accel: $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf
+
+# ── mel_compact_int8_peak_norm — Spike-reproduction layer-dump variant ─────
+#
+# Same model + accelerator path as -peak-norm-accel, but replaces
+# kws_bare_main.c with kws_spike_repro.c, which embeds a single 8 kHz int8
+# clip from Spike (via spike_clip_data.c) and dumps every layer's output
+# bytes as `printf("%02x\n", ...)` lines.  Diff its UART output against
+# test/spikedebug/activations.log to isolate where the SoC diverges from
+# Spike's pure-SW reference.
+SPIKE_DEBUG_DIR  := spikedebug
+SPIKE_AUDIO_BIN  := $(SPIKE_DEBUG_DIR)/down_audio_8k_spike.bin
+SPIKE_CLIP_C     := $(SPIKE_DEBUG_DIR)/spike_clip_data.c
+SPIKE_REPRO_C    := $(SPIKE_DEBUG_DIR)/kws_spike_repro.c
+
+# Generated from the audio binary; kept in-tree if already up to date so we
+# don't force python on every build, but we list the recipe for completeness.
+$(SPIKE_CLIP_C): $(SPIKE_AUDIO_BIN) ../scripts/spike_bin_to_c_array.py
+	python3 ../scripts/spike_bin_to_c_array.py $(SPIKE_AUDIO_BIN) $@
+
+MEL_INT8_PEAK_NORM_DUMP_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+                   -DNNOM_STATIC_BUF_KB=36 \
+                   -DKWS_WEIGHTS_HEADER='"mel_compact_int8_peak_norm_weights.h"' \
+                   -DKWS_MODEL_NAME='"mel_compact_int8_peak_norm_dump"' \
+                   -I$(MEL_INT8_PEAK_NORM_C_DIR)
+
+$(BUILD_DIR)/mel_compact_int8_peak_norm_dump_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(SPIKE_REPRO_C) \
+    $(SPIKE_CLIP_C) \
+    $(NNOM_SRCS_ACCEL) | $(BUILD_DIR)
+	$(CC) $(MEL_INT8_PEAK_NORM_DUMP_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_int8_peak_norm_dump_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+mel-compact-int8-peak-norm-dump: $(BUILD_DIR)/mel_compact_int8_peak_norm_dump_xip_accel.elf
+
+# ── mel_compact_int8_peak_norm — full-pipeline single-shot dump variant ────
+#
+# Production audio path (kws_bare_main.c) under KWS_DUMP_LAYERS=1 — captures
+# one ring's worth of audio via I2S/DMA, snapshots into nnom_input_data,
+# runs model_run once with a layer-dump callback registered (LF-only
+# "%02x" bytes — same wire format as test/spikedebug/activations.log),
+# prints PRED, halts.  KWS_AGC_ENABLE forced 0 so the firmware doesn't
+# warp the input distribution before we compare against Spike's pre-
+# normalised clip.
+MEL_INT8_PEAK_NORM_DUMP_FULL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+                   -DNNOM_STATIC_BUF_KB=36 \
+                   -DKWS_WEIGHTS_HEADER='"mel_compact_int8_peak_norm_weights.h"' \
+                   -DKWS_MODEL_NAME='"mel_compact_int8_peak_norm_dump_full"' \
+                   -DKWS_DS_EN=0 \
+                   -DKWS_MODEL_HZ=8000 \
+                   -DKWS_DUMP_LAYERS=1 \
+                   -DKWS_AGC_ENABLE=0 \
+                   -I$(MEL_INT8_PEAK_NORM_C_DIR)
+
+$(BUILD_DIR)/mel_compact_int8_peak_norm_dump_full_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_ACCEL) | $(BUILD_DIR)
+	$(CC) $(MEL_INT8_PEAK_NORM_DUMP_FULL_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_int8_peak_norm_dump_full_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+mel-compact-int8-peak-norm-dump-full: $(BUILD_DIR)/mel_compact_int8_peak_norm_dump_full_xip_accel.elf
+
+# Mic-BFM hex generated from down_audio_16k.hex for the full-pipeline test
+# (each int16 sample placed at mic[30:15], triplicated for HW ÷3).
+SPIKE_AUDIO_16K_HEX  := $(SPIKE_DEBUG_DIR)/down_audio_16k.hex
+SPIKE_AUDIO_MIC_HEX  := $(SPIKE_DEBUG_DIR)/down_audio_16k_mic.hex
+
+$(SPIKE_AUDIO_MIC_HEX): $(SPIKE_AUDIO_16K_HEX) ../scripts/spike16k_to_mic_hex.py
+	python3 ../scripts/spike16k_to_mic_hex.py $(SPIKE_AUDIO_16K_HEX) $@
 
 # ── kws_lr (SW + accel variants) ────────────────────────────────────────────
 KWS_LR_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
