@@ -184,6 +184,7 @@ SRAM_TARGETS = \
 	$(BUILD_DIR)/readI2s_sram.elf             $(BUILD_DIR)/readI2s_sram.dis             $(BUILD_DIR)/readI2s_sram.bin \
 	$(BUILD_DIR)/recordI2s_sram.elf           $(BUILD_DIR)/recordI2s_sram.dis           $(BUILD_DIR)/recordI2s_sram.bin \
 	$(BUILD_DIR)/dataflow_test_sram.elf       $(BUILD_DIR)/dataflow_test_sram.dis       $(BUILD_DIR)/dataflow_test_sram.bin \
+	$(BUILD_DIR)/slide_test_sram.elf          $(BUILD_DIR)/slide_test_sram.dis          $(BUILD_DIR)/slide_test_sram.bin \
 	$(BUILD_DIR)/malloc_simple_test_sram.elf  $(BUILD_DIR)/malloc_simple_test_sram.dis  $(BUILD_DIR)/malloc_simple_test_sram.bin \
 	$(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_torture_test_sram.dis $(BUILD_DIR)/malloc_torture_test_sram.bin \
 	$(BUILD_DIR)/memcpy_simple_test_sram.elf  $(BUILD_DIR)/memcpy_simple_test_sram.dis  $(BUILD_DIR)/memcpy_simple_test_sram.bin \
@@ -205,6 +206,7 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/readI2s_xip.elf         $(BUILD_DIR)/readI2s_xip.dis         $(BUILD_DIR)/readI2s_xip.bin \
 	$(BUILD_DIR)/recordI2s_xip.elf       $(BUILD_DIR)/recordI2s_xip.dis       $(BUILD_DIR)/recordI2s_xip.bin \
 	$(BUILD_DIR)/dataflow_test_xip.elf   $(BUILD_DIR)/dataflow_test_xip.dis   $(BUILD_DIR)/dataflow_test_xip.bin \
+	$(BUILD_DIR)/slide_test_xip.elf      $(BUILD_DIR)/slide_test_xip.dis      $(BUILD_DIR)/slide_test_xip.bin \
 	$(BUILD_DIR)/flash_read_test_xip.elf       $(BUILD_DIR)/flash_read_test_xip.dis       $(BUILD_DIR)/flash_read_test_xip.bin \
 	$(BUILD_DIR)/snooper_test_xip.elf          $(BUILD_DIR)/snooper_test_xip.dis          $(BUILD_DIR)/snooper_test_xip.bin \
 	$(BUILD_DIR)/tests_xip.elf                 $(BUILD_DIR)/tests_xip.dis                 $(BUILD_DIR)/tests_xip.bin \
@@ -241,6 +243,8 @@ record-i2s: $(BUILD_DIR)/recordI2s_sram.elf $(BUILD_DIR)/recordI2s_sram.dis $(BU
             $(BUILD_DIR)/recordI2s_xip.elf  $(BUILD_DIR)/recordI2s_xip.dis  $(BUILD_DIR)/recordI2s_xip.bin
 dataflow-test: $(BUILD_DIR)/dataflow_test_sram.elf $(BUILD_DIR)/dataflow_test_sram.dis $(BUILD_DIR)/dataflow_test_sram.bin \
                $(BUILD_DIR)/dataflow_test_xip.elf  $(BUILD_DIR)/dataflow_test_xip.dis  $(BUILD_DIR)/dataflow_test_xip.bin
+slide-test: $(BUILD_DIR)/slide_test_sram.elf $(BUILD_DIR)/slide_test_sram.dis $(BUILD_DIR)/slide_test_sram.bin \
+            $(BUILD_DIR)/slide_test_xip.elf  $(BUILD_DIR)/slide_test_xip.dis  $(BUILD_DIR)/slide_test_xip.bin
 flash:  $(BUILD_DIR)/flash_read_test_xip.elf $(BUILD_DIR)/flash_read_test_xip.dis $(BUILD_DIR)/flash_read_test_xip.bin
 malloc: $(BUILD_DIR)/malloc_simple_test_sram.elf  $(BUILD_DIR)/malloc_simple_test_sram.dis  $(BUILD_DIR)/malloc_simple_test_sram.bin \
 	$(BUILD_DIR)/malloc_torture_test_sram.elf $(BUILD_DIR)/malloc_torture_test_sram.dis $(BUILD_DIR)/malloc_torture_test_sram.bin \
@@ -335,6 +339,28 @@ $(BUILD_DIR)/dataflow_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dataflow_t
 	$(LD) $(SRAM_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/dataflow_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/dataflow_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
+	$(LD) $(XIP_LDFLAGS) -o $@ $^
+
+# ── Sliding-window self-test ────────────────────────────────────────────────
+# Drives sim/counter_32k.hex through the full capture path, runs N
+# simulated inferences with a configurable cycle budget (default ≈ accel),
+# and verifies every snapshot's first/last byte matches the expected
+# counter pattern after the dynamic step.  Pin-points whether sliding
+# preserves data integrity across all iterations.
+SIM_INFERENCE_CYCLES ?=
+SLIDE_ITERATIONS     ?=
+
+SLIDE_TEST_CFLAGS = $(if $(I2S_CLK_DIV),-DI2S_CLK_DIV=$(I2S_CLK_DIV),) \
+                    $(if $(SIM_INFERENCE_CYCLES),-DSIM_INFERENCE_CYCLES=$(SIM_INFERENCE_CYCLES),) \
+                    $(if $(SLIDE_ITERATIONS),-DSLIDE_ITERATIONS=$(SLIDE_ITERATIONS),)
+
+$(BUILD_DIR)/slide_test.o: $(I2S_C_DIR)/slide_test.c $(ROOT_MAKEFILE)
+	$(CC) $(CFLAGS) $(SLIDE_TEST_CFLAGS) -o $@ $<
+
+$(BUILD_DIR)/slide_test_sram.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/slide_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
+	$(LD) $(SRAM_LDFLAGS) -o $@ $^
+
+$(BUILD_DIR)/slide_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/slide_test.o $(BUILD_DIR)/uart.o $(BUILD_DIR)/MS_DMAC_AHBL.o
 	$(LD) $(XIP_LDFLAGS) -o $@ $^
 
 $(BUILD_DIR)/flash_read_test_xip.elf: $(BUILD_DIR)/crt0.o $(BUILD_DIR)/flash_read_test.o
@@ -474,7 +500,7 @@ clean:
 	rm -f $(COMMON_DIR)/*.d
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s record-i2s dataflow-test flash malloc malloc-simple malloc-torture memcpy \
+.PHONY: all clean sram xip sanity uart i2s record-i2s dataflow-test slide-test flash malloc malloc-simple malloc-torture memcpy \
         model-strided-s16-nodil model-streaming model-mel-compact model-mel-compact-accel \
         model-mel-compact-int8 model-mel-compact-int8-accel \
         model-kws-lr model-kws-lr-accel accel-test xip-testbench
