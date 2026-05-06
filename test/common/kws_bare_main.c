@@ -624,6 +624,18 @@ int main(void) {
             asm volatile ("wfi");
         }
 
+        /* Iteration wall-time start.  Captured here — right after the WFI
+         * loop wakes us — so the dynamic step at the end of the iteration
+         * accounts for *all* per-iter work (snapshot + AGC + inference +
+         * softmax + UART), not just the inference cycles measured by
+         * mcycle around model_run().  Counting only model_run() under-
+         * estimates the wall time and lets bytes_written drift ahead of
+         * bytes_at_next_inference by ~80 KB per iter (snapshot loop
+         * alone), which eventually trips the audio-loss guard even
+         * though the ring isn't actually overwritten yet. */
+        uint32_t iter_start_cyc;
+        asm volatile ("csrr %0, mcycle" : "=r"(iter_start_cyc));
+
         /* Audio-loss guard.  If bytes_written has run more than one
          * RING_SAMPLES_PER_CLIP ahead of bytes_at_next_inference, the
          * inference can't keep up and the ring has overwritten bytes
@@ -692,9 +704,10 @@ int main(void) {
         asm volatile ("csrci mstatus, 8");  /* global IRQs off          */
 #endif
 
-        /* Always measure inference cycles for the step computation
-         * (regardless of USE_MCYCLE_CSR — that flag only gates the
-         * UART CYCLES_INFER print). */
+        /* Inference-only cycle count, kept around for the legacy
+         * CYCLES_INFER UART line.  The dynamic-step computation no
+         * longer reads this — it uses the full iteration wall time
+         * captured below (see iter_start_cyc). */
         uint32_t step_cyc_start, step_cyc_end;
         asm volatile ("csrr %0, mcycle" : "=r"(step_cyc_start));
         model_run(model);
@@ -702,24 +715,6 @@ int main(void) {
 #ifdef USE_MCYCLE_CSR
         uint32_t cycles = step_cyc_end - step_cyc_start;
 #endif
-
-        /* Dynamic sliding step.
-         *   step = clamp(max(KWS_MIN_STEP_RING_BYTES, inference_in_bytes), 1, RING_SAMPLES_PER_CLIP)
-         * The min floor (default 20 ms) gives idle time when inference
-         * is unusually fast.  The clamp at RING_SAMPLES_PER_CLIP keeps
-         * consecutive windows contiguous (no audio gaps).  When the
-         * un-clamped step would have exceeded RING_SAMPLES_PER_CLIP
-         * (inference > 1 s), the next iteration's WFI loop will detect
-         * the gap and emit AUDIO_LOSS. */
-#ifdef KWS_STEP_SAMPLES
-        step_bytes = KWS_STEP_SAMPLES;
-#else
-        uint32_t inference_cycles = step_cyc_end - step_cyc_start;
-        step_bytes = (inference_cycles + CYCLES_PER_RING_BYTE - 1) / CYCLES_PER_RING_BYTE;
-        if (step_bytes < KWS_MIN_STEP_RING_BYTES) step_bytes = KWS_MIN_STEP_RING_BYTES;
-        if (step_bytes > RING_SAMPLES_PER_CLIP)   step_bytes = RING_SAMPLES_PER_CLIP;
-#endif
-        bytes_at_next_inference += step_bytes;
 
         int    pred      = 0;
         int8_t max_score = nnom_output_data[0];
@@ -801,6 +796,35 @@ int main(void) {
         uart_puts_lf(")\n");
         while (1) asm volatile ("wfi");
 #endif
+
+        /* Dynamic sliding step — captured at the very end of the iter so
+         * we count the *full* per-iteration wall time (snapshot loop +
+         * AGC + inference + softmax + UART output), not just inference
+         * cycles.  The DMA writes one ring byte every CYCLES_PER_RING_BYTE
+         * cycles, so the next window's threshold has to advance by the
+         * same many bytes the DMA wrote during this iter, otherwise
+         * bytes_written drifts ahead and the audio-loss guard eventually
+         * trips even though the ring isn't actually being overwritten.
+         *
+         * Bounded by:
+         *   - KWS_MIN_STEP_RING_BYTES floor (default 20 ms) — gives idle
+         *     time when iter is unusually short, so we don't burn CPU
+         *     re-running inference faster than the user can read.
+         *   - RING_SAMPLES_PER_CLIP ceiling — keeps consecutive windows
+         *     contiguous (no audio gap); when iter wall time > 1 s
+         *     anyway, the next WFI will detect the overflow and emit
+         *     AUDIO_LOSS as before. */
+#ifdef KWS_STEP_SAMPLES
+        step_bytes = KWS_STEP_SAMPLES;
+#else
+        uint32_t iter_end_cyc;
+        asm volatile ("csrr %0, mcycle" : "=r"(iter_end_cyc));
+        uint32_t iter_cycles = iter_end_cyc - iter_start_cyc;
+        step_bytes = (iter_cycles + CYCLES_PER_RING_BYTE - 1) / CYCLES_PER_RING_BYTE;
+        if (step_bytes < KWS_MIN_STEP_RING_BYTES) step_bytes = KWS_MIN_STEP_RING_BYTES;
+        if (step_bytes > RING_SAMPLES_PER_CLIP)   step_bytes = RING_SAMPLES_PER_CLIP;
+#endif
+        bytes_at_next_inference += step_bytes;
     }
 
     return 0;
