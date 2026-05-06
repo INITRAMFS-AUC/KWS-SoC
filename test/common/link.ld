@@ -17,6 +17,15 @@ SECTIONS {
         _sidata = .;
     } > FLASH
 
+    /* XIP audio playback buffer at fixed flash offset, read by
+     * peris/xip/xip_sample_player.v.  Only populated when the test build
+     * compiles test/build/playback_samples.c (XIP_PLAYBACK=1); otherwise
+     * the section is empty and consumes no flash. */
+    .playback_samples 0x80010000 : {
+        KEEP(*(.playback_samples))
+        . = ALIGN(4);
+    } > FLASH
+
     .data : AT(_sidata) {
         . = ALIGN(4);
         _sdata = .;
