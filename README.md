@@ -684,6 +684,9 @@ Full sim flow (Verilator)
 
 # Currently Best FPGA Run configuration:
 
+```bash
+make test-mel-compact-int8-peak-norm-accel I2S_CLK_DIV=17 KWS_AGC_RELEASE_SHIFT=8  KWS_AGC_FLOOR=4
+make config map fit asm CLK_MHZ=36 I2S_CLK_DIV=17
 ```
-make clean &&  make test-mel-compact-int8-peak-norm-accel I2S_CLK_DIV=17
-```
+
+
