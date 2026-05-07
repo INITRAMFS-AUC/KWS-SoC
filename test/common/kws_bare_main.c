@@ -390,53 +390,35 @@ typedef struct {
 
 __attribute__((aligned(4))) static volatile int8_t audio_ring[KWS_RING_SAMPLES];
 
-/* Rolling peak-normalization (firmware-side AGC).  Opt-in.
- *
- * Tracks a running |peak| envelope over the int8 audio stream and rescales
- * each sample so the output spans roughly [-127, 127] regardless of input
- * loudness.  Updated as samples are *consumed* by the snapshot loop, so the
- * envelope state is per-stream, not per-clip — it carries across inference
- * boundaries and behaves like an AGC.
- *
- *   attack:  instantaneous (any new |s| > peak immediately raises it).
- *   release: peak -= peak >> SHIFT each sample → exp decay τ ≈ (1<<SHIFT)/fs.
- *            At fs=8 kHz, SHIFT=10 → ~128 ms; SHIFT=12 → ~512 ms.
- *   floor:   minimum peak; prevents /0 and absurd boost on silence.
- *
- * Cost: ~10-20 cycles per snapshot byte.  At MODEL_SAMPLES_PER_CLIP=8000
- * that's ~120K cycles per inference (~0.5 % of a 30 ms accel run).
- *
- * Disabled by default; build with -DKWS_AGC_ENABLE=1 to turn it on.
- * Tuning knobs: -DKWS_AGC_RELEASE_SHIFT=N -DKWS_AGC_FLOOR=N. */
-#ifndef KWS_AGC_ENABLE
-#define KWS_AGC_ENABLE 0
-#endif
-#ifndef KWS_AGC_RELEASE_SHIFT
-#define KWS_AGC_RELEASE_SHIFT 10
-#endif
-#ifndef KWS_AGC_FLOOR
-#define KWS_AGC_FLOOR 8
-#endif
-
-#if KWS_AGC_ENABLE
-static int16_t kws_agc_peak = KWS_AGC_FLOOR;
-
-static inline int8_t kws_agc_normalize(int8_t s) {
-    int16_t a = (s < 0) ? (int16_t)(-(int16_t)s) : (int16_t)s;
-    if (a > kws_agc_peak) {
-        kws_agc_peak = a;                       /* attack: instant       */
-    } else {
-        kws_agc_peak -= kws_agc_peak >> KWS_AGC_RELEASE_SHIFT;
-        if (kws_agc_peak < KWS_AGC_FLOOR) kws_agc_peak = KWS_AGC_FLOOR;
+/* Per-clip peak normalization — applied to nnom_input_data[] after snapshot.
+ * Matches the Python training pipeline exactly:
+ *   scale = min(96 / peak, 64)   where peak = max(|s|) over the clip
+ *   out[i] = clip(round(s * scale), -128, 127)
+ * Integer arithmetic only. When peak==1 the ×64 cap applies.
+ * Silence (peak==0) is left untouched.                                       */
+static void peak_norm_clip(int8_t *buf, int n)
+{
+    int32_t peak = 0;
+    for (int i = 0; i < n; i++) {
+        int32_t a = buf[i] < 0 ? -(int32_t)buf[i] : (int32_t)buf[i];
+        if (a > peak) peak = a;
     }
-    int16_t scaled = (int16_t)(((int32_t)s * 127) / kws_agc_peak);
-    if (scaled >  127) scaled =  127;
-    if (scaled < -128) scaled = -128;
-    return (int8_t)scaled;
+    if (peak < 1) return;
+    for (int i = 0; i < n; i++) {
+        int32_t s = buf[i];
+        int32_t scaled;
+        if (peak == 1) {
+            scaled = s * 64;
+        } else {
+            int32_t half = peak >> 1;
+            scaled = s >= 0 ? (s * 96 + half) / peak
+                            : (s * 96 - half) / peak;
+        }
+        if (scaled >  127) scaled =  127;
+        if (scaled < -128) scaled = -128;
+        buf[i] = (int8_t)scaled;
+    }
 }
-#else
-static inline int8_t kws_agc_normalize(int8_t s) { return s; }
-#endif
 
 static void dma_arm(void) {
     DMAC->control = DMAC_CTRL_I2S_PIRQ & ~1u;        /* EN=0 while reconfiguring */
@@ -684,8 +666,9 @@ int main(void) {
         for (int j = 0; j < MODEL_SAMPLES_PER_CLIP; j++) {
             uint32_t ring_idx =
                 (snap_start_ring + (uint32_t)(j * KWS_DECIMATE)) & KWS_RING_MASK;
-            nnom_input_data[j] = kws_agc_normalize((int8_t)audio_ring[ring_idx]);
+            nnom_input_data[j] = (int8_t)audio_ring[ring_idx];
         }
+        peak_norm_clip(nnom_input_data, MODEL_SAMPLES_PER_CLIP);
 
 #ifdef KWS_DEBUG_DUMP_FIRST_CLIP
         /* Dump the FIRST captured window over UART in the same hex-word
@@ -741,6 +724,12 @@ int main(void) {
                 pred      = j;
             }
         }
+
+        /* Confidence threshold: ~30% softmax (38/128). Skipped in dump
+         * mode so the PRED line stays comparable to the Spike harness. */
+#ifndef KWS_DUMP_LAYERS
+        if (max_score < 38) pred = NUM_CLASSES - 1;
+#endif
 
         if (pred == last_pred) {
             debounce_cnt++;
