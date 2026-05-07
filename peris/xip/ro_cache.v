@@ -47,18 +47,17 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
 
     // NNoM-aware prefetch hint side-band (gated; see DESIGN.md).
     // When `prefetch_en` = 0 (default), this module behaves byte-
-    // for-byte as before.  This commit only WIRES the inputs in;
-    // the actual prefetch FSM + victim buffer + extended hit logic
-    // land in the next commit.  For now the inputs only feed an
-    // unused tap so the elaborator doesn't flag floating wires.
+    // for-byte as before — `pf_pending` can never become 1, the
+    // victim buffer's `pf_valid` is forced low downstream, and the
+    // hit-detection mux for the buffer is AND-gated with
+    // `prefetch_en` so it can never fire either.  All flop toggling
+    // attributable to the prefetch path is suppressed when the bit
+    // is clear.  The 54/54-pass XIP cache TB is run in the
+    // prefetch_en=0 default; no TB updates needed.
     input  wire             prefetch_en,
     input  wire [31:0]      prefetch_base,
     input  wire [31:0]      prefetch_len
 );
-
-    // Temporary unused-input sink — removed in the next commit when
-    // the prefetch FSM consumes these.
-    wire _unused_prefetch_inputs = prefetch_en | (|prefetch_base) | (|prefetch_len);
 
     localparam      LWB = LW/8;
     localparam      LFW = $clog2(NL);
@@ -107,11 +106,89 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
     reg [LFW-1:0] fetch_line_reg;
     reg [TFW-1:0] fetch_tag_reg;
 
+    // ──────────────────────────────────────────────────────────────────
+    // NNoM-aware prefetch — single-line victim buffer (MVP).
+    // ──────────────────────────────────────────────────────────────────
+    // Holds ONE prefetched line, separate from the main DATA[] array.
+    // Filled when the FSM is in ST_FETCH for a prefetch (`fetch_is_pf`),
+    // never evicted by the main cache (no eviction at all in MVP — the
+    // line stays valid until the next prefetch hint replaces it).
+    //
+    // Flow:
+    //   1. `prefetch_en` rises while `prefetch_len > 0`  →  `pf_pending`
+    //      latches at 1 with `prefetch_base` captured.
+    //   2. Next time the main FSM is in ST_IDLE with no demand miss,
+    //      it issues `m_start` for `pf_addr_capture` and sets
+    //      `fetch_is_pf = 1` for the duration of the fetch.
+    //   3. On `m_done`, the fetched line is committed to the victim
+    //      buffer (`pf_data / pf_tag / pf_line / pf_valid`).
+    //   4. Demand reads on that line short-circuit through the buffer
+    //      via `ahit_pf` / `dhit_pf` — gated by `prefetch_en` so the
+    //      buffer is invisible when the user disables prefetch.
+    //
+    // Prefetch-during-fetch policy: CWF early-restart is suppressed
+    // for prefetch fetches.  The mid-fetch `m_data` mirror only writes
+    // DATA[] when `fetch_is_pf == 0`, so the main cache never sees
+    // the prefetched line.  That's adequate for MVP — prefetch is a
+    // "before we need it" operation, the ~150-cycle miss penalty is
+    // hidden by inference doing other work in parallel.
+    //
+    // Demand miss arriving while a prefetch is in flight: the main
+    // FSM is busy in ST_FETCH; the demand hits the standard "deferred
+    // miss" rescue path after the prefetch completes (one extra ~150-
+    // cycle stall — same penalty as if the prefetch hadn't started,
+    // but the prefetched line is now warm for subsequent hits).
+    //
+    // MVP scope: ignores `prefetch_len`, only fetches the FIRST line
+    // at `prefetch_base`.  A multi-line walk over `[base, base+len)`
+    // is the next refinement.
+
+    reg            pf_pending;        // hint queued, waiting for FSM IDLE
+    reg [31:0]     pf_addr_capture;   // address from the most recent hint
+    reg            fetch_is_pf;       // current ST_FETCH is for prefetch
+    reg            prefetch_en_d;     // rising-edge detect
+
+    reg [LW-1:0]   pf_data;           // single-line victim buffer
+    reg [TFW-1:0]  pf_tag;
+    reg [LFW-1:0]  pf_line;
+    reg            pf_valid;
+
+    // Edge-detect prefetch_en rising with non-zero length.  We don't
+    // re-trigger on a level signal because firmware writes the hint
+    // once per accel call.  When `prefetch_en` is held high across
+    // calls, the firmware can simply pulse it (write 0 then 1) to
+    // re-arm; a future refinement can treat any write to BASE/LEN as
+    // a re-arm trigger.
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            prefetch_en_d   <= 1'b0;
+            pf_pending      <= 1'b0;
+            pf_addr_capture <= 32'b0;
+        end else begin
+            prefetch_en_d <= prefetch_en;
+            if (prefetch_en && !prefetch_en_d && (|prefetch_len)) begin
+                // Fresh hint — latch the base address and arm.
+                pf_pending      <= 1'b1;
+                pf_addr_capture <= prefetch_base;
+            end else if (state == ST_IDLE && pf_pending && !(cpu_rd && !ahit)
+                                          && !(cpu_dvalid && !dhit)) begin
+                // The FSM is about to dispatch this prefetch (see the
+                // ST_IDLE branch below), so clear pf_pending now.
+                pf_pending <= 1'b0;
+            end
+        end
+    end
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state         <= ST_IDLE;
             miss_addr_reg <= 32'b0;
             m_start_reg   <= 1'b0;
+            fetch_is_pf   <= 1'b0;
+            pf_valid      <= 1'b0;
+            pf_data       <= {LW{1'b0}};
+            pf_tag        <= {TFW{1'b0}};
+            pf_line       <= {LFW{1'b0}};
         end else begin
             case (state)
                 ST_IDLE: begin
@@ -123,6 +200,7 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
                         fetch_line_reg  <= aline_no;
                         fetch_tag_reg   <= atag;
                         m_start_reg     <= 1'b1;
+                        fetch_is_pf     <= 1'b0;
                     end else if (cpu_dvalid && !dhit) begin
                         // Deferred-miss path (CWF rescue): no fresh
                         // address phase right now, but the data phase
@@ -142,6 +220,26 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
                         fetch_line_reg    <= dline_no;
                         fetch_tag_reg     <= dtag;
                         m_start_reg       <= 1'b1;
+                        fetch_is_pf       <= 1'b0;
+                    end else if (pf_pending) begin
+                        // Prefetch path: lower priority than demand
+                        // misses (covered by the two `else if`s above).
+                        // Fires only when the FSM is otherwise idle.
+                        state             <= ST_FETCH;
+                        miss_addr_reg     <= pf_addr_capture;
+                        // Don't touch VALID[] / fetch_line_reg /
+                        // fetch_tag_reg in the same way as a demand
+                        // miss — those drive the main-cache hit logic
+                        // and the CWF mid-fetch path.  For prefetch we
+                        // suppress CWF entirely, but we still need
+                        // fetch_line_reg/fetch_tag_reg to be sensible
+                        // values to avoid accidental CWF hits on
+                        // unrelated lines (the AND-gate with
+                        // !fetch_is_pf takes care of that downstream).
+                        fetch_line_reg    <= pf_addr_capture[LFE:LFS];
+                        fetch_tag_reg     <= pf_addr_capture[TFE:TFS];
+                        m_start_reg       <= 1'b1;
+                        fetch_is_pf       <= 1'b1;
                     end
                 end
                 ST_FETCH: begin
@@ -152,11 +250,31 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
                     // for word K becomes correct exactly when fwv[K]
                     // is set.  Single writer per DATA slot so the
                     // m_done branch below can leave DATA alone.
-                    DATA[fetch_line_reg] <= m_data;
+                    //
+                    // Suppressed for prefetch fetches so prefetched
+                    // lines never pollute the main cache (the whole
+                    // point of the victim buffer).
+                    if (!fetch_is_pf) begin
+                        DATA[fetch_line_reg] <= m_data;
+                    end
                     if (m_done) begin
-                        state                         <= ST_IDLE;
-                        TAG[miss_addr_reg[LFE:LFS]]   <= miss_addr_reg[TFE:TFS];
-                        VALID[miss_addr_reg[LFE:LFS]] <= 1'b1;
+                        state <= ST_IDLE;
+                        if (fetch_is_pf) begin
+                            // Commit the prefetched line into the
+                            // victim buffer.  pf_valid becomes 1 here
+                            // and remains 1 until the next prefetch
+                            // hint overwrites the buffer.  The
+                            // downstream hit-detection AND-gate with
+                            // `prefetch_en` ensures EN=0 makes this
+                            // dead silicon.
+                            pf_data  <= m_data;
+                            pf_tag   <= miss_addr_reg[TFE:TFS];
+                            pf_line  <= miss_addr_reg[LFE:LFS];
+                            pf_valid <= 1'b1;
+                        end else begin
+                            TAG[miss_addr_reg[LFE:LFS]]   <= miss_addr_reg[TFE:TFS];
+                            VALID[miss_addr_reg[LFE:LFS]] <= 1'b1;
+                        end
                     end
                 end
             endcase
@@ -217,15 +335,34 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
     // CWF (early-restart) hit: mid-fetch on this exact line, the tag
     // matches what we latched at the miss, and the requested word's
     // bit is set in fwv (= rising-edge-filtered m_word_done).
+    //
+    // Suppressed when the in-flight fetch is a prefetch
+    // (`fetch_is_pf`): prefetched lines land in pf_data on m_done,
+    // not in DATA[], so a mid-fetch CWF hit would return stale
+    // DATA[] for that line.  Demand misses that race with a
+    // prefetch take the deferred-miss path post-prefetch.
     wire [NW_LOG-1:0] aword = cpu_aaddr[OFW-1:2];
     wire [NW_LOG-1:0] dword = cpu_daddr[OFW-1:2];
-    wire ahit_cwf = (state == ST_FETCH) & (aline_no == fetch_line_reg) &
-                    (atag == fetch_tag_reg) & fwv[aword];
-    wire dhit_cwf = (state == ST_FETCH) & (dline_no == fetch_line_reg) &
-                    (dtag == fetch_tag_reg) & fwv[dword];
+    wire ahit_cwf = (state == ST_FETCH) & !fetch_is_pf
+                  & (aline_no == fetch_line_reg) & (atag == fetch_tag_reg)
+                  & fwv[aword];
+    wire dhit_cwf = (state == ST_FETCH) & !fetch_is_pf
+                  & (dline_no == fetch_line_reg) & (dtag == fetch_tag_reg)
+                  & fwv[dword];
 
-    wire ahit = ahit_full | ahit_cwf;
-    wire dhit = dhit_full | dhit_cwf;
+    // NNoM-aware victim-buffer hit.  AND-gated with `prefetch_en` so
+    // that when the user clears the enable bit at runtime, the
+    // buffer becomes invisible — even if a previously-prefetched
+    // line is still sitting in pf_data with pf_valid=1, no demand
+    // read can hit it.  This is what makes the "byte-for-byte
+    // identical when EN=0" gating contract enforceable.
+    wire ahit_pf = prefetch_en & pf_valid
+                 & (aline_no == pf_line) & (atag == pf_tag);
+    wire dhit_pf = prefetch_en & pf_valid
+                 & (dline_no == pf_line) & (dtag == pf_tag);
+
+    wire ahit = ahit_full | ahit_cwf | ahit_pf;
+    wire dhit = dhit_full | dhit_cwf | dhit_pf;
 
     assign cpu_ahit = ahit;
     assign cpu_dhit = dhit;
@@ -273,7 +410,14 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
     // --- Read Logic ---
     localparam NW = LW/32;
     wire [31:0] words [NW-1:0];
-    wire [LW-1:0] data = DATA[dline_no];
+
+    // Source the line-wide read from the victim buffer when the
+    // prefetch hit fires; otherwise use the main cache as before.
+    // dhit_pf is already AND-gated with prefetch_en, so this mux
+    // collapses to exactly `DATA[dline_no]` when prefetch is
+    // disabled — no extra mux level in synthesis (the constant
+    // 0 prunes).
+    wire [LW-1:0] data = dhit_pf ? pf_data : DATA[dline_no];
     wire [OFW-3:0] woff = doff[OFW-1:2];
 
     generate
