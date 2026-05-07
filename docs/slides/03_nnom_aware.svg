@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"
+     font-family="DejaVu Sans, Helvetica, Arial, sans-serif">
+  <style>
+    .title    { font-size: 28px; font-weight: 600; fill: #222; }
+    .subtitle { font-size: 16px; fill: #666; }
+    .label    { font-size: 18px; fill: #222; }
+    .small    { font-size: 14px; fill: #555; }
+    .smallc   { font-size: 14px; fill: #2e8b57; font-weight: 600; }
+    .lane     { font-size: 16px; font-weight: 600; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2e8b57"/>
+    </marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c0392b"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="640" y="60" class="title" text-anchor="middle">NNoM-aware prefetch — adopted vs rejected</text>
+  <text x="640" y="92" class="subtitle" text-anchor="middle">The cache learns about NNoM's predictable weight scans without polluting the main DATA[].</text>
+
+  <!-- ── ADOPTED LANE (top) ─────────────────────────────── -->
+  <rect x="60" y="120" width="1160" height="280" rx="14" ry="14"
+        fill="#eef7ee" stroke="#2e8b57" stroke-width="2"/>
+  <text x="640" y="148" class="lane" fill="#2e8b57" text-anchor="middle">ADOPTED — NNoM-aware victim-buffer prefetch</text>
+
+  <!-- 5 boxes in two rows: -->
+  <!-- Row 1 (top): Firmware → APB regs → Victim buffer → Flash -->
+  <!-- Row 2 (bottom): Main cache (parallel) → Flash -->
+
+  <!-- Firmware -->
+  <rect x="80" y="195" width="170" height="80" rx="8" ry="8" fill="#d9eaf7" stroke="#2e6e9e" stroke-width="1.5"/>
+  <text x="165" y="222" class="label" text-anchor="middle" font-weight="600">Firmware</text>
+  <text x="165" y="244" class="small" text-anchor="middle">accel_conv1d.h</text>
+  <text x="165" y="263" class="small" text-anchor="middle" font-style="italic">KWS_XIP_PREFETCH=1</text>
+
+  <!-- conv1d_accel APB regs -->
+  <rect x="290" y="190" width="220" height="105" rx="8" ry="8" fill="#cfe2f3" stroke="#2e6e9e" stroke-width="1.5"/>
+  <text x="400" y="216" class="label" text-anchor="middle" font-weight="600">conv1d_accel APB</text>
+  <text x="400" y="240" class="small" text-anchor="middle">PREFETCH_CTRL.EN</text>
+  <text x="400" y="260" class="small" text-anchor="middle">PREFETCH_BASE</text>
+  <text x="400" y="280" class="small" text-anchor="middle">PREFETCH_LEN</text>
+
+  <!-- Victim buffer -->
+  <rect x="560" y="190" width="220" height="80" rx="8" ry="8" fill="#fff2cc" stroke="#b08800" stroke-width="1.8"/>
+  <text x="670" y="218" class="label" text-anchor="middle" font-weight="600">Victim buffer</text>
+  <text x="670" y="240" class="small" text-anchor="middle">1 line — pf_data, pf_tag</text>
+  <text x="670" y="258" class="small" text-anchor="middle" font-weight="600" fill="#2e8b57">never evicts main</text>
+
+  <!-- Main cache -->
+  <rect x="560" y="305" width="220" height="80" rx="8" ry="8" fill="#ffffff" stroke="#555" stroke-width="1.5"/>
+  <text x="670" y="332" class="label" text-anchor="middle" font-weight="600">Main cache</text>
+  <text x="670" y="354" class="small" text-anchor="middle">DATA[256] × 32 B</text>
+  <text x="670" y="372" class="small" text-anchor="middle">(unchanged)</text>
+
+  <!-- Flash -->
+  <rect x="900" y="245" width="220" height="80" rx="8" ry="8" fill="#fff2cc" stroke="#b08800" stroke-width="1.5"/>
+  <text x="1010" y="277" class="label" text-anchor="middle" font-weight="600">QSPI flash</text>
+  <text x="1010" y="298" class="small" text-anchor="middle">single shared resource</text>
+
+  <!-- Arrow Firmware → APB regs -->
+  <path d="M 250 235 L 290 235" stroke="#333" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+  <text x="270" y="180" class="small" text-anchor="middle">weight</text>
+  <text x="270" y="195" class="small" text-anchor="middle">base + len</text>
+
+  <!-- Arrow APB regs → Victim (green side-band) -->
+  <path d="M 510 230 L 560 230" stroke="#2e8b57" stroke-width="2.4" fill="none" marker-end="url(#arrow-green)"/>
+  <text x="535" y="180" class="smallc" text-anchor="middle">side-band</text>
+  <text x="535" y="195" class="smallc" text-anchor="middle">hint</text>
+
+  <!-- Arrow Victim → Flash (dashed, background fetch) -->
+  <path d="M 780 240 L 900 270" stroke="#333" stroke-width="1.5" fill="none" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+  <text x="840" y="225" class="small" text-anchor="middle">background</text>
+  <text x="840" y="240" class="small" text-anchor="middle">fetch</text>
+
+  <!-- Arrow Main → Flash (solid, demand miss) -->
+  <path d="M 780 340 L 900 305" stroke="#333" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+  <text x="840" y="345" class="small" text-anchor="middle">demand miss</text>
+
+  <!-- Visual barrier between victim and main: dashed horizontal line -->
+  <line x1="560" y1="287" x2="780" y2="287" stroke="#c0392b" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="670" y="302" class="small" fill="#c0392b" font-style="italic" text-anchor="middle">⊘ victim cannot evict main</text>
+
+  <!-- ── REJECTED LANE (bottom) ─────────────────────────── -->
+  <rect x="60" y="430" width="1160" height="240" rx="14" ry="14"
+        fill="#fdecec" stroke="#c0392b" stroke-width="2"/>
+  <text x="640" y="458" class="lane" fill="#c0392b" text-anchor="middle">REJECTED — chained next-line prefetch (eviction cascade)</text>
+
+  <!-- Cascade chain -->
+  <rect x="80"  y="490" width="180" height="80" rx="8" ry="8" fill="#fce4e4" stroke="#c0392b" stroke-width="1.5"/>
+  <text x="170" y="520" class="label" text-anchor="middle">miss line A</text>
+  <text x="170" y="542" class="small" text-anchor="middle">cold demand miss</text>
+
+  <rect x="295" y="490" width="200" height="80" rx="8" ry="8" fill="#fce4e4" stroke="#c0392b" stroke-width="1.5"/>
+  <text x="395" y="514" class="label" text-anchor="middle">prefetch A+1</text>
+  <text x="395" y="536" class="small" text-anchor="middle">evicts hot line H</text>
+  <text x="395" y="556" class="small" text-anchor="middle">(was useful!)</text>
+
+  <rect x="530" y="490" width="180" height="80" rx="8" ry="8" fill="#fce4e4" stroke="#c0392b" stroke-width="1.5"/>
+  <text x="620" y="520" class="label" text-anchor="middle">miss line H</text>
+  <text x="620" y="542" class="small" text-anchor="middle">we just evicted!</text>
+
+  <rect x="745" y="490" width="200" height="80" rx="8" ry="8" fill="#fce4e4" stroke="#c0392b" stroke-width="1.5"/>
+  <text x="845" y="514" class="label" text-anchor="middle">prefetch H+1</text>
+  <text x="845" y="536" class="small" text-anchor="middle">evicts another hot</text>
+  <text x="845" y="556" class="small" text-anchor="middle">line… cascade…</text>
+
+  <rect x="980" y="490" width="180" height="80" rx="8" ry="8" fill="#c0392b" stroke="#7a1a10" stroke-width="2"/>
+  <text x="1070" y="520" class="label" text-anchor="middle" fill="white" font-weight="600">CASCADE</text>
+  <text x="1070" y="542" class="small" text-anchor="middle" fill="white">+9 % @ NL=256</text>
+  <text x="1070" y="560" class="small" text-anchor="middle" fill="white">+46 % @ NL=64</text>
+
+  <!-- Arrows -->
+  <path d="M 260 530 L 295 530" stroke="#c0392b" stroke-width="2" fill="none" marker-end="url(#arrow-red)"/>
+  <path d="M 495 530 L 530 530" stroke="#c0392b" stroke-width="2" fill="none" marker-end="url(#arrow-red)"/>
+  <path d="M 710 530 L 745 530" stroke="#c0392b" stroke-width="2" fill="none" marker-end="url(#arrow-red)"/>
+  <path d="M 945 530 L 980 530" stroke="#c0392b" stroke-width="2" fill="none" marker-end="url(#arrow-red)"/>
+
+  <!-- Bottom note -->
+  <text x="640" y="615" class="small" text-anchor="middle">Mechanism: every miss evicts a hot line; smaller cache → worse cascade. The ~3.5 % spatial-locality win never pays for the eviction cost.</text>
+  <text x="640" y="640" class="small" text-anchor="middle" font-weight="600">Reverted. The adopted version above keeps the prefetched line in a separate buffer that cannot evict the main cache.</text>
+</svg>

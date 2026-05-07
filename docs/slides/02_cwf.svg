@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"
+     font-family="DejaVu Sans, Helvetica, Arial, sans-serif">
+  <style>
+    .title    { font-size: 28px; font-weight: 600; fill: #222; }
+    .subtitle { font-size: 16px; fill: #666; }
+    .label    { font-size: 18px; fill: #222; }
+    .small    { font-size: 14px; fill: #555; }
+    .group    { font-size: 16px; font-weight: 600; fill: #555; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2e8b57"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="640" y="60" class="title" text-anchor="middle">Critical-Word-First / Early Restart</text>
+  <text x="640" y="92" class="subtitle" text-anchor="middle">Return the requested word the moment it lands; finish the line in background.</text>
+
+  <!-- Line fill timeline -->
+  <text x="120" y="140" class="group">Line fill (each cell = one 32-bit word, label = arrival cycle):</text>
+  <g>
+    <!-- 8 word cells, each 110x60, x=120..1010 -->
+    <rect x="120" y="160" width="110" height="60" rx="6" ry="6" fill="#d9eaf7" stroke="#555" stroke-width="1.5"/>
+    <text x="175" y="188" class="label" text-anchor="middle">w0</text>
+    <text x="175" y="208" class="small" text-anchor="middle">t = 10</text>
+
+    <rect x="231" y="160" width="110" height="60" rx="6" ry="6" fill="#d9eaf7" stroke="#555" stroke-width="1.5"/>
+    <text x="286" y="188" class="label" text-anchor="middle">w1</text>
+    <text x="286" y="208" class="small" text-anchor="middle">t = 20</text>
+
+    <rect x="342" y="160" width="110" height="60" rx="6" ry="6" fill="#fce5cd" stroke="#c0392b" stroke-width="2"/>
+    <text x="397" y="188" class="label" text-anchor="middle">w2 ★</text>
+    <text x="397" y="208" class="small" text-anchor="middle">t = 32</text>
+
+    <rect x="453" y="160" width="110" height="60" rx="6" ry="6" fill="#ffffff" stroke="#555" stroke-width="1.5"/>
+    <text x="508" y="188" class="label" text-anchor="middle">w3</text>
+    <text x="508" y="208" class="small" text-anchor="middle">t = 44</text>
+
+    <rect x="564" y="160" width="110" height="60" rx="6" ry="6" fill="#ffffff" stroke="#555" stroke-width="1.5"/>
+    <text x="619" y="188" class="label" text-anchor="middle">w4</text>
+    <text x="619" y="208" class="small" text-anchor="middle">t = 56</text>
+
+    <rect x="675" y="160" width="110" height="60" rx="6" ry="6" fill="#ffffff" stroke="#555" stroke-width="1.5"/>
+    <text x="730" y="188" class="label" text-anchor="middle">w5</text>
+    <text x="730" y="208" class="small" text-anchor="middle">t = 68</text>
+
+    <rect x="786" y="160" width="110" height="60" rx="6" ry="6" fill="#ffffff" stroke="#555" stroke-width="1.5"/>
+    <text x="841" y="188" class="label" text-anchor="middle">w6</text>
+    <text x="841" y="208" class="small" text-anchor="middle">t = 76</text>
+
+    <rect x="897" y="160" width="110" height="60" rx="6" ry="6" fill="#ffffff" stroke="#555" stroke-width="1.5"/>
+    <text x="952" y="188" class="label" text-anchor="middle">w7</text>
+    <text x="952" y="208" class="small" text-anchor="middle">t = 84</text>
+  </g>
+  <text x="1030" y="195" class="small">★ word the CPU asked for</text>
+
+  <!-- Naive vs CWF arrows -->
+  <path d="M 286 222 L 280 320" stroke="#333" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+  <text x="195" y="270" class="small">naive: 84 cyc</text>
+  <path d="M 397 222 L 730 320" stroke="#2e8b57" stroke-width="2.4" fill="none" marker-end="url(#arrow-green)"/>
+  <text x="560" y="265" class="small" fill="#2e8b57" font-weight="600">CWF: 32 cyc</text>
+
+  <!-- Naive box -->
+  <rect x="120" y="320" width="320" height="120" rx="10" ry="10" fill="#fce4e4" stroke="#c0392b" stroke-width="1.8"/>
+  <text x="280" y="352" class="label" font-weight="600" text-anchor="middle">Naive cache</text>
+  <text x="280" y="380" class="small" text-anchor="middle">bus stalled until t = 84</text>
+  <text x="280" y="402" class="small" text-anchor="middle">(full-line fill)</text>
+
+  <!-- CWF box -->
+  <rect x="560" y="320" width="340" height="120" rx="10" ry="10" fill="#e0f0e0" stroke="#2e8b57" stroke-width="1.8"/>
+  <text x="730" y="352" class="label" font-weight="600" text-anchor="middle">CWF cache</text>
+  <text x="730" y="380" class="small" text-anchor="middle">bus released at t = 32 (52 cyc earlier)</text>
+  <text x="730" y="402" class="small" text-anchor="middle">remaining words finish in background</text>
+  <text x="730" y="424" class="small" text-anchor="middle" font-weight="600" fill="#2e8b57">−1.23 % CYCLES_INFER measured</text>
+
+  <!-- Section header -->
+  <text x="640" y="490" class="group" text-anchor="middle">Two correctness fixes are mandatory once CWF is on:</text>
+
+  <!-- Fix 1: stale-bit -->
+  <rect x="120" y="510" width="500" height="170" rx="10" ry="10" fill="#fff7d6" stroke="#b08800" stroke-width="1.5"/>
+  <text x="370" y="540" class="label" font-weight="600" text-anchor="middle">Fix #1 — stale-bit filter</text>
+  <text x="140" y="568" class="small">word_done is a level: bits stay high after each word</text>
+  <text x="140" y="588" class="small">lands and only clear on the next start (~3 cyc later).</text>
+  <text x="140" y="612" class="small">Without filter: 2nd miss publishes 1st fetch's data.</text>
+  <text x="140" y="640" class="small" font-weight="600">Fix:</text>
+  <text x="140" y="660" class="small">latch fwv[7:0]; reset on miss-entry; OR-accumulate</text>
+  <text x="140" y="676" class="small">only the rising edges of word_done.</text>
+
+  <!-- Fix 2: deferred-miss -->
+  <rect x="660" y="510" width="500" height="170" rx="10" ry="10" fill="#fff7d6" stroke="#b08800" stroke-width="1.5"/>
+  <text x="910" y="540" class="label" font-weight="600" text-anchor="middle">Fix #2 — deferred-miss rescue</text>
+  <text x="680" y="568" class="small">CWF early-restart hands the bus back mid-fetch; CPU</text>
+  <text x="680" y="588" class="small">may issue a NEW miss before the FSM is back to IDLE.</text>
+  <text x="680" y="612" class="small">Without rescue: cpu_rd never re-pulses → bus deadlock.</text>
+  <text x="680" y="640" class="small" font-weight="600">Fix:</text>
+  <text x="680" y="660" class="small">when fetch finishes, check the parked data phase</text>
+  <text x="680" y="676" class="small">(cpu_dvalid &amp;&amp; !dhit) and start the next miss.</text>
+</svg>

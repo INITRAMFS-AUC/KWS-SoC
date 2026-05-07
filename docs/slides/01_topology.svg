@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720"
+     font-family="DejaVu Sans, Helvetica, Arial, sans-serif">
+  <style>
+    .title    { font-size: 28px; font-weight: 600; fill: #222; }
+    .subtitle { font-size: 16px; fill: #666; }
+    .label    { font-size: 18px; fill: #222; }
+    .small    { font-size: 14px; fill: #555; }
+    .group    { font-size: 16px; font-weight: 600; fill: #555; }
+    .box      { fill: #ffffff; stroke: #555; stroke-width: 1.5; rx: 8; ry: 8; }
+    .master   { fill: #f5f5f5; stroke: #555; stroke-width: 1.5; rx: 8; ry: 8; }
+    .cache    { fill: #d9eaf7; stroke: #2e6e9e; stroke-width: 1.8; rx: 10; ry: 10; }
+    .flash    { fill: #fff2cc; stroke: #b08800; stroke-width: 1.8; }
+    .arrow    { stroke: #333; stroke-width: 1.8; fill: none; marker-end: url(#arrow); }
+    .dashed   { stroke: #2e8b57; stroke-width: 1.8; fill: none; stroke-dasharray: 6,4; marker-end: url(#arrow-green); }
+    .grpborder{ fill: none; stroke: #aaa; stroke-width: 1.2; stroke-dasharray: 6,4; rx: 10; ry: 10; }
+    .green-text { fill: #2e8b57; font-size: 14px; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5"
+            markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2e8b57"/>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="640" y="60" class="title" text-anchor="middle">XIP cache topology</text>
+  <text x="640" y="92" class="subtitle" text-anchor="middle">All firmware + accel weights live in QSPI flash @ 0x8000_0000 — one cache fronts every master.</text>
+
+  <!-- AHB masters group -->
+  <rect x="80" y="135" width="1120" height="120" class="grpborder"/>
+  <text x="100" y="155" class="group">AHB masters</text>
+
+  <!-- Master boxes -->
+  <g>
+    <rect x="120" y="170" width="200" height="65" class="master"/>
+    <text x="220" y="208" class="label" text-anchor="middle">CPU i-port</text>
+  </g>
+  <g>
+    <rect x="380" y="170" width="200" height="65" class="master"/>
+    <text x="480" y="208" class="label" text-anchor="middle">CPU d-port</text>
+  </g>
+  <g>
+    <rect x="640" y="170" width="200" height="65" class="master"/>
+    <text x="740" y="208" class="label" text-anchor="middle">DMAC</text>
+  </g>
+  <g>
+    <rect x="900" y="170" width="240" height="65" class="master"/>
+    <text x="1020" y="208" class="label" text-anchor="middle">conv1d_accel</text>
+  </g>
+
+  <!-- Arrows masters -> cache -->
+  <path class="arrow" d="M 220 235 L 540 365"/>
+  <path class="arrow" d="M 480 235 L 600 365"/>
+  <path class="arrow" d="M 740 235 L 680 365"/>
+  <path class="arrow" d="M 1020 235 L 740 365"/>
+
+  <!-- Cache box -->
+  <rect x="440" y="370" width="400" height="120" class="cache"/>
+  <text x="640" y="408" class="label" font-weight="600" text-anchor="middle">XIP cache</text>
+  <text x="640" y="436" class="small" text-anchor="middle">8 KB direct-mapped • 32-byte lines • 256 sets</text>
+  <text x="640" y="462" class="small" text-anchor="middle">ahbl_flash_ctrl_eb_cache wrapper + ro_dmc</text>
+
+  <!-- Cache <-> flash arrows -->
+  <path class="arrow" d="M 600 490 L 600 580"/>
+  <text x="500" y="525" class="small">line fetch (32 B)</text>
+  <text x="500" y="545" class="small">~150 cyc / miss</text>
+
+  <path class="dashed" d="M 680 580 L 680 490"/>
+  <text x="700" y="525" class="green-text">word_done[7:0]</text>
+  <text x="700" y="545" class="green-text">level bitmap</text>
+
+  <!-- Flash cylinder -->
+  <ellipse cx="640" cy="585" rx="180" ry="20" class="flash"/>
+  <path class="flash" d="M 460 585 L 460 645 A 180 20 0 0 0 820 645 L 820 585"/>
+  <ellipse cx="640" cy="645" rx="180" ry="20" fill="none" stroke="#b08800" stroke-width="1.8"/>
+  <text x="640" y="625" class="label" font-weight="600" text-anchor="middle">QSPI flash</text>
+  <text x="640" y="650" class="small" text-anchor="middle">Quad-IO Read (0xEB) — 4 bits/SCK</text>
+</svg>
