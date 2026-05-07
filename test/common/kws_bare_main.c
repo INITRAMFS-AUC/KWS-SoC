@@ -315,43 +315,36 @@ typedef struct {
 #define RING_SAMPLES_PER_CLIP  (MODEL_SAMPLES_PER_CLIP * KWS_DECIMATE)
 #define NUM_CLASSES            11
 
-/* ── Rolling peak normalization (firmware-side AGC) ─────────────────────────
- * Tracks a running |peak| envelope over the int8 audio stream and rescales
- * each sample so the output spans roughly [-127, 127] regardless of input
- * loudness.  Updated as samples are *consumed* by the snapshot loop, so the
- * envelope state is per-stream, not per-clip — it carries across inference
- * boundaries and behaves like an AGC.
- *   attack:  instantaneous (any new |s| > peak immediately raises it).
- *   release: peak -= peak >> SHIFT each sample → exp decay τ ≈ (1<<SHIFT)/fs.
- *            At fs=8 kHz, SHIFT=10 → ~128 ms; SHIFT=12 → ~512 ms.
- *   floor:   minimum peak; prevents /0 and absurd boost on silence.
- * Override: -DKWS_AGC_RELEASE_SHIFT=12 -DKWS_AGC_FLOOR=16
- * Disable:  -DKWS_AGC_DISABLE=1                                              */
-#ifndef KWS_AGC_RELEASE_SHIFT
-#define KWS_AGC_RELEASE_SHIFT 10
-#endif
-#ifndef KWS_AGC_FLOOR
-#define KWS_AGC_FLOOR 8
-#endif
-
-static int16_t kws_agc_peak = KWS_AGC_FLOOR;
-
-static inline int8_t kws_agc_normalize(int8_t s) {
-#ifdef KWS_AGC_DISABLE
-    return s;
-#else
-    int16_t a = (s < 0) ? (int16_t)(-(int16_t)s) : (int16_t)s;
-    if (a > kws_agc_peak) {
-        kws_agc_peak = a;                       /* attack: instant       */
-    } else {
-        kws_agc_peak -= kws_agc_peak >> KWS_AGC_RELEASE_SHIFT;
-        if (kws_agc_peak < KWS_AGC_FLOOR) kws_agc_peak = KWS_AGC_FLOOR;
+/* ── Per-clip peak normalization ─────────────────────────────────────────────
+ * Applied to nnom_input_data[] after the snapshot loop.
+ * Matches the Python training pipeline exactly:
+ *   scale = min(96 / peak, 64)   where peak = max(|s|) over the clip
+ *   out[i] = clip(round(s * scale), -128, 127)
+ * Using integer arithmetic: for peak>=2, scaled = (s*96 + half) / peak.
+ * When peak==1 the cap applies: scaled = s*64.
+ * Silence (peak==0) is left untouched.                                       */
+static void peak_norm_clip(int8_t *buf, int n)
+{
+    int32_t peak = 0;
+    for (int i = 0; i < n; i++) {
+        int32_t a = buf[i] < 0 ? -(int32_t)buf[i] : (int32_t)buf[i];
+        if (a > peak) peak = a;
     }
-    int16_t scaled = (int16_t)(((int32_t)s * 127) / kws_agc_peak);
-    if (scaled >  127) scaled =  127;
-    if (scaled < -128) scaled = -128;
-    return (int8_t)scaled;
-#endif
+    if (peak < 1) return;
+    for (int i = 0; i < n; i++) {
+        int32_t s = buf[i];
+        int32_t scaled;
+        if (peak == 1) {
+            scaled = s * 64;
+        } else {
+            int32_t half = peak >> 1;
+            scaled = s >= 0 ? (s * 96 + half) / peak
+                            : (s * 96 - half) / peak;
+        }
+        if (scaled >  127) scaled =  127;
+        if (scaled < -128) scaled = -128;
+        buf[i] = (int8_t)scaled;
+    }
 }
 
 /* Audio capture ring buffer.
@@ -591,8 +584,9 @@ int main(void) {
         for (int j = 0; j < MODEL_SAMPLES_PER_CLIP; j++) {
             uint32_t ring_idx =
                 (snap_start_ring + (uint32_t)(j * KWS_DECIMATE)) & KWS_RING_MASK;
-            nnom_input_data[j] = kws_agc_normalize((int8_t)audio_ring[ring_idx]);
+            nnom_input_data[j] = (int8_t)audio_ring[ring_idx];
         }
+        peak_norm_clip(nnom_input_data, MODEL_SAMPLES_PER_CLIP);
 
         bytes_at_next_inference += KWS_STEP_SAMPLES;
 
