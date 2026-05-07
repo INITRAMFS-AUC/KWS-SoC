@@ -798,7 +798,7 @@ int main(void) {
          * the emitted UART line so the output reflects the full
          * KWS_PRINT_INTERVAL_MS window, not just the last clip. */
         int vote_winner = NUM_CLASSES - 1;
-        if (print_gate_open) {
+        if (print_gate_open && vote_n_clips > 0) {
             int32_t best = vote_score_sum[0];
             vote_winner   = 0;
             for (int v = 1; v < NUM_CLASSES; v++) {
@@ -814,7 +814,9 @@ int main(void) {
 #elif defined(KWS_QUIET)
         const int print_clip_base = (vote_winner != (NUM_CLASSES - 1));
 #else
-        const int print_clip_base = 1;
+        /* Suppress windows where confidence gating dropped every clip —
+         * vote_n_clips==0 means only noise/silence, nothing to report. */
+        const int print_clip_base = (vote_n_clips > 0);
 #endif
         const int print_clip = print_clip_base && print_gate_open;
 
@@ -900,15 +902,15 @@ int main(void) {
          *     contiguous (no audio gap); when iter wall time > 1 s
          *     anyway, the next WFI will detect the overflow and emit
          *     AUDIO_LOSS as before. */
+        /* Ground-truth step from the DMA-side counter.  Always snap
+         * bytes_written once (volatile) so an in-flight IRQ between
+         * the read and the math can't widen the delta. */
+        uint32_t bw_now     = bytes_written;
+        uint32_t iter_bytes = bw_now - iter_start_bw;
 #ifdef KWS_STEP_SAMPLES
         step_bytes = KWS_STEP_SAMPLES;
+        (void)iter_bytes;   /* not used for step, but kept for the print below */
 #else
-        /* Ground-truth step from the DMA-side counter: exactly the
-         * number of ring bytes the DMA wrote between iter_start and
-         * here.  Snap bytes_written once (volatile) so an in-flight
-         * IRQ between the read and the math can't widen the delta. */
-        uint32_t bw_now      = bytes_written;
-        uint32_t iter_bytes  = bw_now - iter_start_bw;
         step_bytes = iter_bytes;
         if (step_bytes < KWS_MIN_STEP_RING_BYTES) step_bytes = KWS_MIN_STEP_RING_BYTES;
         if (step_bytes > RING_SAMPLES_PER_CLIP)   step_bytes = RING_SAMPLES_PER_CLIP;
