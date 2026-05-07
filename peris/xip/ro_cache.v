@@ -43,8 +43,22 @@ module ro_dmc #(parameter LW=32*16, NL=64) (
     input  wire [LW/32-1:0] m_word_done,
     output wire [31:0]      m_addr,
     output wire             m_start,
-    input  wire             m_done
+    input  wire             m_done,
+
+    // NNoM-aware prefetch hint side-band (gated; see DESIGN.md).
+    // When `prefetch_en` = 0 (default), this module behaves byte-
+    // for-byte as before.  This commit only WIRES the inputs in;
+    // the actual prefetch FSM + victim buffer + extended hit logic
+    // land in the next commit.  For now the inputs only feed an
+    // unused tap so the elaborator doesn't flag floating wires.
+    input  wire             prefetch_en,
+    input  wire [31:0]      prefetch_base,
+    input  wire [31:0]      prefetch_len
 );
+
+    // Temporary unused-input sink — removed in the next commit when
+    // the prefetch FSM consumes these.
+    wire _unused_prefetch_inputs = prefetch_en | (|prefetch_base) | (|prefetch_len);
 
     localparam      LWB = LW/8;
     localparam      LFW = $clog2(NL);

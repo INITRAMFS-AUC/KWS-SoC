@@ -779,6 +779,15 @@ module kws_soc #(
   );
 
   wire xip_hsel_internal = (xip_haddr[31:28] == 4'h8);
+
+  // Side-band wires from conv1d_accel to the XIP cache wrapper for
+  // the NNoM-aware prefetch hint.  Declared here (before both
+  // producers + consumers) so the elaboration order is unambiguous.
+  // Inert when xip_prefetch_en=0 (the accel's reset default).
+  wire        xip_prefetch_en;
+  wire [31:0] xip_prefetch_base;
+  wire [31:0] xip_prefetch_len;
+
   // TODO: Make the following parameters config dependent
   ahbl_flash_ctrl_eb_cache #(
       .LW(32*8),
@@ -801,7 +810,15 @@ module kws_soc #(
       .sck                  (xip_sck),
       .doe                  (xip_doe),
       .spi_do               (xip_do),
-      .di                   (flash_di)
+      .di                   (flash_di),
+
+      // NNoM-aware prefetch hint side-band from conv1d_accel.  Inert
+      // when xip_prefetch_en=0 (the accel's reset default) — the cache
+      // sees no functional change.  See peris/xip/DESIGN.md
+      // §"NNoM-aware cache".
+      .prefetch_en          (xip_prefetch_en),
+      .prefetch_base        (xip_prefetch_base),
+      .prefetch_len         (xip_prefetch_len)
   );
 
   wire dmac_hsel_internal = (dmac_haddr[31:29] == 3'b011);
@@ -963,17 +980,6 @@ module kws_soc #(
       .prefetch_base (xip_prefetch_base),
       .prefetch_len  (xip_prefetch_len)
   );
-
-  // Side-band wires from the accel to the XIP cache wrapper.
-  wire        xip_prefetch_en;
-  wire [31:0] xip_prefetch_base;
-  wire [31:0] xip_prefetch_len;
-  // Terminate them on `unused` taps so Verilator/lint doesn't flag the
-  // signals as floating until the cache wrapper consumes them in the
-  // next commit.  These three lines disappear when the consumer lands.
-  wire _unused_prefetch_en   = xip_prefetch_en;
-  wire _unused_prefetch_base = |xip_prefetch_base;
-  wire _unused_prefetch_len  = |xip_prefetch_len;
 
   // ----------------------------------------------------------------------------
   // Bus snooper (debug, gated by `DEBUG_SNOOPER)

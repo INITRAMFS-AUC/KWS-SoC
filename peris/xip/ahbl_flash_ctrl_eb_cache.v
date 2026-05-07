@@ -17,7 +17,21 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
     output wire                 sck,
     output wire [3:0]           doe,
     output wire [3:0]           spi_do,
-    input  wire [3:0]           di
+    input  wire [3:0]           di,
+
+    // ─── NNoM-aware prefetch hint side-band (optional) ─────────────────
+    //
+    // Driven by an external NNoM-aware master (today: conv1d_accel's
+    // PREFETCH_CTRL/BASE/LEN regs).  When `prefetch_en` is 0 (the
+    // hint master's reset default), all three signals are inert and
+    // the cache MUST behave byte-for-byte identically to a
+    // no-prefetch build — no flops toggle, no extra hit-mux level.
+    // The gating is enforced in `ro_dmc` (see ro_cache.v).
+    //
+    // See peris/xip/DESIGN.md §"NNoM-aware cache" for the contract.
+    input  wire                 prefetch_en,
+    input  wire [31:0]          prefetch_base,
+    input  wire [31:0]          prefetch_len
 );
 
     assign HRESP = 1'b0; // Always OKAY
@@ -68,7 +82,12 @@ module ahbl_flash_ctrl_eb_cache #(parameter LW=256, NL=32) (
         .m_word_done(flash_word_done),
         .m_addr(m_addr),
         .m_start(m_start),
-        .m_done(m_done_reg)
+        .m_done(m_done_reg),
+
+        // NNoM-aware prefetch hint pass-through (gated inside ro_dmc).
+        .prefetch_en(prefetch_en),
+        .prefetch_base(prefetch_base),
+        .prefetch_len(prefetch_len)
     );
 
     // --- AHB Output Logic ---
