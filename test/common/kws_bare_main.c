@@ -238,19 +238,25 @@ typedef struct {
 #define I2S_CONF_DS_EN      (1u << 5)   /* HW 3x downsample (keep 1 of 3)    */
 #define I2S_CONF_WIDTH_8    (2u << 6)   /* 4 int8 samples per FIFO word      */
 
-/* HW 3× decimator gate.
+/* HW decimator gate (default ON).
  *
- * Default 0: receiver runs at ~16 kHz raw (cfg_div=17 → 15.625 kHz) and
- *            main() does a firmware ÷2 into the 8 kHz model input.  This
- *            is the production path with our 16 kHz mic stimulus / FPGA mic.
- * Set to 1: HW keeps 1 of every 3 raw samples (3× decimation).  Use when
- *           the mic runs at ~48 kHz raw (cfg_div tuned so that
- *           clk / (128 * (cfg_div+1)) ≈ 48 kHz).  The post-DS rate is
- *           ~16 kHz; pair with KWS_MODEL_HZ=8000 (default) so main() does
- *           the final ÷2 to 8 kHz, OR with KWS_MODEL_HZ=16000 for a 16 kHz
- *           model (peak-norm).  Override per-model via the build flags. */
+ * Default 1: receiver does the ÷2 in hardware (i2s_rx_core drops every
+ *            other captured frame).  At cfg_div=17 (CLK_MHZ=36) the raw
+ *            frame rate is 15.625 kHz, so the post-HW-DS ring rate is
+ *            ~7.81 kHz — within ±2.5 % of the model's nominal 8 kHz
+ *            input.  Halves the bytes per second the DMA carries,
+ *            halves the PIRQ rate, and lets KWS_DECIMATE collapse to 1
+ *            (the snapshot loop becomes a contiguous memcpy instead of
+ *            a strided gather).
+ *            RING_HZ tracks this automatically below.
+ *
+ * Set to 0: receiver runs raw and main() does the ÷2 in firmware.
+ *           Use when mic + receiver are wired so HW ÷2 would put the
+ *           model below 7 kHz, or when bypassing HW is required for
+ *           experimental work.  Output rate at the model is identical
+ *           on both paths at cfg_div=17 — only the DMA traffic differs. */
 #ifndef KWS_DS_EN
-#define KWS_DS_EN 0
+#define KWS_DS_EN 1
 #endif
 
 static void i2s_init(uint32_t clk_div) {
@@ -260,10 +266,10 @@ static void i2s_init(uint32_t clk_div) {
      *          (newest at MSB, oldest at LSB), so on little-endian RV32 the
      *          bytes land in audio_ring[] in time order — no firmware
      *          byte-shuffle needed.
-     * DS_EN:   compile-time gate (KWS_DS_EN above).  Default 0 — we run
-     *          the receiver at ~16 kHz raw and let main() do the ÷2 into
-     *          nnom_input_data for the 8 kHz model.  Set to 1 for 48 kHz
-     *          mic + HW ÷3 + firmware ÷2 paths. */
+     * DS_EN:   compile-time gate (KWS_DS_EN above).  Default 1 — the
+     *          HW receiver does the ÷2; the firmware snapshot loop runs
+     *          1:1 with the ring (KWS_DECIMATE collapses to 1).  Set
+     *          to 0 to disable HW DS and rely on the firmware ÷2. */
     I2S->conf = ((clk_div & 0xFFFFFFu) << 8)
               | I2S_CONF_IRQ_EN
 #if KWS_DS_EN
@@ -314,7 +320,20 @@ typedef struct {
  *                models (peak-norm variant) override with -DKWS_MODEL_HZ=16000.
  * KWS_DECIMATE   Snapshot-loop stride (RING_HZ / KWS_MODEL_HZ).  1 for
  *                16 kHz models, 2 for 8 kHz models (firmware ÷2). */
-#define RING_HZ                16000
+/* RING_HZ tracks KWS_DS_EN.  When the HW receiver runs ÷2 (KWS_DS_EN=1)
+ * the byte rate into audio_ring is half the raw I2S frame rate, so the
+ * firmware-side ring rate must follow — otherwise KWS_DECIMATE doubles
+ * up on the HW divide and the model gets 4 kHz garbage instead of 8 kHz
+ * audio.  Override with -DKWS_RING_HZ=<n> if the receiver runs at a
+ * non-standard divider. */
+#ifndef KWS_RING_HZ
+#  if KWS_DS_EN
+#    define KWS_RING_HZ        8000
+#  else
+#    define KWS_RING_HZ        16000
+#  endif
+#endif
+#define RING_HZ                KWS_RING_HZ
 #ifndef KWS_MODEL_HZ
 #define KWS_MODEL_HZ           8000
 #endif
