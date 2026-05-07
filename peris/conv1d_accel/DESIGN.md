@@ -81,6 +81,127 @@ AHB crossbar as the CPU.
 
 ---
 
+## 2.1 Interface justification — why APB slave AND why AHB master
+
+The accelerator carries **two** bus interfaces.  This section is
+written assuming reasonable scepticism about *each* one — the natural
+question is "why not skip APB and put config on AHB directly, since
+the CPU is already an AHB master?"  Spelt out below.
+
+### Why an APB slave (config interface)
+
+The current path of a config write is:
+
+```
+  CPU SW instr → AHB-Lite store on D-port
+              → ahbl_crossbar
+              → ahbl_to_apb_bridge   (1–2 cycles of protocol translate)
+              → APB splitter
+              → conv1d_accel APB slave latch
+```
+
+The bridge step is real overhead per write.  At ~6 register writes per
+accel call × ~60 calls per inference ≈ 360 writes per inference, and
+~2 extra cycles per write through the bridge, that's roughly **720
+cycles per inference** of bridge tax — about **0.07 %** of today's
+~1.05 M-cycle inference.  Most of that is hidden behind Hazard3's
+non-blocking-store + LSU pipeline anyway; the visible stall is just
+the last write before the `ACCEL_CTRL=START` store drains.
+
+Alternatives we considered:
+
+* **Make `conv1d_accel` an AHB-Lite slave** (skip the bridge entirely).
+  Saves the ~720 cycles/inference above.  Costs:
+  - AHB-Lite slave is a more complex protocol than APB: HSEL +
+    HTRANS{NSEQ/SEQ} + HSIZE/HBURST decode + HRDATA pipelined one
+    cycle behind HADDR + HRESP timing + the default-slave handling
+    in the splitter.  Roughly **~1.5–2× the gates** of the APB
+    slave (which is just paddr[5:2] decode + a 9-register file
+    ≈ 250 flops).
+  - Adds another address region on the AHB splitter, where
+    conv1d_accel is the only inhabitant — the bridge still exists
+    for timer/uart/i2s/snooper, so we don't shrink it.
+  - Breaks the standard "small register-file peripherals on APB,
+    bandwidth-hungry blocks on AHB" SoC convention used by every
+    other peripheral here, including upstream Hazard3's example_soc.
+* **Memory-map config into the existing AHB master port.**  Have the
+  accel snoop its own writes via a slave-decode path bolted onto the
+  master FSM.  Doubles the master FSM and every config write costs a
+  full AHB arbitration cycle.  Strictly worse than the dedicated AHB
+  slave above.
+
+The APB slave costs **~250 flops** (paddr[5:2] mux + 9-register
+file) and a single APB splitter slot at `0x4000_C000`.  It never
+contends with the data path on AHB.  Single-cycle ready means no
+CPU core ever waits on it past the bridge translate.
+
+**Decision: keep the APB slave.**  The bridge tax is real but quantitatively
+negligible (~0.07 % of inference); the gate / protocol / convention
+cost of an AHB slave doesn't earn that back.
+
+### Why an AHB master (data interface)
+
+The accel moves real data per call (mel_compact_int8 layer 1 is the
+worst case): `1024 weight bytes + 96 input bytes + 16 bias bytes + 16
+shift bytes = 1152 bytes per call`.  Each call also writes ~120 output
+bytes.  With ~60 calls per inference (8-layer model × ~7 channel
+positions) that's ~70 KB moved per inference.
+
+Alternatives considered:
+
+* **CPU-driven data movement.**  Firmware reads from XIP/SRAM and writes
+  every byte to the accel via APB.  Cost: ~3 cycles per byte (load,
+  store-to-APB, decode) × 70 KB = ~210 K cycles purely on data
+  movement.  Plus the CPU is blocked the whole time.  Today's
+  accel-driven path takes ~1.05 M cycles total per inference, of which
+  most is MAC; CPU-driven movement alone would tank that to ~5 M.
+  Strictly inadmissible.
+* **DMA-staged.**  CPU sets up MS_DMAC to move weights into an internal
+  scratchpad, then triggers the accel.  Eliminates CPU stall on the
+  movement, but: (a) we'd need a scratchpad sized for the largest
+  weight tensor (~1 KB on the worst layer of mel_compact_int8;
+  bigger on other models — must be sized for the largest model we'll
+  ever ship); (b) two AHB masters (DMAC + accel) still contend on the
+  bus during the next layer's setup; (c) the firmware now has a
+  per-call DMA program in the critical path, doubling the accel call
+  latency.  Net: same bus contention as the AHB-master approach with
+  more firmware complexity and a fixed scratchpad cost.
+* **Accel as a co-processor over a private memory port.**  Direct SRAM
+  attachment.  Requires a custom port on the SRAM block (today the
+  SRAM is single-port AHB-Lite).  Not a free improvement — adds an
+  arbiter on the SRAM port that's then in *every* CPU access path.
+  Only worth it if accel-vs-CPU SRAM contention is the bottleneck;
+  measured today it isn't.
+
+The AHB master adds **one master port** to the crossbar (raising
+`N_MASTERS=4` → was 3 before the merge, see
+`memory/project_ahb_master_history.md`) and **~200 lines of FSM** in
+the accel.  The crossbar arbiter is round-robin; we measure 0 cycles
+of arbitration overhead per accel call in the steady state (the CPU
+is in WFI most of the time during accel execution; DMA bursts are
+short and infrequent).
+
+**Decision: keep the AHB master.**
+
+### What this means for the NNoM-aware XIP cache work
+
+The NNoM-aware prefetch hint (planned in `peris/xip/DESIGN.md`)
+piggybacks on **both** interfaces:
+
+* Hint registers (`PREFETCH_CTRL`, `PREFETCH_BASE`, `PREFETCH_LEN`) are
+  added to the accel's existing **APB slave** — no new peripheral, no
+  new APB splitter slot.  Costs: 3 more registers (+96 flops), one
+  more `paddr[5:2]` decode case.
+* When `PREFETCH_CTRL.EN` is set, the accel hardware drives the hint
+  signals out as a side-band of the AHB master's start sequence — no
+  CPU involvement on the hot path.  No additional master port required;
+  the cache wrapper sees the hint as a separate non-AHB sideband.
+
+So the NNoM-aware cache does **not** alter the master/slave decision
+above.  It reuses both interfaces idiomatically.
+
+---
+
 ## 3. Firmware Integration
 
 ### 3.1 Driver (`accel_conv1d.h`)
