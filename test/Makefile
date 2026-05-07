@@ -578,6 +578,14 @@ endif
 ifeq ($(KWS_QUIET),1)
   KWS_EXTRA_CFLAGS += -DKWS_QUIET=1
 endif
+# NNoM-aware XIP-cache prefetch hint: opt-in.  When 1, the accel's
+# nnom_conv1d_hw shim writes PREFETCH_BASE/LEN/CTRL on every layer
+# call so the cache pre-warms the weight-scan starting line.  RTL
+# stays gated behind the same APB enable bit, so KWS_XIP_PREFETCH=0
+# (default) is byte-for-byte identical to a no-prefetch build.
+ifeq ($(KWS_XIP_PREFETCH),1)
+  KWS_EXTRA_CFLAGS += -DKWS_XIP_PREFETCH=1
+endif
 MEL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
              -DNNOM_STATIC_BUF_KB=36 \
              -DKWS_WEIGHTS_HEADER='"mel_compact_4blk_ch36_weights.h"' \
