@@ -951,8 +951,29 @@ module kws_soc #(
       .hmastlock (/* unused — accel concat hard-codes 1'b0    */),
       .hrdata    (accel_hrdata),
       .hready    (accel_hready),
-      .hresp     (accel_hresp)
+      .hresp     (accel_hresp),
+
+      // NNoM-aware XIP-cache prefetch hint side-band.  Exposed as wires
+      // so the XIP cache wrapper can consume them in a follow-up
+      // commit; in this commit they're declared and left unattached on
+      // the consumer side.  When PREFETCH_CTRL.EN=0 (reset), the accel
+      // forces prefetch_base/len low, so even an unconnected consumer
+      // sees no stale hint.  See peris/xip/DESIGN.md §"NNoM-aware cache".
+      .prefetch_en   (xip_prefetch_en),
+      .prefetch_base (xip_prefetch_base),
+      .prefetch_len  (xip_prefetch_len)
   );
+
+  // Side-band wires from the accel to the XIP cache wrapper.
+  wire        xip_prefetch_en;
+  wire [31:0] xip_prefetch_base;
+  wire [31:0] xip_prefetch_len;
+  // Terminate them on `unused` taps so Verilator/lint doesn't flag the
+  // signals as floating until the cache wrapper consumes them in the
+  // next commit.  These three lines disappear when the consumer lands.
+  wire _unused_prefetch_en   = xip_prefetch_en;
+  wire _unused_prefetch_base = |xip_prefetch_base;
+  wire _unused_prefetch_len  = |xip_prefetch_len;
 
   // ----------------------------------------------------------------------------
   // Bus snooper (debug, gated by `DEBUG_SNOOPER)

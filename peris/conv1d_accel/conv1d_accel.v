@@ -18,6 +18,21 @@
 //   0x1C  SHIFT      [4:0]=scalar output right-shift (legacy / unused when SHIFT_ADDR set)
 //   0x20  SHIFT_ADDR per-channel shift byte array address (uint8_t [C_out])
 //
+//   --- NNoM-aware XIP-cache prefetch hint (gated, default OFF) ---
+//   See peris/xip/DESIGN.md §"NNoM-aware cache" for the motivation +
+//   gating contract.  All three regs reset to 0; prefetch_en=0 means
+//   the cache wrapper observes the hint signals as inert (it must
+//   hold any prefetch logic in reset).  This commit only adds the
+//   register surface + side-band outputs; the cache-side consumer
+//   lands in a follow-up commit.
+//
+//   0x24  PREFETCH_CTRL   [0]=PREFETCH_EN.  When 0 (reset default),
+//                         all prefetch behaviour is suppressed; the
+//                         XIP cache must remain byte-for-byte
+//                         identical to a non-NNoM build.
+//   0x28  PREFETCH_BASE   start byte address (line-aligned recommended).
+//   0x2C  PREFETCH_LEN    bytes to prefetch.  Zero = no work.
+//
 // Loop order: C_out (outer) x W_out (inner).
 // Weights, bias and per-channel shift are loaded ONCE per output channel then
 // reused across all output positions, amortising XIP flash read cost.
@@ -62,7 +77,28 @@ module conv1d_accel (
     output wire        hmastlock,
     input  wire [31:0] hrdata,
     input  wire        hready,
-    input  wire        hresp
+    input  wire        hresp,
+
+    // ─── NNoM-aware XIP-cache prefetch hint side-band ──────────────────
+    //
+    // Drives the optional NNoM-aware prefetch path in
+    // `peris/xip/ro_cache.v` (see peris/xip/DESIGN.md §"NNoM-aware
+    // cache").  All three signals are *gated by* prefetch_en:
+    //   prefetch_en   = PREFETCH_CTRL[0].  Reset 0 → all hint logic
+    //                   in the cache must hold in reset; the cache
+    //                   sees no functional change.
+    //   prefetch_base = byte address to start prefetching at.
+    //   prefetch_len  = byte length to prefetch (line-aligned read by
+    //                   the cache).  Zero = "no work to do".
+    //
+    // Today these are just driven from the APB regs (firmware sets
+    // them, hint stays static).  A future refinement will fire them
+    // automatically from the start-of-call FSM transition (a deferred
+    // step — keeps this commit small + keeps APB visibility for
+    // debug/A-B testing).
+    output wire        prefetch_en,
+    output wire [31:0] prefetch_base,
+    output wire [31:0] prefetch_len
 );
 
     // -------------------------------------------------------------------------
@@ -90,6 +126,13 @@ module conv1d_accel (
     reg [ 4:0] r_shift;
     reg        r_busy, r_done;
 
+    // NNoM-aware XIP-cache prefetch hint regs.  Side-band-only — these
+    // do NOT participate in the conv1d datapath.  See module port
+    // comment for semantics; gated by r_prefetch_en (reset 0).
+    reg        r_prefetch_en;
+    reg [31:0] r_prefetch_base;
+    reg [31:0] r_prefetch_len;
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             r_src_addr   <= 32'h0; r_wt_addr    <= 32'h0;
@@ -97,16 +140,22 @@ module conv1d_accel (
             r_shift_addr <= 32'h0;
             r_c_in <= 8'd1; r_c_out <= 8'd1; r_k_w <= 8'd1; r_stride <= 8'd1;
             r_w_in <= 16'd1; r_shift <= 5'd0;
+            r_prefetch_en   <= 1'b0;
+            r_prefetch_base <= 32'h0;
+            r_prefetch_len  <= 32'h0;
         end else if (psel && penable && pwrite) begin
             case (paddr[5:2])
-                4'd1: r_src_addr               <= pwdata;
-                4'd2: r_wt_addr                <= pwdata;
-                4'd3: r_dst_addr               <= pwdata;
-                4'd4: r_bs_addr                <= pwdata;
-                4'd5: {r_stride,r_k_w,r_c_out,r_c_in} <= pwdata;
-                4'd6: r_w_in                   <= pwdata[15:0];
-                4'd7: r_shift                  <= pwdata[4:0];
-                4'd8: r_shift_addr             <= pwdata;
+                4'd1:  r_src_addr               <= pwdata;
+                4'd2:  r_wt_addr                <= pwdata;
+                4'd3:  r_dst_addr               <= pwdata;
+                4'd4:  r_bs_addr                <= pwdata;
+                4'd5:  {r_stride,r_k_w,r_c_out,r_c_in} <= pwdata;
+                4'd6:  r_w_in                   <= pwdata[15:0];
+                4'd7:  r_shift                  <= pwdata[4:0];
+                4'd8:  r_shift_addr             <= pwdata;
+                4'd9:  r_prefetch_en            <= pwdata[0];
+                4'd10: r_prefetch_base          <= pwdata;
+                4'd11: r_prefetch_len           <= pwdata;
                 default: ;
             endcase
         end
@@ -114,18 +163,31 @@ module conv1d_accel (
 
     always @(*) begin
         case (paddr[5:2])
-            4'd0: prdata = {22'b0, r_done, r_busy, 8'b0};
-            4'd1: prdata = r_src_addr;
-            4'd2: prdata = r_wt_addr;
-            4'd3: prdata = r_dst_addr;
-            4'd4: prdata = r_bs_addr;
-            4'd5: prdata = {r_stride, r_k_w, r_c_out, r_c_in};
-            4'd6: prdata = {16'b0, r_w_in};
-            4'd7: prdata = {27'b0, r_shift};
-            4'd8: prdata = r_shift_addr;
+            4'd0:  prdata = {22'b0, r_done, r_busy, 8'b0};
+            4'd1:  prdata = r_src_addr;
+            4'd2:  prdata = r_wt_addr;
+            4'd3:  prdata = r_dst_addr;
+            4'd4:  prdata = r_bs_addr;
+            4'd5:  prdata = {r_stride, r_k_w, r_c_out, r_c_in};
+            4'd6:  prdata = {16'b0, r_w_in};
+            4'd7:  prdata = {27'b0, r_shift};
+            4'd8:  prdata = r_shift_addr;
+            4'd9:  prdata = {31'b0, r_prefetch_en};
+            4'd10: prdata = r_prefetch_base;
+            4'd11: prdata = r_prefetch_len;
             default: prdata = 32'b0;
         endcase
     end
+
+    // Side-band outputs to the XIP cache wrapper.  When the gate
+    // (r_prefetch_en) is 0, prefetch_base / prefetch_len are forced
+    // low so the cache cannot accidentally interpret a stale
+    // configuration as a real hint.  This satisfies the
+    // "behaviourally invisible when disabled" contract from
+    // peris/xip/DESIGN.md.
+    assign prefetch_en   = r_prefetch_en;
+    assign prefetch_base = r_prefetch_en ? r_prefetch_base : 32'h0;
+    assign prefetch_len  = r_prefetch_en ? r_prefetch_len  : 32'h0;
 
     // -------------------------------------------------------------------------
     // Internal buffers
