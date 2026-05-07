@@ -469,6 +469,22 @@ static inline void csr_meiea_kws_en(void) {
 #define KWS_DEBOUNCE_COUNT 2
 #endif
 
+/* Confidence threshold for a single inference clip.  Clips whose argmax
+ * int8 softmax score is below this are excluded from the soft-vote window.
+ * 60/128 ≈ 47% — high enough to reject background noise while still
+ * accepting genuine word predictions.  Override with -DKWS_CONF_THRESH=N. */
+#ifndef KWS_CONF_THRESH
+#define KWS_CONF_THRESH 60
+#endif
+
+/* Minimum number of confident clips required in a KWS_PRINT_INTERVAL_MS
+ * window before a DETECT line is emitted.  Prevents a single lucky
+ * noise clip from triggering a false positive.
+ * Override with -DKWS_MIN_VOTE_CLIPS=N. */
+#ifndef KWS_MIN_VOTE_CLIPS
+#define KWS_MIN_VOTE_CLIPS 3
+#endif
+
 /* UART output rate gate.  With the dynamic sliding window, inference can
  * happen 10–50× per second; printing once per iter floods the UART and
  * extends each iter's wall time enough to feed back into AUDIO_LOSS.
@@ -725,10 +741,10 @@ int main(void) {
             }
         }
 
-        /* Confidence threshold: ~30% softmax (38/128). Skipped in dump
+        /* Confidence threshold: ~47% softmax (60/128). Skipped in dump
          * mode so the PRED line stays comparable to the Spike harness. */
 #ifndef KWS_DUMP_LAYERS
-        if (max_score < 38) pred = NUM_CLASSES - 1;
+        if (max_score < KWS_CONF_THRESH) pred = NUM_CLASSES - 1;
 #endif
 
         if (pred == last_pred) {
@@ -774,10 +790,10 @@ int main(void) {
         /* Soft-vote accumulator: every iter contributes its int8
          * softmax row to the running total.  vote_n_clips lets the
          * print know how many inferences this winner represents.
-         * Low-confidence clips (max_score < 38) are excluded so they
-         * don't pollute the vote window. */
+         * Low-confidence clips (max_score < KWS_CONF_THRESH) are excluded
+         * so they don't pollute the vote window. */
 #ifndef KWS_DUMP_LAYERS
-        if (max_score >= 38)
+        if (max_score >= KWS_CONF_THRESH)
 #endif
         {
             for (int v = 0; v < NUM_CLASSES; v++)
@@ -798,7 +814,7 @@ int main(void) {
          * the emitted UART line so the output reflects the full
          * KWS_PRINT_INTERVAL_MS window, not just the last clip. */
         int vote_winner = NUM_CLASSES - 1;
-        if (print_gate_open && vote_n_clips > 0) {
+        if (print_gate_open && (int)vote_n_clips >= KWS_MIN_VOTE_CLIPS) {
             int32_t best = vote_score_sum[0];
             vote_winner   = 0;
             for (int v = 1; v < NUM_CLASSES; v++) {
@@ -816,7 +832,7 @@ int main(void) {
          * confidence gate (vote_n_clips==0) or the soft-vote winner is
          * the unknown class. */
         const int print_clip_base =
-            (vote_n_clips > 0) && (vote_winner != (NUM_CLASSES - 1));
+            ((int)vote_n_clips >= KWS_MIN_VOTE_CLIPS) && (vote_winner != (NUM_CLASSES - 1));
 #endif
         const int print_clip = print_clip_base && print_gate_open;
 
