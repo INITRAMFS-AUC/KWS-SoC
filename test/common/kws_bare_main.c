@@ -773,10 +773,17 @@ int main(void) {
 
         /* Soft-vote accumulator: every iter contributes its int8
          * softmax row to the running total.  vote_n_clips lets the
-         * print know how many inferences this winner represents. */
-        for (int v = 0; v < NUM_CLASSES; v++)
-            vote_score_sum[v] += (int32_t)nnom_output_data[v];
-        vote_n_clips++;
+         * print know how many inferences this winner represents.
+         * Low-confidence clips (max_score < 38) are excluded so they
+         * don't pollute the vote window. */
+#ifndef KWS_DUMP_LAYERS
+        if (max_score >= 38)
+#endif
+        {
+            for (int v = 0; v < NUM_CLASSES; v++)
+                vote_score_sum[v] += (int32_t)nnom_output_data[v];
+            vote_n_clips++;
+        }
 
 #if KWS_PRINT_INTERVAL_MS > 0
         const int print_gate_open =
