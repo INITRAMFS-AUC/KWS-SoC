@@ -24,6 +24,7 @@ MEL_COMPACT_C_DIR = mel_compact
 MEL_COMPACT_INT8_C_DIR = mel_compact_int8
 MEL_COMPACT_INT8_PI_C_DIR = mel_compact_int8_pi
 MEL_COMPACT_INT8_PEAK_NORM_C_DIR = mel_compact_int8_peak_norm
+MEL_COMPACT_INT8_PI_KLD_C_DIR    = mel_compact_int8_pi_kld
 LR_MODEL_C_DIR = lr_model
 NNOM_DIR     = ../third_party/nnom
 NNOM_INC_DIR = $(NNOM_DIR)/inc
@@ -177,6 +178,7 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/mel_compact_int8_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_xip_accel.bin \
 	$(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.bin \
 	$(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.bin \
+	$(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.bin \
 	$(BUILD_DIR)/accel_test_xip.elf                  $(BUILD_DIR)/accel_test_xip.dis                  $(BUILD_DIR)/accel_test_xip.bin \
 	$(BUILD_DIR)/lr_model_xip.elf                    $(BUILD_DIR)/lr_model_xip.dis                    $(BUILD_DIR)/lr_model_xip.bin \
 	$(BUILD_DIR)/lr_model_xip_accel.elf              $(BUILD_DIR)/lr_model_xip_accel.dis              $(BUILD_DIR)/lr_model_xip_accel.bin
@@ -216,6 +218,7 @@ model-mel-compact-accel: $(BUILD_DIR)/mel_compact_4blk_ch36_xip_accel.elf $(BUIL
 model-mel-compact-int8-accel: $(BUILD_DIR)/mel_compact_int8_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_xip_accel.bin
 model-mel-compact-int8-pi-accel: $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.bin
 model-mel-compact-int8-peak-norm-accel: $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.bin
+model-mel-compact-int8-pi-kld-accel: $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.bin
 model-lr: $(BUILD_DIR)/lr_model_xip.elf $(BUILD_DIR)/lr_model_xip.dis $(BUILD_DIR)/lr_model_xip.bin
 model-lr-accel: $(BUILD_DIR)/lr_model_xip_accel.elf $(BUILD_DIR)/lr_model_xip_accel.dis $(BUILD_DIR)/lr_model_xip_accel.bin
 # SRAM model artifacts intentionally disabled:
@@ -394,7 +397,7 @@ clean:
 	rm -f $(COMMON_DIR)/*.d
 	$(MAKE) -C $(XIP_DIR) clean
 
-.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact model-mel-compact-accel model-mel-compact-int8-accel model-mel-compact-int8-pi-accel model-mel-compact-int8-peak-norm-accel model-mel-compact-int8-peak-norm-dump model-mel-compact-int8-peak-norm-dump-full model-lr model-lr-accel xip-testbench mel-compact mel-compact-accel mel-compact-int8-accel mel-compact-int8-pi-accel mel-compact-int8-peak-norm-accel mel-compact-int8-peak-norm-dump mel-compact-int8-peak-norm-dump-full lr-model lr-model-accel
+.PHONY: all clean sram xip sanity uart i2s flash malloc malloc-simple malloc-torture memcpy model-strided-s16-nodil model-streaming model-mel-compact model-mel-compact-accel model-mel-compact-int8-accel model-mel-compact-int8-pi-accel model-mel-compact-int8-peak-norm-accel model-mel-compact-int8-peak-norm-dump model-mel-compact-int8-peak-norm-dump-full model-mel-compact-int8-pi-kld-accel model-lr model-lr-accel xip-testbench mel-compact mel-compact-accel mel-compact-int8-accel mel-compact-int8-pi-accel mel-compact-int8-peak-norm-accel mel-compact-int8-peak-norm-dump mel-compact-int8-peak-norm-dump-full mel-compact-int8-pi-kld-accel lr-model lr-model-accel
 
 # Include dependency files
 -include $(wildcard $(BUILD_DIR)/*.d)
@@ -607,6 +610,35 @@ $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf: \
 
 mel-compact-int8-peak-norm-accel: $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf
 model-mel-compact-int8-peak-norm-accel: $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf
+
+# ── mel_compact_int8_pi_kld — same audio chain as peak-norm, KLD-distilled int8 weights ──
+#
+# Mirrors mel-compact-int8-peak-norm-accel's plumbing exactly: 16 kHz mic →
+# HW ÷1 → 16 kHz ring → firmware ÷2 → 8 kHz model.  Only the weights header
+# changes (weights_mel_int8_pi_kld_only.h vs weights_int8norm.h).
+# Build:  make mel-compact-int8-pi-kld-accel  (or model-…)
+
+MEL_INT8_PI_KLD_ACCEL_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+                   -DNNOM_STATIC_BUF_KB=36 \
+                   -DKWS_WEIGHTS_HEADER='"weights_mel_int8_pi_kld_only.h"' \
+                   -DKWS_MODEL_NAME='"mel_compact_int8_pi_kld_accel"' \
+                   -DKWS_DS_EN=0 \
+                   -DKWS_MODEL_HZ=8000 \
+                   -I$(MEL_COMPACT_INT8_PI_KLD_C_DIR)
+
+$(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_MEL_ACCEL) | $(BUILD_DIR)
+	$(CC) $(MEL_INT8_PI_KLD_ACCEL_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+mel-compact-int8-pi-kld-accel: $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf
+model-mel-compact-int8-pi-kld-accel: $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf
 
 # ── mel_compact_int8_peak_norm — Spike-reproduction layer-dump variant ───────
 #

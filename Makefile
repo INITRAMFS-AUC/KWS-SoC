@@ -655,6 +655,9 @@ test-mel-compact-int8-accel:
 test-mel-compact-int8-peak-norm-accel:
 	$(MAKE) -C test mel-compact-int8-peak-norm-accel XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
 
+test-mel-compact-int8-pi-kld-accel:
+	$(MAKE) -C test mel-compact-int8-pi-kld-accel XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
+
 test-mel-compact-int8-peak-norm-dump:
 	$(MAKE) -C test mel-compact-int8-peak-norm-dump XIP_PLAYBACK=$(XIP_PLAYBACK) PLAYBACK_SAMPLES_C=build/playback_samples.c
 

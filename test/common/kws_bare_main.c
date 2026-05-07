@@ -649,6 +649,17 @@ int main(void) {
             }
         }
 
+#ifndef KWS_DUMP_LAYERS
+        /* Confidence-threshold gate: anything below ~30 % softmax peak is
+         * downgraded to "unknown" to suppress nuisance detections in the
+         * production stream.  The spike-debug reference binary doesn't apply
+         * this gate, so we skip it in dump mode to keep the PRED line
+         * comparable byte-for-byte. */
+        if (max_score < 38) {
+          pred = 10;
+        }
+#endif
+
         if (pred == last_pred) {
             debounce_cnt++;
         } else {
