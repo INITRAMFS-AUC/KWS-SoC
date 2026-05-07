@@ -81,7 +81,7 @@ export SRAM_DEPTH := $(SRAM_DEPTH)
 # lands (autonomous DMA drain), the firmware burst MUST equal the half-
 # full threshold or every other 4-block in ring_buf is silently zero-
 # padded by FIFO-empty reads — keep both knobs derived from this one.
-I2S_FIFO_DEPTH ?= 16
+I2S_FIFO_DEPTH ?= 64
 export I2S_FIFO_DEPTH
 
 # DMA Controller base address (slave registers at 0x6000_0000)

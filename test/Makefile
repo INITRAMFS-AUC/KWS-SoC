@@ -542,7 +542,13 @@ clean:
 #       UART line.  Off by default — VPI testbenches measure cycles more
 #       accurately and without running extra firmware code.
 KWS_DEBUG_DUMP_FIRST_CLIP ?= 0
-USE_MCYCLE_CSR           ?= 0
+# USE_MCYCLE_CSR=1 by default — Hazard3 inhibits mcycle out of reset, so any
+# code that does `csrr mcycle` (notably the dynamic sliding-window step in
+# kws_bare_main.c) returns a frozen value with the counter inhibited.  The
+# firmware now uses mcycle for correctness-critical timing, not just for
+# debug prints, so the safe default is ON.  Set USE_MCYCLE_CSR=0 explicitly
+# only for cycle-counter-free measurement runs.
+USE_MCYCLE_CSR           ?= 1
 KWS_EXTRA_CFLAGS         :=
 ifeq ($(KWS_DEBUG_DUMP_FIRST_CLIP),1)
   KWS_EXTRA_CFLAGS += -DKWS_DEBUG_DUMP_FIRST_CLIP=1

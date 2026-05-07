@@ -452,12 +452,14 @@ static void dma_arm(void) {
 static inline void csr_set_mtvec(void (*handler)(void)) {
     asm volatile ("csrw mtvec, %0" :: "r"((uintptr_t)handler));
 }
-#ifdef USE_MCYCLE_CSR
+/* Hazard3 inhibits mcycle out of reset (mcountinhibit.cy = 1).  The
+ * dynamic sliding-window step in main() reads mcycle for *correctness*,
+ * not just debug — every build needs the counter ungated.  Keep this
+ * outside the USE_MCYCLE_CSR gate (which now controls only the UART
+ * cycle-print lines, not whether mcycle ticks). */
 static inline void csr_enable_cycle_counter(void) {
-    /* Hazard3 inhibits mcycle by default; clear mcountinhibit so it runs. */
     asm volatile ("csrw 0x320, zero");
 }
-#endif
 static inline void csr_enable_meie(void) {
     asm volatile ("csrs mie, %0" :: "r"(1u << 11));
 }
@@ -484,6 +486,20 @@ static inline void csr_meiea_kws_en(void) {
 #ifndef KWS_DEBOUNCE_COUNT
 #define KWS_DEBOUNCE_COUNT 2
 #endif
+
+/* UART output rate gate.  With the dynamic sliding window, inference can
+ * happen 10–50× per second; printing once per iter floods the UART and
+ * extends each iter's wall time enough to feed back into AUDIO_LOSS.
+ * Instead, emit a single DETECT line at most every KWS_PRINT_INTERVAL_MS
+ * milliseconds — the wall time gating is anchored to bytes_written
+ * (DMA-side, hardware truth) rather than mcycle, so the rate is stable
+ * regardless of how fast inference runs.  Set =0 to disable the gate
+ * (every iter prints, like older builds). */
+#ifndef KWS_PRINT_INTERVAL_MS
+#define KWS_PRINT_INTERVAL_MS 200
+#endif
+#define KWS_PRINT_INTERVAL_RING_BYTES \
+    (((uint32_t)RING_HZ * (uint32_t)KWS_PRINT_INTERVAL_MS) / 1000u)
 
 #ifdef NNOM_USING_STATIC_MEMORY
 static uint8_t nnom_static_buf[NNOM_STATIC_BUF_KB * 1024];
@@ -578,9 +594,7 @@ int main(void) {
     model_set_callback(model, kws_layer_dump_cb);
 #endif
 
-#ifdef USE_MCYCLE_CSR
     csr_enable_cycle_counter();
-#endif
     csr_set_mtvec(kws_trap_handler);
     csr_enable_meie();
     csr_meiea_kws_en();   /* enable dmac_irq (IRQ 0) + i2s_irq (IRQ 2) */
@@ -624,17 +638,20 @@ int main(void) {
             asm volatile ("wfi");
         }
 
-        /* Iteration wall-time start.  Captured here — right after the WFI
-         * loop wakes us — so the dynamic step at the end of the iteration
-         * accounts for *all* per-iter work (snapshot + AGC + inference +
-         * softmax + UART), not just the inference cycles measured by
-         * mcycle around model_run().  Counting only model_run() under-
-         * estimates the wall time and lets bytes_written drift ahead of
-         * bytes_at_next_inference by ~80 KB per iter (snapshot loop
-         * alone), which eventually trips the audio-loss guard even
-         * though the ring isn't actually overwritten yet. */
-        uint32_t iter_start_cyc;
-        asm volatile ("csrr %0, mcycle" : "=r"(iter_start_cyc));
+        /* Iteration ground-truth start: snapshot bytes_written so we can
+         * compute step_bytes at the end of the loop as the *actual* number
+         * of ring bytes the DMA wrote during this iteration.  Using the
+         * DMA counter directly is more robust than deriving step from
+         * mcycle: mcycle/CYCLES_PER_RING_BYTE depends on the assumed
+         * ring rate matching the I2S divider exactly, and (observed in
+         * sim) mcycle does not always tick 1:1 with the DMA's wall-time
+         * fill rate — there's a several-MHz drift per iteration that
+         * was enough to trip the audio-loss guard within ~30 s, even
+         * though the ring was never actually overwritten.  bytes_written
+         * is incremented by exactly DMA_BURST_BYTES on every PIRQ, so
+         * the delta is a hardware-anchored measurement of how many
+         * bytes the DMA wrote between iter_start and iter_end. */
+        uint32_t iter_start_bw = bytes_written;
 
         /* Audio-loss guard.  If bytes_written has run more than one
          * RING_SAMPLES_PER_CLIP ahead of bytes_at_next_inference, the
@@ -742,23 +759,96 @@ int main(void) {
          *                    mostly silence; reduces UART overhead and
          *                    helps the AUDIO_LOSS guard stay quiet too.
          *   default:         print every iteration. */
-#ifdef KWS_DUMP_LAYERS
-        const int print_clip = 0;
-#elif defined(KWS_QUIET)
-        const int print_clip = (debounced != (NUM_CLASSES - 1));
+
+        /* Wall-clock-anchored output gate with score-averaging.
+         *
+         * The dynamic sliding window may run inference 10–50× per
+         * second.  Printing once per iter floods the UART AND latches
+         * onto whichever single inference happened to fire at the
+         * print boundary.  Instead, we accumulate the int8 softmax
+         * scores across every inference inside one
+         * KWS_PRINT_INTERVAL_MS window and, at the boundary, emit the
+         * argmax of the accumulated score (i.e. the soft-vote winner).
+         * Voting on summed soft scores is more robust than voting on
+         * argmax-per-clip (a noisy clip that's barely "yes" doesn't
+         * out-vote three confident "no"s).
+         *
+         * Anchored to bytes_written (DMA-side ground truth) instead of
+         * mcycle, so the output rate is stable regardless of how
+         * mcycle pauses during WFI / MMIO stalls.  Set
+         * KWS_PRINT_INTERVAL_MS=0 to fall back to the per-iter,
+         * latest-debounce print path. */
+        static uint32_t last_print_bw = 0;
+        static int32_t  vote_score_sum[NUM_CLASSES] = {0};
+        static uint32_t vote_n_clips = 0;
+
+        /* Soft-vote accumulator: every iter contributes its int8
+         * softmax row to the running total.  vote_n_clips lets the
+         * print know how many inferences this winner represents. */
+        for (int v = 0; v < NUM_CLASSES; v++)
+            vote_score_sum[v] += (int32_t)nnom_output_data[v];
+        vote_n_clips++;
+
+#if KWS_PRINT_INTERVAL_MS > 0
+        const int print_gate_open =
+            (int32_t)(bytes_written - last_print_bw) >= (int32_t)KWS_PRINT_INTERVAL_RING_BYTES;
 #else
-        const int print_clip = 1;
+        const int print_gate_open = 1;
 #endif
+
+        /* Resolve the winner from the accumulated soft scores when the
+         * gate opens; otherwise nothing to print this iter.  We use
+         * the soft-vote winner (not the per-clip debounced label) for
+         * the emitted UART line so the output reflects the full
+         * KWS_PRINT_INTERVAL_MS window, not just the last clip. */
+        int vote_winner = NUM_CLASSES - 1;
+        if (print_gate_open) {
+            int32_t best = vote_score_sum[0];
+            vote_winner   = 0;
+            for (int v = 1; v < NUM_CLASSES; v++) {
+                if (vote_score_sum[v] > best) {
+                    best = vote_score_sum[v];
+                    vote_winner = v;
+                }
+            }
+        }
+
+#ifdef KWS_DUMP_LAYERS
+        const int print_clip_base = 0;
+#elif defined(KWS_QUIET)
+        const int print_clip_base = (vote_winner != (NUM_CLASSES - 1));
+#else
+        const int print_clip_base = 1;
+#endif
+        const int print_clip = print_clip_base && print_gate_open;
+
+        /* Snapshot the n_clips count before the reset (the print body
+         * uses it to suffix the DETECT line so a downstream listener
+         * can tell how confident the vote was). */
+        const uint32_t voted_clips = vote_n_clips;
+
+        /* Reset the accumulator + advance the print anchor on every
+         * gate-open boundary, regardless of whether we actually
+         * emitted (KWS_QUIET may suppress).  Otherwise consecutive
+         * "unknown" windows would compound into a single huge sum
+         * that biases the next genuine word's vote. */
+        if (print_gate_open) {
+            last_print_bw = bytes_written;
+            vote_n_clips = 0;
+            for (int v = 0; v < NUM_CLASSES; v++) vote_score_sum[v] = 0;
+        }
 
         if (print_clip) {
             uart_puts("IRQS:");
             uart_putdec(i2s_irq_count);
             uart_puts("\r\n");
             uart_puts("DETECT:");
-            uart_puts(class_names[debounced]);
+            uart_puts(class_names[vote_winner]);
             uart_puts(", ");
-            uart_putdec(debounced);
-            uart_puts("\r\n");
+            uart_putdec(vote_winner);
+            uart_puts(" (n=");
+            uart_putdec((int)voted_clips);
+            uart_puts(")\r\n");
         }
 #ifdef USE_MCYCLE_CSR
         /* Three counters per clip:
@@ -817,13 +907,27 @@ int main(void) {
 #ifdef KWS_STEP_SAMPLES
         step_bytes = KWS_STEP_SAMPLES;
 #else
-        uint32_t iter_end_cyc;
-        asm volatile ("csrr %0, mcycle" : "=r"(iter_end_cyc));
-        uint32_t iter_cycles = iter_end_cyc - iter_start_cyc;
-        step_bytes = (iter_cycles + CYCLES_PER_RING_BYTE - 1) / CYCLES_PER_RING_BYTE;
+        /* Ground-truth step from the DMA-side counter: exactly the
+         * number of ring bytes the DMA wrote between iter_start and
+         * here.  Snap bytes_written once (volatile) so an in-flight
+         * IRQ between the read and the math can't widen the delta. */
+        uint32_t bw_now      = bytes_written;
+        uint32_t iter_bytes  = bw_now - iter_start_bw;
+        step_bytes = iter_bytes;
         if (step_bytes < KWS_MIN_STEP_RING_BYTES) step_bytes = KWS_MIN_STEP_RING_BYTES;
         if (step_bytes > RING_SAMPLES_PER_CLIP)   step_bytes = RING_SAMPLES_PER_CLIP;
 #endif
+        if (print_clip) {
+            uart_puts("ITER_BYTES:");
+            uart_putdec((int)iter_bytes);
+            uart_puts(" STEP:");
+            uart_putdec((int)step_bytes);
+            uart_puts(" BW:");
+            uart_putdec((int)bw_now);
+            uart_puts(" BAN:");
+            uart_putdec((int)bytes_at_next_inference);
+            uart_puts("\r\n");
+        }
         bytes_at_next_inference += step_bytes;
     }
 
