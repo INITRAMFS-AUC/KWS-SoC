@@ -811,12 +811,12 @@ int main(void) {
 
 #ifdef KWS_DUMP_LAYERS
         const int print_clip_base = 0;
-#elif defined(KWS_QUIET)
-        const int print_clip_base = (vote_winner != (NUM_CLASSES - 1));
 #else
-        /* Suppress windows where confidence gating dropped every clip —
-         * vote_n_clips==0 means only noise/silence, nothing to report. */
-        const int print_clip_base = (vote_n_clips > 0);
+        /* Suppress "unknown" windows: skip when no clip cleared the
+         * confidence gate (vote_n_clips==0) or the soft-vote winner is
+         * the unknown class. */
+        const int print_clip_base =
+            (vote_n_clips > 0) && (vote_winner != (NUM_CLASSES - 1));
 #endif
         const int print_clip = print_clip_base && print_gate_open;
 
@@ -910,6 +910,14 @@ int main(void) {
 #ifdef KWS_STEP_SAMPLES
         step_bytes = KWS_STEP_SAMPLES;
         (void)iter_bytes;   /* not used for step, but kept for the print below */
+#elif defined(KWS_NO_OVERLAP) && KWS_NO_OVERLAP
+        /* Non-overlapping mode: each window picks up exactly where the
+         * previous one ended.  Pinning step_bytes to one full clip means
+         * consecutive snapshots cover disjoint audio (no shared samples),
+         * at the cost of higher worst-case detection latency.  Build with
+         * -DKWS_NO_OVERLAP=1 to enable. */
+        step_bytes = RING_SAMPLES_PER_CLIP;
+        (void)iter_bytes;
 #else
         step_bytes = iter_bytes;
         if (step_bytes < KWS_MIN_STEP_RING_BYTES) step_bytes = KWS_MIN_STEP_RING_BYTES;
