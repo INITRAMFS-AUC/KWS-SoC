@@ -31,6 +31,7 @@ MEL_COMPACT_C_DIR     = $(MODEL_DIR)/mel_compact_4blk_ch36
 MEL_INT8_C_DIR        = $(MODEL_DIR)/mel_compact_int8
 MEL_INT8_PI_C_DIR     = $(MODEL_DIR)/mel_compact_int8_pi
 MEL_INT8_PEAK_NORM_C_DIR = $(MODEL_DIR)/mel_compact_int8_peak_norm
+MEL_INT8_PI_KLD_C_DIR = $(MODEL_DIR)/mel_compact_int8_pi_kld
 KWS_LR_C_DIR          = $(MODEL_DIR)/kws_lr
 STREAMING_MODEL_C_DIR = $(MODEL_DIR)/streaming
 ACCEL_C_DIR           = accel
@@ -223,6 +224,7 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/mel_compact_int8_xip.elf            $(BUILD_DIR)/mel_compact_int8_xip.dis            $(BUILD_DIR)/mel_compact_int8_xip.bin \
 	$(BUILD_DIR)/mel_compact_int8_xip_accel.elf      $(BUILD_DIR)/mel_compact_int8_xip_accel.dis      $(BUILD_DIR)/mel_compact_int8_xip_accel.bin \
 	$(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf   $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.dis   $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.bin \
+	$(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.bin \
 	$(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.bin \
 	$(BUILD_DIR)/kws_lr_xip.elf                      $(BUILD_DIR)/kws_lr_xip.dis                      $(BUILD_DIR)/kws_lr_xip.bin \
 	$(BUILD_DIR)/kws_lr_xip_accel.elf                $(BUILD_DIR)/kws_lr_xip_accel.dis                $(BUILD_DIR)/kws_lr_xip_accel.bin \
@@ -277,6 +279,8 @@ model-mel-compact-int8-accel: \
 	$(BUILD_DIR)/mel_compact_int8_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_xip_accel.bin
 model-mel-compact-int8-pi-accel: \
 	$(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.bin
+model-mel-compact-int8-pi-kld-accel: \
+	$(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.bin
 model-mel-compact-int8-peak-norm-accel: \
 	$(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.bin
 model-mel-compact-int8-peak-norm-dump: \
@@ -516,10 +520,12 @@ clean:
         model-strided-s16-nodil model-streaming model-mel-compact model-mel-compact-accel \
         model-mel-compact-int8 model-mel-compact-int8-accel \
         model-mel-compact-int8-pi-accel \
+        model-mel-compact-int8-pi-kld-accel \
         model-mel-compact-int8-peak-norm-accel \
         model-mel-compact-int8-peak-norm-dump \
         model-mel-compact-int8-peak-norm-dump-full \
-        mel-compact-int8-pi-accel mel-compact-int8-peak-norm-accel \
+        mel-compact-int8-pi-accel mel-compact-int8-pi-kld-accel \
+        mel-compact-int8-peak-norm-accel \
         mel-compact-int8-peak-norm-dump mel-compact-int8-peak-norm-dump-full \
         model-kws-lr model-kws-lr-accel accel-test xip-testbench
 
@@ -577,6 +583,12 @@ endif
 # the model actually detects a keyword.
 ifeq ($(KWS_QUIET),1)
   KWS_EXTRA_CFLAGS += -DKWS_QUIET=1
+endif
+# Disable sliding-window overlap: each inference covers a disjoint 1-second
+# slice of audio (step_bytes pinned to RING_SAMPLES_PER_CLIP).  Default is
+# the dynamic overlapping window.
+ifeq ($(KWS_NO_OVERLAP),1)
+  KWS_EXTRA_CFLAGS += -DKWS_NO_OVERLAP=1
 endif
 # NNoM-aware XIP-cache prefetch hint: opt-in.  When 1, the accel's
 # nnom_conv1d_hw shim writes PREFETCH_BASE/LEN/CTRL on every layer
@@ -692,6 +704,27 @@ $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf: \
 	$(CROSS_COMPILE)size $@
 
 mel-compact-int8-pi-accel: $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf
+
+# ── mel_compact_int8_pi_kld — Barbary int8 model, pi-only KLD calibration ───
+#    Same audio path as mel_compact_int8_pi (8 kHz model, 16 kHz mic + ÷2).
+MEL_INT8_PI_KLD_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+                     -DNNOM_STATIC_BUF_KB=36 \
+                     -DKWS_WEIGHTS_HEADER='"mel_compact_int8_pi_kld_weights.h"' \
+                     -DKWS_MODEL_NAME='"mel_compact_int8_pi_kld"' \
+                     -I$(MEL_INT8_PI_KLD_C_DIR)
+
+$(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_ACCEL) | $(BUILD_DIR)
+	$(CC) $(MEL_INT8_PI_KLD_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+mel-compact-int8-pi-kld-accel: $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf
 
 # ── mel_compact_int8_peak_norm — int8 model + rolling peak-normalisation ────
 #
