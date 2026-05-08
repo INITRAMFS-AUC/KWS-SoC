@@ -84,6 +84,24 @@ export SRAM_DEPTH := $(SRAM_DEPTH)
 I2S_FIFO_DEPTH ?= 64
 export I2S_FIFO_DEPTH
 
+# I2S target raw frame rate (Hz).  The receiver formula is
+#   raw_hz = CLK_MHZ * 1e6 / (128 * (cfg_div + 1))
+# so cfg_div = round(CLK_MHZ * 1e6 / (128 * raw_hz)) - 1.  We default
+# to 16 kHz raw — with KWS_DS_EN=1 (firmware default) the HW divides by
+# 2 to deliver 8 kHz to the model; with KWS_DS_EN=0 the firmware divides
+# by 2 in the snapshot loop.  Either way, the model sees ~8 kHz audio.
+I2S_RAW_HZ ?= 16000
+
+# Auto-compute I2S_CLK_DIV (cfg_div) from CLK_MHZ to hit I2S_RAW_HZ.
+# Override on the command line (`make ... I2S_CLK_DIV=N`) to pin a
+# specific divider — e.g. for testbench rate sweeps.  The shell math
+# is integer with rounding: (CLK*1e6 + I2S_RAW_HZ*64) / (I2S_RAW_HZ*128) - 1.
+ifeq ($(origin I2S_CLK_DIV),undefined)
+  I2S_CLK_DIV := $(shell echo $$(( ($(CLK_MHZ) * 1000000 + $(I2S_RAW_HZ) * 64) / ($(I2S_RAW_HZ) * 128) - 1 )))
+endif
+export I2S_CLK_DIV
+export I2S_RAW_HZ
+
 # DMA Controller base address (slave registers at 0x6000_0000)
 DMAC_BASE_ADDR ?= 0x60000000
 
