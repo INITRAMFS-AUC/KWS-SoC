@@ -32,6 +32,7 @@ MEL_INT8_C_DIR        = $(MODEL_DIR)/mel_compact_int8
 MEL_INT8_PI_C_DIR     = $(MODEL_DIR)/mel_compact_int8_pi
 MEL_INT8_PEAK_NORM_C_DIR = $(MODEL_DIR)/mel_compact_int8_peak_norm
 MEL_INT8_PI_KLD_C_DIR = $(MODEL_DIR)/mel_compact_int8_pi_kld
+MEL_4CMD_C_DIR        = $(MODEL_DIR)/mel_compact_4cmd
 KWS_LR_C_DIR          = $(MODEL_DIR)/kws_lr
 STREAMING_MODEL_C_DIR = $(MODEL_DIR)/streaming
 ACCEL_C_DIR           = accel
@@ -725,6 +726,28 @@ $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf: \
 	$(CROSS_COMPILE)size $@
 
 mel-compact-int8-pi-kld-accel: $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf
+
+# ── mel_compact_4cmd — 4-command model (go/left/right/stop) ─────────────────
+#    Same audio path as mel_compact_int8_pi_kld (8 kHz, peak-norm pipeline).
+#    NUM_CLASSES=5 and class names are embedded in the weights header.
+MEL_4CMD_CFLAGS = $(MODEL_CFLAGS) $(KWS_EXTRA_CFLAGS) \
+                  -DNNOM_STATIC_BUF_KB=36 \
+                  -DKWS_WEIGHTS_HEADER='"weights_4cmd.h"' \
+                  -DKWS_MODEL_NAME='"mel_compact_4cmd"' \
+                  -I$(MEL_4CMD_C_DIR)
+
+$(BUILD_DIR)/mel_compact_4cmd_xip_accel.elf: \
+    $(COMMON_DIR)/crt0.s \
+    $(COMMON_DIR)/memcpy.c \
+    $(COMMON_DIR)/memset.c \
+    $(COMMON_DIR)/intrinsics.c \
+    $(COMMON_DIR)/kws_bare_main.c \
+    $(NNOM_SRCS_ACCEL) | $(BUILD_DIR)
+	$(CC) $(MEL_4CMD_CFLAGS) -o $@ $^ $(MODEL_LDFLAGS_XIP)
+	$(OBJCOPY) -O binary $@ $(BUILD_DIR)/mel_compact_4cmd_xip_accel.bin
+	$(CROSS_COMPILE)size $@
+
+mel-compact-4cmd-accel: $(BUILD_DIR)/mel_compact_4cmd_xip_accel.elf
 
 # ── mel_compact_int8_peak_norm — int8 model + rolling peak-normalisation ────
 #
