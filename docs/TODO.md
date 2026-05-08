@@ -329,6 +329,15 @@ Priority ladder:
 
 ## P3 — developer velocity
 
+- **I2S → DMA → SRAM data-flow animation/diagram (docs only).**  Write
+  `docs/i2s_dataflow_animation.txt` — a plain-text walkthrough that
+  describes (frame by frame) how a sample travels from the INMP441
+  mic, through the I2S receiver's WIDTH=8 packing into the half-full
+  FIFO, into the DMA via PIRQ trigger, and finally lands in the
+  audio_ring SRAM region.  Plain prose + a single ASCII (or simple
+  hand-drawable) diagram; no tables.  Goal: hand to a designer who
+  can turn it into a teaching animation for slides.
+
 <!-- Done: test/Makefile MODEL_CFLAGS now picks up CLK_MHZ /
      UART_BAUD_RATE via $(GLOBAL_UART_CONFIG) instead of hardcoded
      `-DCLK_MHZ=36 -DUART_BAUD_RATE=115200`.  Same source as the
