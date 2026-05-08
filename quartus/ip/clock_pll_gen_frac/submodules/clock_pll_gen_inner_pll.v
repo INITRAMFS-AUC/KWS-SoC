@@ -1,5 +1,5 @@
 `timescale 1ns/10ps
-module  clock_pll_gen_pll(
+module  clock_pll_gen_inner_pll(
 
 	// interface 'refclk'
 	input wire refclk,
@@ -19,7 +19,7 @@ module  clock_pll_gen_pll(
 		.reference_clock_frequency("50.0 MHz"),
 		.operation_mode("direct"),
 		.number_of_clocks(1),
-		.output_clock_frequency0("28.672000 MHz"),
+		.output_clock_frequency0("36.864000 MHz"),
 		.phase_shift0("0 ps"),
 		.duty_cycle0(50),
 		.output_clock_frequency1("0 MHz"),

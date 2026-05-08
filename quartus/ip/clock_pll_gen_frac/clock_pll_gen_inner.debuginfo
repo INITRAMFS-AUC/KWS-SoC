@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<EnsembleReport name="clock_pll_gen" kind="system" version="25.1" fabric="QSYS">
+<EnsembleReport name="clock_pll_gen_inner" kind="system" version="25.1" fabric="QSYS">
  <!-- Format version 25.1 1129 (Future versions may contain additional information.) -->
- <!-- 2026.05.08.04:34:17 -->
+ <!-- 2026.05.08.04:47:29 -->
  <!-- A collection of modules and connections -->
  <parameter name="clockCrossingAdapter">
   <type>com.altera.sopcmodel.ensemble.EClockAdapter</type>
@@ -53,7 +53,7 @@
  </parameter>
  <parameter name="generationId">
   <type>int</type>
-  <value>1778204057</value>
+  <value>1778204849</value>
   <derived>false</derived>
   <enabled>true</enabled>
   <visible>true</visible>
@@ -362,7 +362,7 @@ the requested settings for a module instance. -->
   </parameter>
   <parameter name="gui_output_clock_frequency0">
    <type>double</type>
-   <value>28.672</value>
+   <value>36.864</value>
    <derived>false</derived>
    <enabled>true</enabled>
    <visible>true</visible>
@@ -386,7 +386,7 @@ the requested settings for a module instance. -->
   </parameter>
   <parameter name="gui_actual_frac_multiply_factor0">
    <type>long</type>
-   <value>2583852239</value>
+   <value>472790000</value>
    <derived>true</derived>
    <enabled>true</enabled>
    <visible>false</visible>
@@ -394,7 +394,7 @@ the requested settings for a module instance. -->
   </parameter>
   <parameter name="gui_actual_divide_factor0">
    <type>int</type>
-   <value>15</value>
+   <value>11</value>
    <derived>true</derived>
    <enabled>true</enabled>
    <visible>false</visible>
@@ -2082,7 +2082,7 @@ the requested settings for a module instance. -->
   </parameter>
   <parameter name="output_clock_frequency0">
    <type>java.lang.String</type>
-   <value>28.672000 MHz</value>
+   <value>36.864000 MHz</value>
    <derived>true</derived>
    <enabled>true</enabled>
    <visible>false</visible>
@@ -2650,7 +2650,7 @@ the requested settings for a module instance. -->
   </parameter>
   <parameter name="c_cnt_hi_div0">
    <type>int</type>
-   <value>8</value>
+   <value>6</value>
    <derived>true</derived>
    <enabled>false</enabled>
    <visible>false</visible>
@@ -2658,7 +2658,7 @@ the requested settings for a module instance. -->
   </parameter>
   <parameter name="c_cnt_lo_div0">
    <type>int</type>
-   <value>7</value>
+   <value>5</value>
    <derived>true</derived>
    <enabled>false</enabled>
    <visible>false</visible>
@@ -3682,7 +3682,7 @@ the requested settings for a module instance. -->
   </parameter>
   <parameter name="pll_output_clk_frequency">
    <type>java.lang.String</type>
-   <value>430.079999 MHz</value>
+   <value>405.504 MHz</value>
    <derived>true</derived>
    <enabled>false</enabled>
    <visible>false</visible>
@@ -3690,7 +3690,7 @@ the requested settings for a module instance. -->
   </parameter>
   <parameter name="pll_fractional_division">
    <type>java.lang.String</type>
-   <value>2583852239</value>
+   <value>472790000</value>
    <derived>true</derived>
    <enabled>false</enabled>
    <visible>false</visible>
@@ -3746,7 +3746,7 @@ the requested settings for a module instance. -->
   </parameter>
   <parameter name="gui_parameter_values">
    <type>[Ljava.lang.String;</type>
-   <value>4,4,256,256,false,true,false,false,8,7,1,0,ph_mux_clk,false,true,2,20,4000,430.079999 MHz,2583852239,none,glb,m_cnt,ph_mux_clk,false</value>
+   <value>4,4,256,256,false,true,false,false,6,5,1,0,ph_mux_clk,false,true,2,20,4000,405.504 MHz,472790000,none,glb,m_cnt,ph_mux_clk,false</value>
    <derived>true</derived>
    <enabled>true</enabled>
    <visible>true</visible>
@@ -4048,7 +4048,7 @@ parameters are a RESULT of the module parameters. -->
    </parameter>
    <parameter name="clockRate">
     <type>long</type>
-    <value>28672000</value>
+    <value>36864000</value>
     <derived>false</derived>
     <enabled>true</enabled>
     <visible>true</visible>
@@ -4194,5 +4194,5 @@ parameters are a RESULT of the module parameters. -->
   <version>25.1</version>
  </plugin>
  <reportVersion>25.1 1129</reportVersion>
- <uniqueIdentifier>5A580B49A12A0000019E0538A002</uniqueIdentifier>
+ <uniqueIdentifier>5A580B49A12A0000019E0544B629</uniqueIdentifier>
 </EnsembleReport>
