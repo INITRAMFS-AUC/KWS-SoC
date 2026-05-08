@@ -52,7 +52,12 @@ CLANGXX   					:= clang++
 QUARTUS_DIR 				:= $(ROOT_DIR)/quartus
 QUARTUS_PROJECT 		:= $(QUARTUS_DIR)/KWS-SoC
 QUARTUS_SRC_DIR 		:= $(QUARTUS_DIR)/quartus_src_dir
-ALL_QUARTUS_SRCS 		:= $(sort $(FILE_LIST_VH) $(SRC_LIST_IP))
+# Lazy `=` so SRC_LIST_IP / GEN_PLL_QIP (set later, after CLK_MHZ
+# is parsed) actually expand at use time.  An eager `:=` here
+# captured an empty SRC_LIST_IP and dropped the PLL .qip from the
+# Quartus project — Quartus then errored out at map time with
+# `instantiates undefined entity "clock_pll_gen"`.
+ALL_QUARTUS_SRCS 		 = $(sort $(FILE_LIST_VH) $(SRC_LIST_IP))
 
 # Sentinel files for Make to track
 QSF_FILE  := $(QUARTUS_PROJECT).qsf
