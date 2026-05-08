@@ -320,7 +320,30 @@ typedef struct {
 #endif
 #define KWS_DECIMATE           (RING_HZ / KWS_MODEL_HZ)   /* 1 or 2 */
 #define MODEL_SAMPLES_PER_CLIP 8000
+
+/* ── Optional firmware-side upsampling (KWS_UPSAMPLE) ───────────────────────
+ * The mic doesn't actually produce KWS_MODEL_HZ * KWS_DECIMATE = 16 kHz: at
+ * cfg_div=17 on a 36 MHz FPGA the receiver delivers
+ *   36e6 / (128 * 18) = 15625 Hz   (a 2.4% time-stretch vs. 16 kHz)
+ * which shifts every mel-bin centre relative to what the model was trained
+ * on — observed as significant FPGA accuracy loss.  When KWS_UPSAMPLE=1 is
+ * passed on the make line, the snapshot loop replaces the integer
+ * ÷KWS_DECIMATE stride with a Q16.16 linear-interpolation resample from
+ * KWS_RING_HZ_REAL → KWS_MODEL_HZ, so each output sample lands at exactly
+ * the model's expected cadence regardless of the receiver's actual rate.
+ * RING_SAMPLES_PER_CLIP is also re-pinned to one second of REAL ring time,
+ * so the snapshot covers the same 1 s of speech the training set used.
+ * Default off; override the assumed real rate via -DKWS_RING_HZ_REAL=N. */
+#ifdef KWS_UPSAMPLE
+#ifndef KWS_RING_HZ_REAL
+#define KWS_RING_HZ_REAL       15625u
+#endif
+#define RING_SAMPLES_PER_CLIP  ((uint32_t)KWS_RING_HZ_REAL)
+#define KWS_SRC_STEP_Q16 \
+    ((uint32_t)(((uint64_t)KWS_RING_HZ_REAL << 16) / (uint32_t)KWS_MODEL_HZ))
+#else
 #define RING_SAMPLES_PER_CLIP  (MODEL_SAMPLES_PER_CLIP * KWS_DECIMATE)
+#endif
 #ifdef KWS_NUM_CLASSES
 #define NUM_CLASSES            KWS_NUM_CLASSES
 #else
@@ -688,11 +711,33 @@ int main(void) {
         uint32_t snap_start_byte = bytes_at_next_inference - RING_SAMPLES_PER_CLIP;
         uint32_t snap_start_ring = snap_start_byte & KWS_RING_MASK;
         for (int j = 0; j < MODEL_SAMPLES_PER_CLIP; j++) {
+#ifdef KWS_UPSAMPLE
+            /* Q16.16 linear interpolation: src_q16 = j * (REAL/MODEL) in
+             * fixed-point, take floor for ring_idx_a, ceil for ring_idx_b,
+             * blend by the fractional part.  Saturating bounds aren't
+             * needed — interpolating between two int8s stays in int8 range. */
+            uint32_t src_q16  = (uint32_t)j * KWS_SRC_STEP_Q16;
+            uint32_t src_int  = src_q16 >> 16;
+            uint32_t src_frac = src_q16 & 0xFFFFu;
+            uint32_t idx_a = (snap_start_ring + src_int) & KWS_RING_MASK;
+            uint32_t idx_b = (snap_start_ring + src_int + 1u) & KWS_RING_MASK;
+            int32_t a = (int32_t)(int8_t)audio_ring[idx_a];
+            int32_t b = (int32_t)(int8_t)audio_ring[idx_b];
+            int32_t v = a + (((b - a) * (int32_t)src_frac) >> 16);
+            nnom_input_data[j] = (int8_t)v;
+#else
             uint32_t ring_idx =
                 (snap_start_ring + (uint32_t)(j * KWS_DECIMATE)) & KWS_RING_MASK;
             nnom_input_data[j] = (int8_t)audio_ring[ring_idx];
+#endif
         }
+#ifndef KWS_DUMP_LAYERS
+        /* Spike reference clip is NOT peak-normalised — skip the per-clip
+         * scale so the dump-mode firmware feeds the model byte-for-byte
+         * the same input Spike consumed.  Production builds (no
+         * KWS_DUMP_LAYERS) keep the normalization. */
         peak_norm_clip(nnom_input_data, MODEL_SAMPLES_PER_CLIP);
+#endif
 
 #ifdef KWS_DEBUG_DUMP_FIRST_CLIP
         /* Dump the FIRST captured window over UART in the same hex-word

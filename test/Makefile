@@ -591,6 +591,15 @@ endif
 ifeq ($(KWS_NO_OVERLAP),1)
   KWS_EXTRA_CFLAGS += -DKWS_NO_OVERLAP=1
 endif
+# Firmware-side upsampling: compensate the mic's real rate (15.625 kHz at
+# cfg_div=17 on 36 MHz) up to the model's training rate (KWS_MODEL_HZ).
+# Default off.  KWS_RING_HZ_REAL overrides the assumed real rate.
+ifeq ($(KWS_UPSAMPLE),1)
+  KWS_EXTRA_CFLAGS += -DKWS_UPSAMPLE=1
+endif
+ifneq ($(KWS_RING_HZ_REAL),)
+  KWS_EXTRA_CFLAGS += -DKWS_RING_HZ_REAL=$(KWS_RING_HZ_REAL)
+endif
 # NNoM-aware XIP-cache prefetch hint: opt-in.  When 1, the accel's
 # nnom_conv1d_hw shim writes PREFETCH_BASE/LEN/CTRL on every layer
 # call so the cache pre-warms the weight-scan starting line.  RTL
