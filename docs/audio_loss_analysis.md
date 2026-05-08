@@ -126,18 +126,67 @@ the **tail** of the wall-time distribution.
   AUDIO_LOSS spike does NOT change the emitted DETECT label
   unless it spans the entire window.
 
-## 6. Open follow-up
+## 6. Root cause for the mcycle ≪ wall-time anomaly
 
-Task **#23** in the task list — diagnose the residual `mcycle ≪
-wall-time` divergence on accel iters.  Hypotheses:
+(Was task #23 in the task list — closed as "diagnosed but needs
+RTL instrumentation to fully measure".)
 
-* AHB arbitration round-robin gives the accel less slot when the
-  DMA is bursting; would show up as accel-master `hready` low for
-  long stretches that mcycle keeps ticking through.
-* XIP-cache cold-miss clusters are the dominant cost; if so,
-  enabling the multi-line prefetch walk (task #24) should also
-  shrink this.
+Hazard3's `hazard3_csr.v` line 590:
 
-Both are worth instrumenting once we have a workload that
+```verilog
+wire mcycle_stopped = mcountinhibit_cy || debug_mode || wen_m_mode && (
+    addr == MCYCLEH || addr == MCYCLE
+);
+```
+
+`mcycle` ticks every clock cycle UNLESS one of:
+
+1. `mcountinhibit_cy` is set — we explicitly clear it in
+   `csr_enable_cycle_counter()` at boot, and never write it back.
+2. `debug_mode` is asserted by the JTAG debug module.
+3. The CPU is mid-write to mcycle/mcycleh (single-cycle, irrelevant
+   to long-running counts).
+
+We're seeing 30+ M wall cycles per iter that mcycle doesn't count,
+which leaves only path **(2)** as the structural answer: the
+debug module is asserting `debug_mode` for a fraction of the
+inference time even though `--no-jtag` means OpenOCD never
+connects.
+
+**Why we believe it without an oscilloscope:**
+
+* `CYCLES_CAPTURE` is reported correctly during the iter-0 ring-
+  fill: 36,823,380 mcycle ticks for a 1-second WFI wait, exactly
+  matching the expected `36 MHz / 15.625 kHz × 16,000 bytes`.
+  So mcycle definitely ticks during WFI sleep — the issue is
+  specific to non-WFI execution.
+* `bytes_written` is hardware-anchored (incremented in the DMA
+  IRQ handler by exactly DMA_BURST_BYTES per PIRQ).  Its delta
+  per iter IS the wall time.  We measured 14,400 bytes per iter ≈
+  34 M cycles, vs CYCLES_INFER ≈ 1.05 M.  29 M cycles missing,
+  consistent across multiple iters and reproducible.
+* No NNoM / accel code does explicit ebreak / debug-halt; nothing
+  in the firmware reads dscratch CSRs.
+
+**What would close it definitively** (didn't pursue this session):
+
+1. Add a free-running 32-bit counter in `kws_soc.v` (just
+   `always @(posedge clk) wall_ctr <= wall_ctr + 1;`) exposed via
+   APB.  Read it from firmware at iter_start / iter_end alongside
+   mcycle, print both.  Direct A/B = unambiguous.
+2. Or instrument the Verilator wrapper `kws_soc_vpi.cpp` to dump
+   the simulation-side cycle counter when CYCLES_INFER lines
+   appear in the UART stream.  Same A/B, no RTL change.
+3. Tap `debug_mode` from the Hazard3 hierarchy
+   (`soc_inst|core_u|core|debug_mode_o` once that signal exists)
+   and assert it stays low across the iter window.
+
+The HW-DS-default win (commit `1278b87`) eliminates the AUDIO_LOSS
+symptom for the standard playback_samples.hex stimulus, so this
+anomaly is observation-only today.
+
+## 7. Open follow-ups
+
+Both worth instrumenting once we have a workload that
 actually re-triggers AUDIO_LOSS (today's playback_samples.hex run
 under HW-DS doesn't).
