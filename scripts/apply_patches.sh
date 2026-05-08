@@ -97,12 +97,6 @@ for patch in "$PATCH_DIR"/*.patch; do
             # - sync_fifo.v: WIDTHEXPAND on replication
             target="$LIBFPGA"
             ;;
-        ms_dmac_width_fixes.patch)
-            # Fixes WIDTHEXPAND warnings in MS_DMAC_AHBL.pp.v:
-            # - CNTR shift/extend to 18 bits
-            # - M_HSIZE expects 3 bits, extend ctrl_*_type_o
-            target="$ROOT/peris/MS_DMAC_AHBL"
-            ;;
         uart-mini-pinmissing.patch)
             # Adds missing fstat output port connections to uart_mini.v
             target="$LIBFPGA"
