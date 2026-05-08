@@ -26,6 +26,46 @@ OUT_DIR      = os.path.join(REPO_ROOT, "quartus/ip/clock_pll_gen")
 MODULE_NAME  = "clock_pll_gen"
 REF_MHZ      = 50
 
+# Cyclone V ALTPLL hardware limits.  The VCO frequency (= REF_MHZ × M
+# in lowest-terms M/C) must land inside the device's PLL VCO band, or
+# Quartus will fail at fit time with a cryptic timing-closure error.
+# These are the typical Cyclone V numbers; tighten if your specific
+# speed grade differs.
+VCO_MIN_MHZ  = 600
+VCO_MAX_MHZ  = 1300
+
+# ALTPLL counter ranges (M = multiplier, C = output divider).
+M_MIN, M_MAX = 1,   256
+C_MIN, C_MAX = 1,   512
+
+
+def cyclone_v_admissible(clk_mhz):
+    """True iff (M, C) for `clk_mhz` lands inside Cyclone V VCO + counter limits."""
+    m, c = compute_mc(clk_mhz)
+    if not (M_MIN <= m <= M_MAX): return False
+    if not (C_MIN <= c <= C_MAX): return False
+    vco = REF_MHZ * m
+    return VCO_MIN_MHZ <= vco <= VCO_MAX_MHZ
+
+
+def nearby_valid_clk_mhz(clk_mhz, span=12, target_count=4):
+    """Adjacent CLK_MHZ values that DO meet the VCO/counter constraints,
+    so the error message can suggest concrete alternatives.  Falls back
+    to a globally-enumerated list if nothing is found within ±`span`."""
+    candidates = []
+    for delta in range(1, span + 1):
+        for c in (clk_mhz - delta, clk_mhz + delta):
+            if c <= 0: continue
+            if cyclone_v_admissible(c):
+                candidates.append(c)
+        if len(candidates) >= target_count:
+            break
+    if candidates:
+        return sorted(set(candidates))
+    # Fallback: enumerate the practical CLK range and return a few.
+    fallback = [c for c in range(1, 200) if cyclone_v_admissible(c)]
+    return fallback[:target_count] if fallback else []
+
 
 def compute_mc(clk_mhz):
     """Return (M, C) such that REF_MHZ * M / C == clk_mhz, in lowest terms."""
@@ -92,6 +132,39 @@ def main():
     f_check = REF_MHZ * m / c
     if abs(f_check - clk_mhz) > 0.001:
         sys.exit(f"ERROR: {clk_mhz} MHz is not exactly achievable from {REF_MHZ} MHz as an integer ratio")
+
+    # Hardware-feasibility checks.  Quartus will silently accept an
+    # out-of-range VCO and only complain at fit time with an obscure
+    # timing failure — fail loudly here instead so the user knows
+    # immediately *why* their CLK_MHZ doesn't work.
+    vco = REF_MHZ * m
+    if not (M_MIN <= m <= M_MAX):
+        nearby = nearby_valid_clk_mhz(clk_mhz)
+        suggestion = f"Try one of: {', '.join(map(str, nearby))} MHz." if nearby \
+                     else "(no admissible CLK_MHZ found near this value)"
+        sys.exit(
+            f"ERROR: CLK_MHZ={clk_mhz} requires M={m}, outside the\n"
+            f"       Cyclone V ALTPLL multiplier range [{M_MIN}..{M_MAX}].\n"
+            f"       {suggestion}")
+    if not (C_MIN <= c <= C_MAX):
+        nearby = nearby_valid_clk_mhz(clk_mhz)
+        suggestion = f"Try one of: {', '.join(map(str, nearby))} MHz." if nearby \
+                     else "(no admissible CLK_MHZ found near this value)"
+        sys.exit(
+            f"ERROR: CLK_MHZ={clk_mhz} requires C={c}, outside the\n"
+            f"       Cyclone V ALTPLL output-divider range [{C_MIN}..{C_MAX}].\n"
+            f"       {suggestion}")
+    if not (VCO_MIN_MHZ <= vco <= VCO_MAX_MHZ):
+        nearby = nearby_valid_clk_mhz(clk_mhz)
+        suggestion = f"Try one of: {', '.join(map(str, nearby))} MHz." if nearby \
+                     else "(no admissible CLK_MHZ found near this value)"
+        sys.exit(
+            f"ERROR: CLK_MHZ={clk_mhz} → M={m}, C={c} → VCO={vco} MHz,\n"
+            f"       outside the Cyclone V ALTPLL VCO band\n"
+            f"       [{VCO_MIN_MHZ}..{VCO_MAX_MHZ}] MHz.  Quartus would accept\n"
+            f"       this but fail at fit-time timing closure.\n"
+            f"       {suggestion}")
+    print(f"[gen_pll] CLK_MHZ={clk_mhz} → M={m}, C={c}, VCO={vco} MHz (OK)")
 
     os.makedirs(OUT_DIR, exist_ok=True)
 
