@@ -774,6 +774,8 @@ test-mel-compact-int8-accel:
 	$(MAKE) -C test mel-compact-int8-accel
 test-mel-compact-int8-pi-accel:
 	$(MAKE) -C test mel-compact-int8-pi-accel
+test-mel-compact-int8-pi-kld-accel:
+	$(MAKE) -C test mel-compact-int8-pi-kld-accel
 test-mel-compact-int8-peak-norm-accel:
 	$(MAKE) -C test mel-compact-int8-peak-norm-accel
 test-mel-compact-int8-peak-norm-dump:
