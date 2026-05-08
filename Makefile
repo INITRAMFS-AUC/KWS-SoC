@@ -37,8 +37,9 @@ FPGA_PART   ?= 5CSXFC6D6F31C6
 FPGA_BOARD  ?= DE10S
 FPGA_FAMILY_CLEAN := $(strip $(subst ",,$(FPGA_FAMILY)))
 
-GEN_PLL_QIP         := quartus/ip/clock_pll_gen/clock_pll_gen.qip
-SRC_LIST_IP         := $(abspath $(GEN_PLL_QIP))
+# PLL .qip path is set further down once CLK_MHZ has been assigned —
+# see the `GEN_PLL_QIP := …` block right after the CLK_MHZ ?= line.
+SRC_LIST_IP         = $(abspath $(GEN_PLL_QIP))
 
 BUILD_DIR						:= build
 ## YOSYS VARS
@@ -65,10 +66,38 @@ SOF_FILE  := $(QUARTUS_DIR)/output_files/KWS-SoC.sof
 CONSTRAINTS_SRC ?= $(QUARTUS_DIR)/CycloneV/DE10_Constraints.tcl
 TOP_FPGA        := fpga_top
 
-# Clock config — change CLK_MHZ here (or on the command line) to any integer MHz
-# achievable from 50 MHz (e.g. 25, 36, 40, 50, 100).
-# Run `make gen_pll` first when changing frequency, then `make clean_quartus map`.
-CLK_MHZ ?= 36
+# Clock config — CLK_MHZ may be integer or fractional.
+#   integer   (e.g. 24, 36, 48):    `make gen_pll` runs scripts/gen_pll.py
+#                                   (integer-N PLL via REF*M/C from 50 MHz).
+#   fractional (e.g. 36.864):       `make gen_pll` runs scripts/gen_pll_frac.sh
+#                                   (Cyclone V fractional-N PLL via qsys-generate).
+#
+# Default is 36.864 MHz: with I2S_RAW_HZ=16000 (below) and I2S_CLK_DIV
+# auto-computed from those, cfg_div lands at exactly 17 →
+# 36.864e6 / (128 * 18) = 16000 Hz raw, hitting the I2S frame rate
+# *exactly* (no ±2.34 % drift like an integer 36 MHz CLK gives).
+#
+# Run `make gen_pll` after changing CLK_MHZ, then `make clean_quartus map`.
+CLK_MHZ ?= 36.864
+
+# Rounded-up integer companion of CLK_MHZ.  Used in places where
+# Verilog requires an integer (e.g. $clog2 width sizing of the
+# microsecond-timebase counter in kws_soc.v).  At 36.864 MHz this
+# rounds to 37; the resulting microsecond tick is 37/36.864 ≈ 1.0037
+# µs (≈ 0.37 % fast — well below the timer's accuracy budget).
+CLK_MHZ_INT := $(shell awk -v c=$(CLK_MHZ) 'BEGIN { printf "%d", int(c + 0.5) }')
+
+# PLL .qip path — picks between the integer-N tree (clock_pll_gen/)
+# and the fractional-N tree (clock_pll_gen_frac/) based on whether
+# CLK_MHZ has a decimal point.  Both flows commit a clock_pll_gen.qip
+# at the matching path that pulls in the wrapper + inner module.
+# Must come *after* CLK_MHZ has been assigned, otherwise findstring
+# evaluates against an empty value at parse time.
+ifneq (,$(findstring .,$(CLK_MHZ)))
+  GEN_PLL_QIP         := quartus/ip/clock_pll_gen_frac/clock_pll_gen.qip
+else
+  GEN_PLL_QIP         := quartus/ip/clock_pll_gen/clock_pll_gen.qip
+endif
 
 # 128k Memory
 SRAM_DEPTH ?= 32768
@@ -94,10 +123,11 @@ I2S_RAW_HZ ?= 16000
 
 # Auto-compute I2S_CLK_DIV (cfg_div) from CLK_MHZ to hit I2S_RAW_HZ.
 # Override on the command line (`make ... I2S_CLK_DIV=N`) to pin a
-# specific divider — e.g. for testbench rate sweeps.  The shell math
-# is integer with rounding: (CLK*1e6 + I2S_RAW_HZ*64) / (I2S_RAW_HZ*128) - 1.
+# specific divider — e.g. for testbench rate sweeps.  Use awk for the
+# math so fractional CLK_MHZ (36.864) works the same as integer (36).
+# Formula: cfg_div = round(CLK_MHZ * 1e6 / (128 * I2S_RAW_HZ)) - 1.
 ifeq ($(origin I2S_CLK_DIV),undefined)
-  I2S_CLK_DIV := $(shell echo $$(( ($(CLK_MHZ) * 1000000 + $(I2S_RAW_HZ) * 64) / ($(I2S_RAW_HZ) * 128) - 1 )))
+  I2S_CLK_DIV := $(shell awk -v c=$(CLK_MHZ) -v r=$(I2S_RAW_HZ) 'BEGIN { printf "%d", int(c*1e6/(128*r) + 0.5) - 1 }')
 endif
 export I2S_CLK_DIV
 export I2S_RAW_HZ
@@ -118,6 +148,7 @@ UART_FLOW_CONTROL := 0
 
 # Verilog-macro form (NAME=VALUE, no -D prefix) — used by Quartus, Yosys, Verilator
 UART_VERILOG_MACROS := CLK_MHZ=$(CLK_MHZ) \
+                       CLK_MHZ_INT=$(CLK_MHZ_INT) \
                        UART_BAUD_RATE=$(UART_BAUD_RATE) \
                        UART_DATA_WIDTH=$(UART_DATA_WIDTH) \
                        UART_STOP_BITS=$(UART_STOP_BITS) \
@@ -651,16 +682,37 @@ CYCLES_ARG = $(if $(CYCLES),--cycles $(CYCLES),)
 ###########################
 
 # Generate (or regenerate) the PLL IP for the current CLK_MHZ / FPGA_FAMILY.
-# Re-run manually when changing CLK_MHZ: `make gen_pll`
+# Dispatches between the two flows based on whether CLK_MHZ contains a
+# decimal point:
+#   integer    → scripts/gen_pll.py        (REF*M/C integer-N ALTPLL,
+#                                           hand-patched template)
+#   fractional → scripts/gen_pll_frac.sh   (qsys-script + qsys-generate
+#                                           around Cyclone V altera_pll
+#                                           in fractional-N mode; hits
+#                                           non-50-MHz-multiple frequencies
+#                                           like 36.864 MHz exactly)
+# Both produce a `clock_pll_gen` module with the same legacy port names
+# (inclk0 / areset / c0 / locked) so quartus/fpga_top.v works untouched.
+# Re-run manually when changing CLK_MHZ: `make gen_pll`.
 .PHONY: gen_pll
 gen_pll:
 	@echo "--- Generating PLL: $(CLK_MHZ) MHz ($(FPGA_FAMILY_CLEAN)) ---"
-	python3 scripts/gen_pll.py --clk-mhz $(CLK_MHZ) --device-family "$(FPGA_FAMILY_CLEAN)"
+	@if echo "$(CLK_MHZ)" | grep -q '\.'; then \
+		echo "[gen_pll] fractional CLK_MHZ detected → fractional-N flow (qsys-generate)"; \
+		bash scripts/gen_pll_frac.sh $(CLK_MHZ) "$(FPGA_FAMILY_CLEAN)" "$(FPGA_PART)"; \
+	else \
+		echo "[gen_pll] integer CLK_MHZ → integer-N flow (gen_pll.py)"; \
+		python3 scripts/gen_pll.py --clk-mhz $(CLK_MHZ) --device-family "$(FPGA_FAMILY_CLEAN)"; \
+	fi
 
 # 0. Project Generation
 $(QSF_FILE): $(QUARTUS_DIR)/setup_project.tcl Makefile
 	@echo "--- Generating PLL: $(CLK_MHZ) MHz ($(FPGA_FAMILY_CLEAN)) ---"
-	python3 scripts/gen_pll.py --clk-mhz $(CLK_MHZ) --device-family "$(FPGA_FAMILY_CLEAN)"
+	@if echo "$(CLK_MHZ)" | grep -q '\.'; then \
+		bash scripts/gen_pll_frac.sh $(CLK_MHZ) "$(FPGA_FAMILY_CLEAN)" "$(FPGA_PART)"; \
+	else \
+		python3 scripts/gen_pll.py --clk-mhz $(CLK_MHZ) --device-family "$(FPGA_FAMILY_CLEAN)"; \
+	fi
 	@echo "--- Setting up Quartus Project ---"
 	# We export these variables solely for the next command line
 	export QUARTUS_PROJECT=$(QUARTUS_PROJECT); \

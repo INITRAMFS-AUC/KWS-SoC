@@ -10,7 +10,8 @@
 module kws_soc #(
     parameter DTM_TYPE   = `DTM_TYPE,
     parameter SRAM_DEPTH = `SRAM_DEPTH,
-    parameter CLK_MHZ    = `CLK_MHZ, // For timer timebase
+    parameter CLK_MHZ    = `CLK_MHZ, // For timer timebase (real, may be fractional)
+    parameter CLK_MHZ_INT = `CLK_MHZ_INT, // round(CLK_MHZ), for $clog2-sized counters
 
     `include "hazard3_config.vh"
 ) (
@@ -1032,20 +1033,28 @@ module kws_soc #(
 `endif
 
 
-  // Microsecond timebase for timer
+  // Microsecond timebase for timer.
+  //
+  // CLK_MHZ may be a non-integer real (e.g. 36.864 — fractional-N PLL),
+  // but Verilog's $clog2 demands an integer.  Use CLK_MHZ_INT (= round
+  // of CLK_MHZ, computed in Makefile) for width sizing AND for the
+  // counter reload value.  At 36.864 MHz the reload becomes 36
+  // (= CLK_MHZ_INT - 1 = 37 - 1) so each tick is 37 / 36.864 ≈ 1.0037 µs
+  // — within ~0.4 % of one microsecond, which is well below this
+  // timer's accuracy budget.
 
-  reg [$clog2(CLK_MHZ)-1:0] timer_tick_ctr;
+  reg [$clog2(CLK_MHZ_INT)-1:0] timer_tick_ctr;
   reg                       timer_tick;
 
   always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      timer_tick_ctr <= {$clog2(CLK_MHZ) {1'b0}};
+      timer_tick_ctr <= {$clog2(CLK_MHZ_INT) {1'b0}};
       timer_tick <= 1'b0;
     end else begin
       if (|timer_tick_ctr) begin
         timer_tick_ctr <= timer_tick_ctr - 1'b1;
       end else begin
-        timer_tick_ctr <= CLK_MHZ - 1;
+        timer_tick_ctr <= CLK_MHZ_INT - 1;
       end
       timer_tick <= ~|timer_tick_ctr;
     end
