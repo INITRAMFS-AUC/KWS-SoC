@@ -340,7 +340,11 @@ typedef struct {
 #define KWS_DECIMATE           (RING_HZ / KWS_MODEL_HZ)   /* 1 or 2 */
 #define MODEL_SAMPLES_PER_CLIP 8000
 #define RING_SAMPLES_PER_CLIP  (MODEL_SAMPLES_PER_CLIP * KWS_DECIMATE)
+#ifdef KWS_NUM_CLASSES
+#define NUM_CLASSES            KWS_NUM_CLASSES
+#else
 #define NUM_CLASSES            11
+#endif
 
 /* Audio capture ring buffer.
  *
@@ -533,10 +537,14 @@ static volatile uint32_t bytes_written = 0;
 static volatile int      i2s_irq_count = 0;
 
 /* ── Class names (order must match the weights header) ───────────────────── */
+#ifdef KWS_CLASS_NAMES
+static const char * const class_names[NUM_CLASSES] = KWS_CLASS_NAMES;
+#else
 static const char * const class_names[NUM_CLASSES] = {
     "down", "go", "left", "no", "off", "on",
     "right", "stop", "up", "yes", "unknown"
 };
+#endif
 
 /* ── Machine trap handler ────────────────────────────────────────────────── */
 /*
