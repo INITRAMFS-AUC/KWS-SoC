@@ -49,6 +49,11 @@ sim/sram_preload.hex
 # settings).  Per-developer; never commit.
 .claude/
 
+# Quartus IP-wizard runtime log droppings.  qmegawiz / qsys-script
+# leave these in the cwd when they error or get interrupted.
+.cnxerr
+qmegawiz_errors_log.txt
+
 # Personal notes
 notes.md
 images
