@@ -226,6 +226,7 @@ XIP_TARGETS = \
 	$(BUILD_DIR)/mel_compact_int8_xip_accel.elf      $(BUILD_DIR)/mel_compact_int8_xip_accel.dis      $(BUILD_DIR)/mel_compact_int8_xip_accel.bin \
 	$(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf   $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.dis   $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.bin \
 	$(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.bin \
+	$(BUILD_DIR)/mel_compact_4cmd_xip_accel.elf $(BUILD_DIR)/mel_compact_4cmd_xip_accel.dis $(BUILD_DIR)/mel_compact_4cmd_xip_accel.bin \
 	$(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.bin \
 	$(BUILD_DIR)/kws_lr_xip.elf                      $(BUILD_DIR)/kws_lr_xip.dis                      $(BUILD_DIR)/kws_lr_xip.bin \
 	$(BUILD_DIR)/kws_lr_xip_accel.elf                $(BUILD_DIR)/kws_lr_xip_accel.dis                $(BUILD_DIR)/kws_lr_xip_accel.bin \
@@ -282,6 +283,8 @@ model-mel-compact-int8-pi-accel: \
 	$(BUILD_DIR)/mel_compact_int8_pi_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_xip_accel.bin
 model-mel-compact-int8-pi-kld-accel: \
 	$(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_pi_kld_xip_accel.bin
+model-mel-compact-4cmd-accel: \
+	$(BUILD_DIR)/mel_compact_4cmd_xip_accel.elf $(BUILD_DIR)/mel_compact_4cmd_xip_accel.dis $(BUILD_DIR)/mel_compact_4cmd_xip_accel.bin
 model-mel-compact-int8-peak-norm-accel: \
 	$(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.elf $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.dis $(BUILD_DIR)/mel_compact_int8_peak_norm_xip_accel.bin
 model-mel-compact-int8-peak-norm-dump: \
@@ -522,10 +525,12 @@ clean:
         model-mel-compact-int8 model-mel-compact-int8-accel \
         model-mel-compact-int8-pi-accel \
         model-mel-compact-int8-pi-kld-accel \
+        model-mel-compact-4cmd-accel \
         model-mel-compact-int8-peak-norm-accel \
         model-mel-compact-int8-peak-norm-dump \
         model-mel-compact-int8-peak-norm-dump-full \
         mel-compact-int8-pi-accel mel-compact-int8-pi-kld-accel \
+        mel-compact-4cmd-accel \
         mel-compact-int8-peak-norm-accel \
         mel-compact-int8-peak-norm-dump mel-compact-int8-peak-norm-dump-full \
         model-kws-lr model-kws-lr-accel accel-test xip-testbench

@@ -704,6 +704,10 @@ test-mel-compact-int8-accel:
 	$(MAKE) -C test mel-compact-int8-accel
 test-mel-compact-int8-pi-accel:
 	$(MAKE) -C test mel-compact-int8-pi-accel
+test-mel-compact-int8-pi-kld-accel:
+	$(MAKE) -C test mel-compact-int8-pi-kld-accel
+test-mel-compact-4cmd-accel:
+	$(MAKE) -C test mel-compact-4cmd-accel
 test-mel-compact-int8-peak-norm-accel:
 	$(MAKE) -C test mel-compact-int8-peak-norm-accel
 test-mel-compact-int8-peak-norm-dump:
@@ -734,9 +738,20 @@ sta: $(FIT_RPT)
 
 check_timing: sta
 	@echo "--- Checking for Timing Violations ---"
-	# Grep the summary for "Critical Warning" or negative slack
-	# This is a simple check; for robust CI, parse the report files in output_files/
-	$(SH) --tcl_eval "project_open $(QUARTUS_PROJECT); set x [get_timing_analysis_summary_results -model slow]; puts \$$x; project_close"
+	@# Parse the summary report quartus_sta already produced — much more
+	@# reliable than calling a TimeQuest-only TCL command from quartus_sh
+	@# (`get_timing_analysis_summary_results` only exists inside quartus_sta).
+	@SUMMARY=quartus/output_files/KWS-SoC.sta.summary; \
+	if [ ! -f $$SUMMARY ]; then \
+	    echo "ERROR: $$SUMMARY not found — re-run 'make sta'"; exit 1; \
+	fi; \
+	cat $$SUMMARY; \
+	echo; \
+	BAD=$$(awk '/^Type/ {type=$$0} /^Slack/ {if ($$3+0 < 0) print type "  " $$0}' $$SUMMARY); \
+	if [ -n "$$BAD" ]; then \
+	    echo "FAIL — negative slack detected:"; echo "$$BAD"; exit 1; \
+	fi; \
+	echo "PASS — all slacks non-negative"
 
 openocd-sim:
 	@echo "Starting OpenOCD (Simulation)..."
